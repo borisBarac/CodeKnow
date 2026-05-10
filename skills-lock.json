@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "ruff": {
+      "source": "rocky-d/dttb",
+      "sourceType": "github",
+      "computedHash": "8cfb69a3533547167a97dc94053d4fab179c5a2a876c93fef117055f68674f69"
+    },
+    "uv": {
+      "source": "rocky-d/dttb",
+      "sourceType": "github",
+      "computedHash": "9f23bc2ad69184b22b5970f4241996aadf2db8a7a436d41ecffd1e9494180eb7"
+    }
+  }
+}
