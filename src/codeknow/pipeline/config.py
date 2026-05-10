@@ -31,6 +31,7 @@ class PipelineConfig:
     chroma_host: str | None = None
     chroma_port: int | None = None
     chroma_collection: str | None = None
+    embed_base_url: str | None = None
 
     @property
     def slug(self) -> str:

@@ -26,6 +26,7 @@ def embed(result: PipelineResult, **kwargs: Any) -> PipelineResult:
     embed_config = EmbeddingConfig(
         EMBEDDING_PROVIDER=config.embed_provider,
         EMBEDDING_MODEL=config.embed_model,
+        base_url=config.embed_base_url,
     )
     embeddings = create_embeddings(embed_config)
 

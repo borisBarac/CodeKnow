@@ -34,7 +34,7 @@ except ImportError as exc:
     raise ImportError(msg) from exc
 
 try:
-    pass
+    import langchain_core  # noqa: F401
 except ImportError as exc:
     msg = (
         "langchain-core is required for vector storage. "
@@ -150,6 +150,11 @@ class ChromaStore:
             for chunk in batch:
                 content = read_chunk_content(chunk)
                 if not content.strip():
+                    logger.warning(
+                        "Skipping chunk %s: empty content (file=%s)",
+                        chunk.hash[:8],
+                        chunk.file,
+                    )
                     continue
                 ids.append(chunk.hash)
                 texts.append(content)
