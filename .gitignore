@@ -209,3 +209,6 @@ pyrightconfig.json
 
 # ChromaDB persistence
 chroma-data/
+
+# E2E local env overrides
+.env.e2e.local
