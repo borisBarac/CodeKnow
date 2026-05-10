@@ -1,0 +1,8 @@
+port: 8000
+listen_address: "127.0.0.1"
+persist_path: "/data"
+allow_reset: false
+
+sqlitedb:
+  hash_type: "md5"
+  migration_mode: "apply"

@@ -1,0 +1,12 @@
+services:
+  chromadb:
+    image: chromadb/chroma:1.5.3
+    container_name: chromadb
+    ports:
+      - "8018:8000"
+    volumes:
+      - ./chroma-data:/data
+      - ./chroma.local.yaml:/chroma/config.yaml:ro
+    environment:
+      - CONFIG_PATH=/chroma/config.yaml
+    restart: unless-stopped
