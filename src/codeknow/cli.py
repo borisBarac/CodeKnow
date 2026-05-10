@@ -40,7 +40,7 @@ def dev_check() -> None:
 
     failed: list[str] = []
     for label, cmd in steps:
-        result = subprocess.run(cmd, check=False)
+        result = subprocess.run(cmd, check=False)  # noqa: S603
         if result.returncode != 0:
             failed.append(label)
 

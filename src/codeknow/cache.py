@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
 
 
@@ -91,7 +90,7 @@ def save_cached(path: Path, result: dict, root: Path = Path()) -> None:
     try:
         tmp.write_text(json.dumps(result), encoding="utf-8")
         try:
-            os.replace(tmp, entry)
+            tmp.replace(entry)
         except PermissionError:
             # Windows: os.replace can fail with WinError 5 if the target is
             # briefly locked. Fall back to copy-then-delete.

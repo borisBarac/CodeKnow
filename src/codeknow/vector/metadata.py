@@ -33,9 +33,9 @@ def build_chunk_metadata(result: PipelineResult) -> dict[str, dict[str, Any]]:
                 label = data.get("label")
                 if label:
                     labels.append(label)
-                cid = node_id_to_community.get(nid)
-                if cid is not None:
-                    community_ids.add(cid)
+                cid_found = node_id_to_community.get(nid)
+                if cid_found is not None:
+                    community_ids.add(cid_found)
 
             extra: dict[str, Any] = {}
             if labels:

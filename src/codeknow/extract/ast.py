@@ -16,6 +16,8 @@ from codeknow.cache import load_cached, save_cached
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from tree_sitter import Node
+
 
 def _make_id(*parts: str) -> str:
     """Build a stable node ID from one or more name parts."""
@@ -64,11 +66,11 @@ class LanguageConfig:
 # ── Generic helpers ───────────────────────────────────────────────────────────
 
 
-def _read_text(node, source: bytes) -> str:
+def _read_text(node: Node, source: bytes) -> str:
     return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
-def _resolve_name(node, source: bytes, config: LanguageConfig) -> str | None:
+def _resolve_name(node: Node, source: bytes, config: LanguageConfig) -> str | None:
     """Get the name from a node using config.name_field, falling back to child types."""
     n = node.child_by_field_name(config.name_field)
     if n:
@@ -79,7 +81,7 @@ def _resolve_name(node, source: bytes, config: LanguageConfig) -> str | None:
     return None
 
 
-def _find_body(node, config: LanguageConfig):
+def _find_body(node: Node, config: LanguageConfig) -> Node | None:
     """Find the body node using config.body_field, falling back to child types."""
     b = node.child_by_field_name(config.body_field)
     if b:
@@ -94,7 +96,7 @@ def _find_body(node, config: LanguageConfig):
 
 
 def _import_python(
-    node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str
+    node: Node, source: bytes, file_nid: str, stem: str, edges: list[Any], str_path: str
 ) -> None:
     t = node.type
     if t == "import_statement":
@@ -147,7 +149,7 @@ def _import_python(
 
 
 def _import_js(
-    node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str
+    node: Node, source: bytes, file_nid: str, stem: str, edges: list[Any], str_path: str
 ) -> None:
     for child in node.children:
         if child.type == "string":
@@ -190,18 +192,18 @@ def _import_js(
 
 
 def _js_extra_walk(
-    node,
+    node: Node,
     source: bytes,
     file_nid: str,
     stem: str,
     str_path: str,
-    nodes: list,
-    edges: list,
-    seen_ids: set,
+    nodes: list[Any],
+    edges: list[Any],
+    seen_ids: set[str],
     function_bodies: list,
     parent_class_nid: str | None,
-    add_node_fn,
-    add_edge_fn,
+    add_node_fn: Callable[[str, str, int, int | None], None],
+    add_edge_fn: Callable[[str, str, str, int], None],
 ) -> bool:
     """Handle lexical_declaration (arrow functions) for JS/TS.
     Returns True if handled.
@@ -350,7 +352,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
     file_nid = _make_id(str(path))
     add_node(file_nid, path.name, 1)
 
-    def walk(node, parent_class_nid: str | None = None) -> None:
+    def walk(node: Node, parent_class_nid: str | None = None) -> None:
         t = node.type
 
         # Import types
@@ -470,7 +472,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
     ] = []  # unresolved calls for cross-file resolution in extract()
     seen_call_pairs: set[tuple[str, str]] = set()
 
-    def walk_calls(node, caller_nid: str) -> None:
+    def walk_calls(node: Node, caller_nid: str) -> None:
         if node.type in config.function_boundary_types:
             return
 
@@ -579,7 +581,7 @@ def _extract_python_rationale(path: Path, result: dict) -> None:
     seen_ids = {n["id"] for n in nodes}
     file_nid = _make_id(str(path))
 
-    def _get_docstring(body_node) -> tuple[str, int] | None:
+    def _get_docstring(body_node: Node | None) -> tuple[str, int] | None:
         if not body_node:
             return None
         for child in body_node.children:
@@ -629,7 +631,7 @@ def _extract_python_rationale(path: Path, result: dict) -> None:
         _add_rationale(ds[0], ds[1], file_nid)
 
     # Class and function docstrings
-    def walk_docstrings(node, parent_nid: str) -> None:
+    def walk_docstrings(node: Node, parent_nid: str) -> None:
         t = node.type
         if t == "class_definition":
             name_node = node.child_by_field_name("name")
@@ -759,10 +761,10 @@ def _resolve_cross_file_imports(
         try:
             source = path.read_bytes()
             tree = parser.parse(source)
-        except Exception:
+        except Exception:  # noqa: S112
             continue
 
-        def walk_imports(node) -> None:
+        def walk_imports(node: Node) -> None:
             if node.type == "import_from_statement":
                 # Find the module name - handles both absolute and relative imports.
                 # Relative: `from .models import X` → relative_import → dotted_name
@@ -1037,9 +1039,9 @@ def collect_files(
     # Walk with symlink following + cycle detection
     results = []
     for dirpath, dirnames, filenames in os.walk(target, followlinks=True):
-        if os.path.islink(dirpath):
-            real = os.path.realpath(dirpath)
-            parent_real = os.path.realpath(os.path.dirname(dirpath))
+        if Path(dirpath).is_symlink():
+            real = str(Path(dirpath).resolve())
+            parent_real = str(Path(dirpath).parent.resolve())
             if parent_real == real or parent_real.startswith(real + os.sep):
                 dirnames.clear()
                 continue
@@ -1058,7 +1060,7 @@ def collect_files(
     return sorted(results)
 
 
-def extract_ast(files: dict[str, list[str]], **kwargs) -> dict:
+def extract_ast(files: dict[str, list[str]], **kwargs: Any) -> dict[str, Any]:
     """Pipeline wrapper: extract AST nodes from all code files.
 
     Args:

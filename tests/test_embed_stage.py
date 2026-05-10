@@ -293,4 +293,3 @@ class TestDeleteBySlug:
         assert count == 2
         mock_collection.get.assert_called_once_with(where={"slug": "owner-repo"})
         mock_collection.delete.assert_called_once_with(ids=["hash1", "hash2"])
-

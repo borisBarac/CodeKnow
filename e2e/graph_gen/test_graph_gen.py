@@ -47,7 +47,7 @@ def test_detect_finds_code_files(pipeline):
 
 
 def test_graph_summary(pipeline):
-    G, communities, discovery, extraction = pipeline
+    G, communities, _discovery, _extraction = pipeline
     logger.info("=== Node labels ===")
     for nid, data in G.nodes(data=True):
         logger.info(

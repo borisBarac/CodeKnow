@@ -1,21 +1,51 @@
 """Tests for hyperedge support in build_from_json."""
-from __future__ import annotations
 
-import networkx as nx
+from __future__ import annotations
 
 from codeknow.graph.build import build_from_json
 
-
 SAMPLE_EXTRACTION = {
     "nodes": [
-        {"id": "BasicAuth", "label": "BasicAuth", "file_type": "code", "source_file": "auth.py"},
-        {"id": "DigestAuth", "label": "DigestAuth", "file_type": "code", "source_file": "auth.py"},
-        {"id": "Request", "label": "Request", "file_type": "code", "source_file": "http.py"},
-        {"id": "Response", "label": "Response", "file_type": "code", "source_file": "http.py"},
-        {"id": "BaseClient", "label": "BaseClient", "file_type": "code", "source_file": "client.py"},
+        {
+            "id": "BasicAuth",
+            "label": "BasicAuth",
+            "file_type": "code",
+            "source_file": "auth.py",
+        },
+        {
+            "id": "DigestAuth",
+            "label": "DigestAuth",
+            "file_type": "code",
+            "source_file": "auth.py",
+        },
+        {
+            "id": "Request",
+            "label": "Request",
+            "file_type": "code",
+            "source_file": "http.py",
+        },
+        {
+            "id": "Response",
+            "label": "Response",
+            "file_type": "code",
+            "source_file": "http.py",
+        },
+        {
+            "id": "BaseClient",
+            "label": "BaseClient",
+            "file_type": "code",
+            "source_file": "client.py",
+        },
     ],
     "edges": [
-        {"source": "BasicAuth", "target": "Request", "relation": "uses", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "auth.py"},
+        {
+            "source": "BasicAuth",
+            "target": "Request",
+            "relation": "uses",
+            "confidence": "EXTRACTED",
+            "confidence_score": 1.0,
+            "source_file": "auth.py",
+        },
     ],
     "hyperedges": [
         {

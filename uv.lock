@@ -349,6 +349,7 @@ dev = [
 dev = [
     { name = "mypy" },
     { name = "pytest" },
+    { name = "ruff" },
     { name = "types-networkx" },
     { name = "types-openpyxl" },
 ]
@@ -380,6 +381,7 @@ provides-extras = ["dev"]
 dev = [
     { name = "mypy", specifier = ">=2.0.0" },
     { name = "pytest", specifier = ">=9.0.3" },
+    { name = "ruff", specifier = ">=0.11.0" },
     { name = "types-networkx", specifier = ">=3.6.1.20260508" },
     { name = "types-openpyxl", specifier = ">=3.1.5.20260508" },
 ]

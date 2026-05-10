@@ -1,6 +1,6 @@
 """Tests for repo_map — persistent URL↔path mapping."""
 
-# ruff: noqa: S101, S108
+# ruff: noqa: S108
 
 from pathlib import Path
 

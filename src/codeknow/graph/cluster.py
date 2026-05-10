@@ -1,4 +1,9 @@
-"""Community detection on NetworkX graphs. Uses Leiden (graspologic) if available, falls back to Louvain (networkx). Splits oversized communities. Returns cohesion scores."""
+"""Community detection on NetworkX graphs.
+
+Uses Leiden (graspologic) if available, falls back to
+Louvain (networkx). Splits oversized communities.
+Returns cohesion scores.
+"""
 
 from __future__ import annotations
 
@@ -19,7 +24,7 @@ def _suppress_output() -> AbstractContextManager[None]:
     Windows (see issue #19). Redirecting stdout/stderr to devnull during
     the call prevents this without losing any graphify output.
     """
-    return contextlib.redirect_stdout(io.StringIO())
+    return contextlib.redirect_stdout(io.StringIO())  # type: ignore[arg-type]
 
 
 def _partition(G: nx.Graph) -> dict[str, int]:
@@ -43,7 +48,7 @@ def _partition(G: nx.Graph) -> dict[str, int]:
                 result = leiden(G)
         finally:
             sys.stderr = old_stderr
-        return result  # type: ignore[no-any-return]
+        return result  # type: ignore[no-any-return]  # noqa: TRY300
     except ImportError:
         pass
 

@@ -73,6 +73,8 @@ ignore = [
     "PERF401",
     "RUF001",
     "RUF002",
+    "D203",
+    "D213",
     "B023",
     "B005",
     "B904",
@@ -101,6 +103,7 @@ disallow_untyped_defs = true
 dev = [
     "mypy>=2.0.0",
     "pytest>=9.0.3",
+    "ruff>=0.11.0",
     "types-networkx>=3.6.1.20260508",
     "types-openpyxl>=3.1.5.20260508",
 ]

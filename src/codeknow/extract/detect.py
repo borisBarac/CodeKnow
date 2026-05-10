@@ -1,6 +1,7 @@
 # file discovery, type classification, and corpus health checks
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import json
 import os
@@ -26,6 +27,8 @@ CODE_EXTENSIONS = {
     ".ejs",
 }
 DOC_EXTENSIONS = {".md", ".mdx", ".txt", ".rst", ".html"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp"}
+PAPER_EXTENSIONS = {".pdf", ".docx", ".tex", ".bib"}
 
 CORPUS_WARN_THRESHOLD = 50_000  # words - below this, warn "you may not need a graph"
 CORPUS_UPPER_THRESHOLD = 500_000  # words - above this, warn about token cost
@@ -74,9 +77,10 @@ def _looks_like_paper(path: Path) -> bool:
         # Only scan first 3000 chars for speed
         text = path.read_text(encoding="utf-8", errors="ignore")[:3000]
         hits = sum(1 for pattern in _PAPER_SIGNALS if pattern.search(text))
-        return hits >= _PAPER_SIGNAL_THRESHOLD
     except Exception:
         return False
+    else:
+        return hits >= _PAPER_SIGNAL_THRESHOLD
 
 
 _ASSET_DIR_MARKERS = {
@@ -298,9 +302,9 @@ def detect(root: Path, *, follow_symlinks: bool = False) -> dict:
             scan_root, followlinks=follow_symlinks
         ):
             dp = Path(dirpath)
-            if follow_symlinks and os.path.islink(dirpath):
-                real = os.path.realpath(dirpath)
-                parent_real = os.path.realpath(os.path.dirname(dirpath))
+            if follow_symlinks and Path(dirpath).is_symlink():
+                real = str(Path(dirpath).resolve())
+                parent_real = str(Path(dirpath).parent.resolve())
                 if parent_real == real or parent_real.startswith(real + os.sep):
                     dirnames.clear()
                     continue
@@ -386,10 +390,8 @@ def save_manifest(
     manifest: dict[str, float] = {}
     for file_list in files.values():
         for f in file_list:
-            try:
+            with contextlib.suppress(OSError):
                 manifest[f] = Path(f).stat().st_mtime
-            except OSError:
-                pass  # file deleted between detect() and manifest write - skip it
     Path(manifest_path).parent.mkdir(parents=True, exist_ok=True)
     Path(manifest_path).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 

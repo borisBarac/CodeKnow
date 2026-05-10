@@ -1,18 +1,20 @@
 """Tests for analyze.py."""
 
 import json
-import networkx as nx
 from pathlib import Path
+
+import networkx as nx
+
+from codeknow.graph.analyze import (
+    _file_category,
+    _is_concept_node,
+    _surprise_score,
+    god_nodes,
+    graph_diff,
+    surprising_connections,
+)
 from codeknow.graph.build import build_from_json
 from codeknow.graph.cluster import cluster
-from codeknow.graph.analyze import (
-    god_nodes,
-    surprising_connections,
-    _is_concept_node,
-    graph_diff,
-    _surprise_score,
-    _file_category,
-)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -155,7 +157,6 @@ def test_surprising_connections_ambiguous_scores_higher_than_extracted():
         weight=1.0,
         source_file="repo1/data.py",
     )
-    communities = {0: ["a", "c"], 1: ["b", "d"]}
     nc = {"a": 0, "c": 0, "b": 1, "d": 1}
     score_amb, _ = _surprise_score(
         G, "a", "b", G.edges["a", "b"], nc, "repo1/model.py", "repo2/train.py"

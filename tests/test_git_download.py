@@ -1,7 +1,5 @@
 """Tests for git_download — clone and update git repos."""
 
-# ruff: noqa: S101
-
 from pathlib import Path
 
 from git import Repo

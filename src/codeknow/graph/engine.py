@@ -27,16 +27,16 @@ def _load_graph(graph_path: str) -> nx.Graph:
         resolved = Path(graph_path).resolve()
         if resolved.suffix != ".json":
             msg = f"Graph path must be a .json file, got: {graph_path!r}"
-            raise ValueError(msg)
+            raise ValueError(msg)  # noqa: TRY301
         if not resolved.exists():
             msg = f"Graph file not found: {resolved}"
-            raise FileNotFoundError(msg)
+            raise FileNotFoundError(msg)  # noqa: TRY301
         safe = resolved
         data = json.loads(safe.read_text(encoding="utf-8"))
         try:
-            return json_graph.node_link_graph(data, edges="links")
+            return json_graph.node_link_graph(data, edges="links")  # type: ignore[no-any-return]
         except TypeError:
-            return json_graph.node_link_graph(data)
+            return json_graph.node_link_graph(data)  # type: ignore[no-any-return]
     except (ValueError, FileNotFoundError):
         sys.exit(1)
 
@@ -176,7 +176,7 @@ def _filter_blank_stdin() -> None:
 
     def _relay() -> None:
         try:
-            with open(saved_fd, "rb") as src, open(w_fd, "wb") as dst:
+            with open(saved_fd, "rb") as src, open(w_fd, "wb") as dst:  # noqa: PTH123
                 for line in src:
                     if line.strip():
                         dst.write(line)
