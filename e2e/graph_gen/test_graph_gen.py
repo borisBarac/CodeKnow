@@ -159,3 +159,113 @@ def test_graph_node_count_is_positive(pipeline):
         G.number_of_edges(),
     )
     assert G.number_of_nodes() > 10
+
+
+def test_save_and_load_graph_roundtrip(pipeline, tmp_path):
+    G, communities, discovery, _ = pipeline
+    from codeknow.graph.chunk_mapper import map_chunks
+    from codeknow.pipeline.config import PipelineConfig
+    from codeknow.pipeline.io import load_graph, save_pipeline_result
+    from codeknow.pipeline.stages import _assign_communities
+    from codeknow.pipeline.types import PipelineResult
+
+    G_enriched, chunk_map = map_chunks(G, discovery["files"])
+    _assign_communities(G_enriched, communities)
+
+    config = PipelineConfig(
+        repo_url="https://github.com/test/code-test-small",
+        output_dir=tmp_path,
+    )
+    result = PipelineResult(
+        graph=G_enriched,
+        communities=communities,
+        chunk_map=chunk_map,
+        discovery=discovery,
+        stats={},
+        config=config,
+    )
+    graph_path = save_pipeline_result(result)
+
+    G_loaded = load_graph(graph_path)
+
+    assert G_loaded.number_of_nodes() == G_enriched.number_of_nodes()
+    assert G_loaded.number_of_edges() == G_enriched.number_of_edges()
+    for nid in G_enriched.nodes():
+        assert nid in G_loaded.nodes()
+        original = G_enriched.nodes[nid]
+        loaded = G_loaded.nodes[nid]
+        assert loaded.get("label") == original.get("label")
+        assert loaded.get("community") == original.get("community")
+        assert loaded.get("source_file") == original.get("source_file")
+
+
+def test_load_graph_reconstructs_communities(pipeline, tmp_path):
+    G, communities, discovery, _ = pipeline
+    from codeknow.graph.chunk_mapper import map_chunks
+    from codeknow.pipeline.config import PipelineConfig
+    from codeknow.pipeline.io import (
+        communities_from_graph,
+        load_graph,
+        save_pipeline_result,
+    )
+    from codeknow.pipeline.stages import _assign_communities
+    from codeknow.pipeline.types import PipelineResult
+
+    G_enriched, chunk_map = map_chunks(G, discovery["files"])
+    _assign_communities(G_enriched, communities)
+
+    config = PipelineConfig(
+        repo_url="https://github.com/test/code-test-small",
+        output_dir=tmp_path,
+    )
+    result = PipelineResult(
+        graph=G_enriched,
+        communities=communities,
+        chunk_map=chunk_map,
+        discovery=discovery,
+        stats={},
+        config=config,
+    )
+    save_pipeline_result(result)
+
+    G_loaded = load_graph(tmp_path / "graph.json")
+    loaded_communities = communities_from_graph(G_loaded)
+
+    for cid, members in communities.items():
+        assert set(loaded_communities.get(cid, [])) == set(members)
+
+
+def test_chunk_map_roundtrip(pipeline, tmp_path):
+    G, communities, discovery, _ = pipeline
+    import json
+
+    from codeknow.graph.chunk_mapper import map_chunks
+    from codeknow.pipeline.config import PipelineConfig
+    from codeknow.pipeline.io import save_pipeline_result
+    from codeknow.pipeline.stages import _assign_communities
+    from codeknow.pipeline.types import PipelineResult
+
+    G_enriched, chunk_map = map_chunks(G, discovery["files"])
+    _assign_communities(G_enriched, communities)
+
+    config = PipelineConfig(
+        repo_url="https://github.com/test/code-test-small",
+        output_dir=tmp_path,
+    )
+    result = PipelineResult(
+        graph=G_enriched,
+        communities=communities,
+        chunk_map=chunk_map,
+        discovery=discovery,
+        stats={},
+        config=config,
+    )
+    save_pipeline_result(result)
+
+    chunk_map_data = json.loads((tmp_path / "chunk_map.json").read_text())
+
+    for fpath, chunks in chunk_map.items():
+        assert fpath in chunk_map_data
+        original_hashes = {c.hash for c in chunks}
+        loaded_hashes = {c["hash"] for c in chunk_map_data[fpath]}
+        assert original_hashes == loaded_hashes

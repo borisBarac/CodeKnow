@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from .io import save_pipeline_result
 from .stages import _assign_communities, _to_dict, resolve
 from .types import PipelineResult
 
@@ -93,4 +95,6 @@ def run_pipeline(
         config=config,
     )
 
-    return _embed(result)
+    result = _embed(result)
+    graph_path = save_pipeline_result(result)
+    return replace(result, graph_path=graph_path)

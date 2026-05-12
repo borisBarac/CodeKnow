@@ -52,7 +52,7 @@ def dev_check() -> None:
 
 def run_pipeline_cli() -> None:
     """Run the codeknow pipeline on a GitHub repository."""
-    from .pipeline import PipelineConfig, run_pipeline, save_pipeline_result
+    from .pipeline import PipelineConfig, run_pipeline
 
     parser = argparse.ArgumentParser(
         description="Run the codeknow pipeline on a GitHub repository.",
@@ -105,5 +105,4 @@ def run_pipeline_cli() -> None:
         no_semantic=args.no_semantic,
     )
 
-    result = run_pipeline(config)
-    save_pipeline_result(result)
+    run_pipeline(config)

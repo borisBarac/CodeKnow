@@ -23,6 +23,7 @@ class PipelineResult:
     stats: dict[str, Any]
     config: PipelineConfig
     embed_stats: dict | None = None
+    graph_path: Path | None = None
 
 
 class ResolveFn(Protocol):
