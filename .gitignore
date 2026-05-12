@@ -212,3 +212,6 @@ chroma-data/
 
 # E2E local env overrides
 .env.e2e.local
+
+# Graphify output
+e2e/graph_gen/code-test-small/graphify-out/

@@ -73,7 +73,6 @@ STAGES = [
     "map_chunks",
     "cluster",
     "embed",
-    "serve",
 ]
 
 STAGE_IO: dict[str, dict[str, str]] = {
@@ -114,9 +113,5 @@ STAGE_IO: dict[str, dict[str, str]] = {
     "embed": {
         "input": "PipelineResult (graph + chunk_map + communities)",
         "output": "PipelineResult (with embed_stats, side effect: upsert to ChromaDB)",
-    },
-    "serve": {
-        "input": "NetworkX Graph + CommunityMap",
-        "output": "QueryEngine (BFS/DFS/shortest_path/explain)",
     },
 }
