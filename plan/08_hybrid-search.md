@@ -1,5 +1,7 @@
 # Hybrid Search Implementation Plan
 
+[implemented]
+
 Vector + Graph Traversal (Option 2) — Library-only, no CLI entry point.
 
 ---

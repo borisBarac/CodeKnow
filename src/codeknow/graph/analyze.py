@@ -406,9 +406,9 @@ def suggest_questions(
             )
             neighbors = list(G.neighbors(node_id))
             neighbor_comms = {
-                node_community.get(n)
+                nc
                 for n in neighbors
-                if node_community.get(n) is not None and node_community.get(n) != cid
+                if (nc := node_community.get(n)) is not None and nc != cid
             }
             if neighbor_comms:
                 other_labels = [

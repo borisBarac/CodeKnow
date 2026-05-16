@@ -4,6 +4,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 _GITHUB_RE = re.compile(
     r"^https://github\.com/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$"
@@ -26,7 +27,7 @@ class PipelineConfig:
     chunk_map_filename: str = "chunk_map.json"
     no_semantic: bool = False
     no_embed: bool = False
-    embed_provider: str = "ollama"
+    embed_provider: Literal["ollama", "openrouter"] = "ollama"
     embed_model: str = "qwen3-embedding:4b"
     chroma_host: str | None = None
     chroma_port: int | None = None

@@ -11,8 +11,8 @@ from __future__ import annotations
 import atexit
 import logging
 import os
-import sys
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path

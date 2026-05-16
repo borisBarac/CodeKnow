@@ -313,7 +313,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
     nodes: list[dict] = []
     edges: list[dict] = []
     seen_ids: set[str] = set()
-    function_bodies: list[tuple[str, object]] = []
+    function_bodies: list[tuple[str, Node]] = []
 
     def add_node(nid: str, label: str, line: int, end_line: int | None = None) -> None:
         if nid not in seen_ids:
