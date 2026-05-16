@@ -24,7 +24,7 @@ The pipeline is: `detect() → extract_ast() → extract_semantic() → build_gr
 - [x] Define confidence labels: `EXTRACTED` (AST), `INFERRED` (LLM), `AMBIGUOUS` (low-score)
   - `schemas.py:20-23`: `ConfidenceLabel(str, Enum)`.
 - [x] Map each pipeline stage to its input/output:
-  - `detect()` → file type identification + corpus stats + .graphifyignore + incremental mode (`extract/detect.py`)
+  - `detect()` → file type identification + corpus stats + .graphignore + incremental mode (`extract/detect.py`)
   - `extract_ast()` → structural entities via tree-sitter, 18+ languages, caching, cross-file calls (`extract/ast.py`)
   - `extract_semantic()` → conceptual entities via LangChain (configurable model, currently **stub** — returns empty `ExtractionResult`) (`extract/semantic.py`)
   - `build_graph()` → NetworkX graph from extracted entities, dedup, normalization, incremental merge (`graph/build.py`)

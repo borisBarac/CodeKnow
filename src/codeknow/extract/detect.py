@@ -15,7 +15,7 @@ class FileType(str, Enum):
     DOCUMENT = "document"
 
 
-_MANIFEST_PATH = "graphify-out/manifest.json"
+_MANIFEST_PATH = "graph-out/manifest.json"
 
 CODE_EXTENSIONS = {
     ".py",
@@ -174,7 +174,7 @@ _SKIP_DIRS = {
     ".tox",
     ".eggs",
     "*.egg-info",
-    "graphify-out",  # never treat own output as source input (#524)
+    "graph-out",  # never treat own output as source input (#524)
 }
 
 # Large generated files that are never useful to extract
@@ -201,13 +201,13 @@ def _is_noise_dir(part: str) -> bool:
     return bool(part.endswith(".egg-info"))
 
 
-def _load_graphifyignore(root: Path) -> list[tuple[Path, str]]:
-    """Read .graphifyignore from root **and ancestor directories**.
+def _load_graphignore(root: Path) -> list[tuple[Path, str]]:
+    """Read .graphignore from root **and ancestor directories**.
 
     Returns a list of (anchor_dir, pattern) pairs. Each pattern is matched
     against paths relative to both the scan root and the anchor_dir where
-    the .graphifyignore file was found — so patterns written relative to a
-    parent directory still work when graphify is run on a subfolder.
+    the .graphignore file was found — so patterns written relative to a
+    parent directory still work when graph is run on a subfolder.
 
     Walks upward from *root* towards the filesystem root, stopping at a
     ``.git`` boundary. Lines starting with # are comments; blank lines ignored.
@@ -215,7 +215,7 @@ def _load_graphifyignore(root: Path) -> list[tuple[Path, str]]:
     patterns: list[tuple[Path, str]] = []
     current = root.resolve()
     while True:
-        ignore_file = current / ".graphifyignore"
+        ignore_file = current / ".graphignore"
         if ignore_file.exists():
             for line in ignore_file.read_text(
                 encoding="utf-8", errors="ignore"
@@ -234,7 +234,7 @@ def _load_graphifyignore(root: Path) -> list[tuple[Path, str]]:
 
 
 def _is_ignored(path: Path, root: Path, patterns: list[tuple[Path, str]]) -> bool:
-    """Return True if path matches any .graphifyignore pattern."""
+    """Return True if path matches any .graphignore pattern."""
     if not patterns:
         return False
 
@@ -262,7 +262,7 @@ def _is_ignored(path: Path, root: Path, patterns: list[tuple[Path, str]]) -> boo
                 return True
         except ValueError:
             pass
-        # Also try relative to the anchor dir (the .graphifyignore's location),
+        # Also try relative to the anchor dir (the .graphignore's location),
         # so patterns written at a parent level still fire when running on a subfolder
         if anchor != root:
             try:
@@ -283,10 +283,10 @@ def detect(root: Path, *, follow_symlinks: bool = False) -> dict:
     total_words = 0
 
     skipped_sensitive: list[str] = []
-    ignore_patterns = _load_graphifyignore(root)
+    ignore_patterns = _load_graphignore(root)
 
-    # Always include graphify-out/memory/ - query results filed back into the graph
-    memory_dir = root / "graphify-out" / "memory"
+    # Always include graph-out/memory/ - query results filed back into the graph
+    memory_dir = root / "graph-out" / "memory"
     scan_paths = [root]
     if memory_dir.exists():
         scan_paths.append(memory_dir)
@@ -325,7 +325,7 @@ def detect(root: Path, *, follow_symlinks: bool = False) -> dict:
                     seen.add(p)
                     all_files.append(p)
 
-    converted_dir = root / "graphify-out" / "converted"
+    converted_dir = root / "graph-out" / "converted"
 
     for p in all_files:
         # For memory dir files, skip hidden/noise filtering
@@ -371,7 +371,7 @@ def detect(root: Path, *, follow_symlinks: bool = False) -> dict:
         "needs_graph": needs_graph,
         "warning": warning,
         "skipped_sensitive": skipped_sensitive,
-        "graphifyignore_patterns": len(ignore_patterns),
+        "graphignore_patterns": len(ignore_patterns),
     }
 
 

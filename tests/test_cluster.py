@@ -80,6 +80,6 @@ def test_cluster_does_not_write_to_stderr(capsys):
     G = make_graph()
     cluster(G)
     captured = capsys.readouterr()
-    # Allow logging output (starts with [graphify]) but no raw ANSI codes
+    # Allow logging output (starts with [graph]) but no raw ANSI codes
     for line in captured.err.splitlines():
         assert "\x1b" not in line, f"cluster() wrote ANSI to stderr: {line!r}"

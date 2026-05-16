@@ -1,5 +1,7 @@
 # PRD: Semantic Search for CodeKnow
 
+[implemented]
+
 ## Problem
 
 The pipeline produces a rich knowledge graph (nodes, edges, communities, chunks) but retrieval is limited to **keyword matching** on node labels via the MCP engine (`graph/engine.py`). Users cannot ask natural-language questions like "how does authentication work?" and get relevant code back.

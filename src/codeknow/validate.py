@@ -1,6 +1,6 @@
 """Validate extraction JSON and graph data against the codeknow schema.
 
-Extends graphify's validation with checks for new fields:
+Extends graph's validation with checks for new fields:
 - ``chunks[]`` on nodes (optional, hash format)
 - ``community`` on nodes (optional, int)
 - ``confidence_score`` on edges (optional, float 0.0–1.0)

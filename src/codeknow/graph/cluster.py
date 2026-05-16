@@ -22,7 +22,7 @@ def _suppress_output() -> AbstractContextManager[None]:
     graspologic's leiden() emits ANSI escape sequences (progress bars,
     colored warnings) that corrupt PowerShell 5.1's scroll buffer on
     Windows (see issue #19). Redirecting stdout/stderr to devnull during
-    the call prevents this without losing any graphify output.
+    the call prevents this without losing any graph output.
     """
     return contextlib.redirect_stdout(io.StringIO())  # type: ignore[arg-type]
 

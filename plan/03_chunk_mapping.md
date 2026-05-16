@@ -84,7 +84,7 @@ Returns `hash → [node_ids]` for vector→graph lookup.
 - [x] **`chunk_file_ast()`** — `chunk_mapper.py:50-141` (tree-sitter AST-aware boundaries)
 - [x] **`build_chunk_map()` dispatch** — routes code files → AST, others → linear (`chunk_mapper.py:189-209`)
 - [x] **`map_chunks` wired as default** — `pipeline.py:126,132,152` (always runs, no longer conditional)
-- [x] **`save_pipeline_result()`** — writes `graph.json` + `chunk_map.json` to `graphify-out/` (`pipeline.py:191-215`)
+- [x] **`save_pipeline_result()`** — writes `graph.json` + `chunk_map.json` to `graph-out/` (`pipeline.py:191-215`)
 
 ## Checklist
 
@@ -106,7 +106,7 @@ Returns `hash → [node_ids]` for vector→graph lookup.
 - [x] **Implement chunking dispatch** — `build_chunk_map()` routes by extension (`chunk_mapper.py:202-206`)
 - [x] **Wire `map_chunks()` as default in `pipeline.py`** — imported as `_default_map_chunks` at `pipeline.py:126`, always runs (`pipeline.py:132,152`)
 - [x] **Serialize `chunk_map.json` to disk** — `save_pipeline_result()` at `pipeline.py:191-215`
-- [ ] **Serialize `chunk_index.json` to disk** — `build_reverse_index()` produces in-memory dict only. No code writes it to `graphify-out/chunk_index.json`.
+- [ ] **Serialize `chunk_index.json` to disk** — `build_reverse_index()` produces in-memory dict only. No code writes it to `graph-out/chunk_index.json`.
 - [ ] **Coordinate hash with vector pipeline** — extract chunking logic into shared module so both graph and vector pipelines produce identical hashes.
 
 ## Hash Contract
@@ -128,7 +128,7 @@ This hashes UTF-8 re-encoded text (after `read_text(encoding="utf-8", errors="re
 
 ## Local File Layout After Build
 ```
-./graphify-out/
+./graph-out/
   graph.json          ← nodes with chunks[] populated
   chunk_map.json      ← file → [{start_line, end_line, hash}]
   chunk_index.json    ← hash → [node_ids] (reverse lookup) [NOT YET WRITTEN]

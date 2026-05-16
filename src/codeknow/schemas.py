@@ -1,11 +1,11 @@
 """Core data model — Pydantic v2 schemas for nodes, edges, chunks, and pipeline I/O.
 
-These schemas extend the graphify output format with:
+These schemas extend the graph output format with:
 - ``chunks[]`` on nodes (link to code chunk hashes)
 - ``community`` on nodes (Leiden community ID)
 - ``confidence_score`` on edges (numeric 0.0–1.0)
 
-All new fields are Optional with defaults — old graphify ``graph.json`` files
+All new fields are Optional with defaults — old graph ``graph.json`` files
 parse without error.
 """
 
@@ -52,7 +52,7 @@ class ChunkRef(BaseModel):
 class Node(BaseModel):
     """A graph node representing a code entity (class, function, module, concept).
 
-    Extends graphify's node format with ``chunks`` and ``community``.
+    Extends graph's node format with ``chunks`` and ``community``.
     All fields except ``id`` and ``label`` are optional for backward compatibility.
     """
 
@@ -71,7 +71,7 @@ class Node(BaseModel):
 class Edge(BaseModel):
     """A directed relationship between two nodes.
 
-    Extends graphify's edge format with ``confidence_score``.
+    Extends graph's edge format with ``confidence_score``.
     """
 
     source: str

@@ -856,7 +856,7 @@ def _check_tree_sitter_version() -> None:
 
         msg = (
             f"tree-sitter {getattr(_ts, '__version__', 'unknown')} is too old. "
-            f"graphify requires tree-sitter >= 0.23.0 (Language API v2). "
+            f"graph requires tree-sitter >= 0.23.0 (Language API v2). "
             f"Run: pip install --upgrade tree-sitter"
         )
         raise RuntimeError(msg)
@@ -872,9 +872,9 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
 
     Args:
         paths: files to extract from
-        cache_root: explicit root for graphify-out/cache/ (overrides the
+        cache_root: explicit root for graph-out/cache/ (overrides the
             inferred common path prefix). Pass Path('.') when running on a
-            subdirectory so the cache stays at ./graphify-out/cache/.
+            subdirectory so the cache stays at ./graph-out/cache/.
 
     """
     _check_tree_sitter_version()
@@ -1019,10 +1019,10 @@ def collect_files(
     if target.is_file():
         return [target]
     _EXTENSIONS = {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".ejs"}
-    from codeknow.extract.detect import _is_ignored, _load_graphifyignore
+    from codeknow.extract.detect import _is_ignored, _load_graphignore
 
     ignore_root = root if root is not None else target
-    patterns = _load_graphifyignore(ignore_root)
+    patterns = _load_graphignore(ignore_root)
 
     def _ignored(p: Path) -> bool:
         return bool(patterns and _is_ignored(p, ignore_root, patterns))

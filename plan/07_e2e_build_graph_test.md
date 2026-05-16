@@ -1,5 +1,7 @@
 # Plan: E2E Knowledge Graph Test
 
+[implemented]
+
 ## Goal
 
 Test the knowledge graph creation pipeline end-to-end on a real codebase (`code-test-small/`) — from file detection through graph building and clustering.

@@ -184,7 +184,7 @@ def deduplicate_by_label(
 
 def build_merge(
     new_chunks: list[dict],
-    graph_path: str | Path = "graphify-out/graph.json",
+    graph_path: str | Path = "graph-out/graph.json",
     prune_sources: list[str] | None = None,
     *,
     directed: bool = False,
@@ -230,7 +230,7 @@ def build_merge(
         new_n = G.number_of_nodes()
         if new_n < existing_n:
             msg = (
-                f"graphify: build_merge would shrink graph "
+                f"graph: build_merge would shrink graph "
                 f"from {existing_n} → {new_n} nodes. "
                 f"Pass prune_sources explicitly if you intend to remove nodes."
             )
