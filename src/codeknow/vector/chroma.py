@@ -139,6 +139,7 @@ class ChromaStore:
 
         collection = self._get_or_create_collection()
         stored = 0
+        seen: set[str] = set()
 
         for offset in range(0, len(chunks), batch_size):
             batch = chunks[offset : offset + batch_size]
@@ -148,6 +149,9 @@ class ChromaStore:
             metas: list[dict[str, Any]] = []
 
             for chunk in batch:
+                if chunk.hash in seen:
+                    continue
+                seen.add(chunk.hash)
                 content = read_chunk_content(chunk)
                 if not content.strip():
                     logger.warning(
@@ -291,6 +295,29 @@ class ChromaStore:
             self._config.collection_name,
         )
         return len(ids)
+
+    def get_by_ids(self, chunk_hashes: list[str]) -> list[SearchResult]:
+        """Fetch chunk content + metadata by hash."""
+        if not chunk_hashes:
+            return []
+        collection = self._get_or_create_collection()
+        results = collection.get(ids=chunk_hashes, include=["documents", "metadatas"])
+        search_results: list[SearchResult] = []
+        ids: list[str] = results.get("ids", []) or []
+        documents: list[str] = results.get("documents", []) or []
+        metadatas_raw = results.get("metadatas", []) or []
+        metadatas: list[dict[str, Any]] = [
+            dict(m) if m is not None else {} for m in metadatas_raw
+        ]
+        for i, chunk_hash in enumerate(ids):
+            search_results.append(
+                SearchResult(
+                    hash=chunk_hash,
+                    document=documents[i] if i < len(documents) else None,
+                    metadata=metadatas[i] if i < len(metadatas) else None,
+                )
+            )
+        return search_results
 
     def count(self) -> int:
         return self._get_or_create_collection().count()

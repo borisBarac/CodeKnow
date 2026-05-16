@@ -119,3 +119,27 @@ ChunkMap = dict[str, list[Chunk]]
 
 CommunityMap = dict[int, list[str]]
 """community_id → list of node IDs. Output of Leiden clustering."""
+
+
+class HybridSearchResult(BaseModel):
+    """A single result from hybrid (vector + graph) search."""
+
+    chunk_hash: str
+    file: str
+    start_line: int
+    end_line: int
+    content: str
+    distance: float | None = None
+    node_labels: list[str] = Field(default_factory=list)
+    community_ids: list[int] = Field(default_factory=list)
+    provenance: str = "vector"
+    graph_path: list[str] | None = None
+
+
+class HybridSearchResponse(BaseModel):
+    """Response from a hybrid search query."""
+
+    query: str
+    vector_hits: int
+    graph_expanded: int
+    results: list[HybridSearchResult]
