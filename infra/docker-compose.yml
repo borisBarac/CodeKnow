@@ -10,3 +10,11 @@ services:
     environment:
       - CONFIG_PATH=/chroma/config.yaml
     restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
