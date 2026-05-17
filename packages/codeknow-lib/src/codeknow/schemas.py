@@ -122,8 +122,6 @@ CommunityMap = dict[int, list[str]]
 
 
 class HybridSearchResult(BaseModel):
-    """A single result from hybrid (vector + graph) search."""
-
     chunk_hash: str
     file: str
     start_line: int
@@ -134,6 +132,7 @@ class HybridSearchResult(BaseModel):
     community_ids: list[int] = Field(default_factory=list)
     provenance: str = "vector"
     graph_path: list[str] | None = None
+    slug: str | None = None
 
 
 class HybridSearchResponse(BaseModel):

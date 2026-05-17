@@ -10,6 +10,10 @@ _GITHUB_RE = re.compile(
     r"^https://github\.com/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$"
 )
 
+_GITHUB_SSH_RE = re.compile(
+    r"^git@github\.com:(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?$"
+)
+
 
 def _env_path(key: str, default: Path) -> Path:
     raw = os.environ.get(key)
@@ -38,7 +42,9 @@ class PipelineConfig:
     def slug(self) -> str:
         match = _GITHUB_RE.match(self.repo_url)
         if not match:
-            return self.repo_url.replace("/", "-").replace(".git", "")
+            match = _GITHUB_SSH_RE.match(self.repo_url)
+        if not match:
+            return self.repo_url.replace("/", "-").replace(":", "-").replace(".git", "")
         return f"{match.group('owner')}-{match.group('repo')}"
 
     def resolved_input_dir(self) -> Path:

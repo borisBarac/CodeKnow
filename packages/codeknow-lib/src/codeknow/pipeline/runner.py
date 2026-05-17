@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from codeknow.git_download.downloader import get_commit_hash
+
 from .io import save_pipeline_result
 from .stages import _assign_communities, _to_dict, resolve
 from .types import PipelineResult
@@ -55,6 +57,7 @@ def run_pipeline(
     _embed = embed_fn or _default_embed
 
     root = _resolve(config)
+    commit_hash = get_commit_hash(root)
 
     raw = _detect(root)
     discovery = raw if isinstance(raw, dict) else _to_dict(raw)
@@ -97,4 +100,4 @@ def run_pipeline(
 
     result = _embed(result)
     graph_path = save_pipeline_result(result)
-    return replace(result, graph_path=graph_path)
+    return replace(result, graph_path=graph_path, commit_hash=commit_hash)

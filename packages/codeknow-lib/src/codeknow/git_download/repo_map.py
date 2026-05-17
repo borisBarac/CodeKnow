@@ -55,6 +55,17 @@ def get_url(local_path: Path, *, store_path: Path = DEFAULT_STORE_PATH) -> str |
     return None
 
 
+def unregister(
+    repo_url: str,
+    *,
+    store_path: Path = DEFAULT_STORE_PATH,
+) -> dict[str, str]:
+    mapping = load(store_path=store_path)
+    mapping.pop(repo_url, None)
+    save(mapping, store_path=store_path)
+    return mapping
+
+
 def list_all(*, store_path: Path = DEFAULT_STORE_PATH) -> dict[str, str]:
     """Return the full {repo_url: local_path_str} mapping."""
     return load(store_path=store_path)

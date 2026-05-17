@@ -22,6 +22,13 @@ def is_cloned(target_path: Path) -> bool:
     return (target_path / ".git").exists()
 
 
+def get_commit_hash(target_path: Path) -> str | None:
+    try:
+        return Repo(target_path).head.commit.hexsha
+    except ValueError:
+        return None
+
+
 def download(repo_url: str, target_path: Path) -> Path:
     """Clone the repo if missing, or pull latest if already present.
 

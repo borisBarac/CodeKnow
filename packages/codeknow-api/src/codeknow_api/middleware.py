@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any
 from urllib.parse import parse_qs
 
 Scope = dict[str, Any]
@@ -28,35 +29,41 @@ async def _read_body(receive: Receive) -> bytes:
     return body
 
 
-_STUB_ROUTES: dict[str, dict[str, Callable[[bytes, str], tuple[int, dict[str, Any]]]]] = {
+_Handler = Callable[[bytes, str], tuple[int, dict[str, Any]]]
+
+_STUB_ROUTES: dict[str, dict[str, _Handler]] = {
     "POST": {
-        "/v1/build": lambda body, qs: (
+        "/v1/build": lambda body, _qs: (
             202,
             {
-                "status": "pending",
+                "status": "done",
+                "slug": "stub-owner-stub-repo",
+                "commit_hash": "a" * 40,
                 "github_ssh_url": json.loads(body).get("github_ssh_url", ""),
             },
         ),
-        "/v1/search": lambda body, qs: (
+        "/v1/search": lambda body, _qs: (
             200,
             {
-                "results": [],
                 "query": json.loads(body).get("query"),
-                "total": 0,
+                "vector_hits": 0,
+                "graph_expanded": 0,
+                "results": [],
             },
         ),
     },
     "DELETE": {
-        "/v1/repos": lambda body, qs: (
+        "/v1/repos": lambda _body, qs: (
             200,
             {
                 "status": "deleted",
+                "slug": "stub-owner-stub-repo",
                 "github_ssh_url": _extract_url(qs),
             },
         ),
     },
     "GET": {
-        "/v1/repos": lambda body, qs: (200, {"repos": []}),
+        "/v1/repos": lambda _body, _qs: (200, {"repos": []}),
     },
 }
 

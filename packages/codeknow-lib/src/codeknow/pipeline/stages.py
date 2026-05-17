@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .config import _GITHUB_RE
+from .config import _GITHUB_RE, _GITHUB_SSH_RE
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -23,9 +23,12 @@ def resolve(config: PipelineConfig, **kwargs: Any) -> Path:
 
     match = _GITHUB_RE.match(config.repo_url)
     if not match:
+        match = _GITHUB_SSH_RE.match(config.repo_url)
+    if not match:
         msg = (
             f"Invalid GitHub URL: {config.repo_url}. "
-            "Expected https://github.com/<owner>/<repo>[.git]"
+            "Expected https://github.com/<owner>/<repo>[.git] "
+            "or git@github.com:<owner>/<repo>[.git]"
         )
         raise ValueError(msg)
 

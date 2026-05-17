@@ -22,6 +22,7 @@ class PipelineResult:
     discovery: dict
     stats: dict[str, Any]
     config: PipelineConfig
+    commit_hash: str | None = None
     embed_stats: dict | None = None
     graph_path: Path | None = None
 

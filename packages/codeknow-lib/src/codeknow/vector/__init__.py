@@ -32,6 +32,7 @@ from .store import SearchResult, VectorStore
 
 with contextlib.suppress(ImportError):
     from .chroma import ChromaConfig, ChromaStore
+    from .multi_search import multi_graph_search
     from .search import HybridSearchResponse, HybridSearchResult, hybrid_search
 
 __all__ = [
@@ -49,4 +50,5 @@ __all__ = [
     "embed_chunks",
     "embed_texts",
     "hybrid_search",
+    "multi_graph_search",
 ]
