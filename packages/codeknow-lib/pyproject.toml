@@ -20,7 +20,7 @@ classifiers = [
 dependencies = [
     "gitpython",
     "networkx",
-    "pydantic>=2.0",
+    "pydantic>=2.12.5",
     "pydantic-settings",
     "tree-sitter>=0.23.0",
     "tree-sitter-python",
@@ -30,11 +30,8 @@ dependencies = [
     "langchain-core",
     "langchain-openai",
     "chromadb",
-    "redis[hiredis]>=5.0",
+    "redis[hiredis]>=7.1.0",
 ]
-
-[project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "ruff", "mypy"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/codeknow"]

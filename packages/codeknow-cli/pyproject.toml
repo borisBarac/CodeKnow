@@ -5,16 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "codeknow-cli"
 version = "0.1.0"
-description = "CLI tools for the codeknow pipeline"
+description = "User-facing CLI client for the codeknow API"
 requires-python = ">=3.10,<3.14"
-dependencies = ["codeknow-lib"]
-
-[project.scripts]
-dev-check = "codeknow_cli.cli:dev_check"
-pipeline = "codeknow_cli.cli:run_pipeline_cli"
+dependencies = []
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/codeknow_cli"]
-
-[tool.uv.sources]
-codeknow-lib = { workspace = true }

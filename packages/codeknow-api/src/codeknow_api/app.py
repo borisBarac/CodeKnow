@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 
 
@@ -39,8 +40,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         description="Knowledge graph service for code",
     )
-
-    build_status: dict[str, Any] = {"status": "idle", "progress": 0}
+    app.state.build_status = {"status": "idle", "progress": 0}
 
     @app.post("/v1/graph/query")
     async def graph_query(req: QueryRequest) -> dict[str, Any]:
@@ -64,14 +64,13 @@ def create_app() -> FastAPI:
         return {"chunks": {}, "node_ids": req.node_ids}
 
     @app.post("/v1/graph/build", status_code=202)
-    async def graph_build(req: BuildRequest) -> dict[str, Any]:
-        build_status["status"] = "pending"
-        build_status["progress"] = 0
+    async def graph_build(req: BuildRequest, request: Request) -> dict[str, Any]:
+        request.app.state.build_status = {"status": "pending", "progress": 0}
         return {"status": "pending", "source": req.source, "mode": req.mode}
 
     @app.get("/v1/graph/status")
-    async def graph_status() -> dict[str, Any]:
-        return build_status
+    async def graph_status(request: Request) -> dict[str, Any]:
+        return dict(request.app.state.build_status)
 
     return app
 
@@ -80,9 +79,10 @@ def main() -> None:
     """Run the API server."""
     import uvicorn
 
+    host = os.getenv("CODEKNOW_API_HOST", "127.0.0.1")
     uvicorn.run(
         "codeknow_api.app:create_app",
         factory=True,
-        host="127.0.0.1",
+        host=host,
         port=8080,
     )

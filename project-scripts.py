@@ -35,7 +35,7 @@ def dev_check() -> None:
             "ruff format",
             [sys.executable, "-m", "ruff", "format", "."],
         ),
-        ("mypy", [sys.executable, "-m", "mypy", "packages/codeknow-lib/src"]),
+        ("mypy", [sys.executable, "-m", "mypy", "packages"]),
     ]
 
     failed: list[str] = []
@@ -106,3 +106,21 @@ def run_pipeline_cli() -> None:
     )
 
     run_pipeline(config)
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        print("Usage: project-scripts.py <command>")  # noqa: T201
+        sys.exit(1)
+    cmd = sys.argv.pop(1)
+    if cmd == "dev-check":
+        dev_check()
+    elif cmd == "pipeline":
+        run_pipeline_cli()
+    else:
+        print(f"Unknown command: {cmd}")  # noqa: T201
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
