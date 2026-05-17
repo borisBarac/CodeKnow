@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs
 
 Scope = dict[str, Any]
@@ -22,10 +22,10 @@ def _extract_url(query_string: str) -> str:
 async def _read_body(receive: Receive) -> bytes:
     body = b""
     message = await receive()
-    body += message.get("body", b"")
+    body += cast(bytes, message.get("body", b""))
     while message.get("more_body"):
         message = await receive()
-        body += message.get("body", b"")
+        body += cast(bytes, message.get("body", b""))
     return body
 
 
@@ -39,6 +39,9 @@ _STUB_ROUTES: dict[str, dict[str, _Handler]] = {
                 "status": "done",
                 "slug": "stub-owner-stub-repo",
                 "commit_hash": "a" * 40,
+                "node_count": 0,
+                "edge_count": 0,
+                "community_count": 0,
                 "github_ssh_url": json.loads(body).get("github_ssh_url", ""),
             },
         ),
@@ -53,12 +56,13 @@ _STUB_ROUTES: dict[str, dict[str, _Handler]] = {
         ),
     },
     "DELETE": {
-        "/v1/repos": lambda _body, qs: (
+        "/v1/repos": lambda body, _qs: (
             200,
             {
                 "status": "deleted",
                 "slug": "stub-owner-stub-repo",
-                "github_ssh_url": _extract_url(qs),
+                "chunks_deleted": 0,
+                "github_ssh_url": json.loads(body).get("url", ""),
             },
         ),
     },

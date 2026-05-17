@@ -22,6 +22,9 @@ def _decode(val: bytes | str | None) -> str | None:
     return val if isinstance(val, str) else val.decode()
 
 
+# Not used at the moment, fileStore is more optimal at the moment
+
+
 class AsyncRedisCacheStore:
     def __init__(
         self,

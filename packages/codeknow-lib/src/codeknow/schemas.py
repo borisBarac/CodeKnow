@@ -142,3 +142,26 @@ class HybridSearchResponse(BaseModel):
     vector_hits: int
     graph_expanded: int
     results: list[HybridSearchResult]
+
+
+class RepoMetadata(BaseModel):
+    github_ssh_url: str
+    slug: str
+    commit_hash: str
+    built_at: str
+    node_count: int
+    edge_count: int
+    community_count: int
+    health: str | None = None
+    build_status: str | None = None
+    build_progress: int | None = None
+
+    model_config = {"extra": "allow"}
+
+
+class ListReposResponse(BaseModel):
+    repos: list[RepoMetadata]
+    total: int
+    page: int
+    page_size: int
+    errors: list[dict[str, str]] = []

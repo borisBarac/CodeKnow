@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from codeknow_api.params import is_valid_github_ssh_url, validate_github_ssh_url
 
 
