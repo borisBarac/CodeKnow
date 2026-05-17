@@ -2,9 +2,8 @@
 
 from pathlib import Path
 
-from git import Repo
-
 from codeknow.git_download import download, is_cloned
+from git import Repo
 
 
 def _make_local_remote(tmp_path: Path) -> Path:

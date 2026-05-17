@@ -4,7 +4,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import networkx as nx
-
 from codeknow.pipeline import PipelineConfig, PipelineResult
 from codeknow.schemas import Chunk
 from codeknow.vector.metadata import build_chunk_metadata

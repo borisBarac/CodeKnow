@@ -215,3 +215,8 @@ chroma-data/
 
 # Graphify output
 e2e/graph_gen/code-test-small/graph-out/
+
+# Workspace package build artifacts
+packages/*/*.egg-info/
+packages/*/dist/
+packages/*/.eggs/

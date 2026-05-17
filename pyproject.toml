@@ -2,48 +2,22 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[project]
-name = "codeknow"
-version = "0.1.0"
-description = "Knowledge graph pipeline for code — extract entities, map to chunks, serve via API"
-requires-python = ">=3.10,<3.14"
-keywords = ["knowledge-graph", "code-analysis", "tree-sitter"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+codeknow-lib = { workspace = true }
+codeknow-api = { workspace = true }
+codeknow-cli = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "mypy>=2.0.0",
+    "pytest>=9.0.3",
+    "ruff>=0.11.0",
+    "types-networkx>=3.6.1.20260508",
+    "types-openpyxl>=3.1.5.20260508",
 ]
-dependencies = [
-    "gitpython",
-    "networkx",
-    "pydantic>=2.0",
-    "pydantic-settings",
-    "tree-sitter>=0.23.0",
-    "tree-sitter-python",
-    "tree-sitter-javascript",
-    "tree-sitter-typescript",
-    "fastapi",
-    "uvicorn",
-    "graspologic; python_version < '3.13'",
-    "langchain-core",
-    "langchain-openai",
-    "chromadb",
-    "redis[hiredis]>=5.0",
-]
-
-[project.scripts]
-dev-check = "codeknow.cli:dev_check"
-pipeline = "codeknow.cli:run_pipeline_cli"
-
-[project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "ruff", "mypy"]
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/codeknow"]
 
 [tool.ruff]
 exclude = ["raw", "plan", ".venv"]
@@ -90,11 +64,11 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ANN001", "ANN201", "ANN202", "INP001", "N802", "S101"]
+"**/tests/**" = ["ANN001", "ANN201", "ANN202", "INP001", "N802", "S101"]
 "e2e/**" = ["ANN001", "ANN201", "ANN202", "INP001", "N802", "S101"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["packages/codeknow-lib/tests"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -109,12 +83,3 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["codeknow.cache.redis"]
 disable_error_code = ["arg-type", "assignment", "misc"]
-
-[dependency-groups]
-dev = [
-    "mypy>=2.0.0",
-    "pytest>=9.0.3",
-    "ruff>=0.11.0",
-    "types-networkx>=3.6.1.20260508",
-    "types-openpyxl>=3.1.5.20260508",
-]

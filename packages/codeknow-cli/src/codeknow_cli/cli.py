@@ -1,4 +1,4 @@
-"""CLI entry-points registered via ``[project.scripts]`` in pyproject.toml."""
+"""CLI entry-points registered via ``[project.scripts]`` in codeknow-cli."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def dev_check() -> None:
             "ruff format",
             [sys.executable, "-m", "ruff", "format", "."],
         ),
-        ("mypy", [sys.executable, "-m", "mypy", "src"]),
+        ("mypy", [sys.executable, "-m", "mypy", "packages/codeknow-lib/src"]),
     ]
 
     failed: list[str] = []
@@ -52,7 +52,7 @@ def dev_check() -> None:
 
 def run_pipeline_cli() -> None:
     """Run the codeknow pipeline on a GitHub repository."""
-    from .pipeline import PipelineConfig, run_pipeline
+    from codeknow.pipeline import PipelineConfig, run_pipeline
 
     parser = argparse.ArgumentParser(
         description="Run the codeknow pipeline on a GitHub repository.",

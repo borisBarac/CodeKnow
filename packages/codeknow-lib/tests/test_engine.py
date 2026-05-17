@@ -1,6 +1,5 @@
 import networkx as nx
 import pytest
-
 from codeknow.graph.engine import (
     _bfs,
     _communities_from_graph,

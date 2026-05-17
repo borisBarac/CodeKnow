@@ -2,7 +2,6 @@
 
 import networkx as nx
 import pytest
-
 from codeknow.graph.analyze import _surprise_score
 from codeknow.graph.build import build_from_json
 

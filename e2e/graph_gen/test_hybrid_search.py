@@ -22,7 +22,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import chromadb
 from check_services import check_chroma, check_ollama
-
 from codeknow.extract.ast import extract_ast
 from codeknow.extract.detect import detect
 from codeknow.graph.build import build

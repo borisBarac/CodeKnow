@@ -24,7 +24,6 @@ from pathlib import Path
 
 import chromadb
 from check_services import check_chroma, check_ollama
-
 from codeknow.schemas import Chunk
 from codeknow.vector import (
     ChromaConfig,

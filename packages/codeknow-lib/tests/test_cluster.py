@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import networkx as nx
-
 from codeknow.graph.build import build_from_json
 from codeknow.graph.cluster import cluster, cohesion_score, score_all
 

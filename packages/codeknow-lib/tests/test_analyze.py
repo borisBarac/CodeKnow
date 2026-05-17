@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import networkx as nx
-
 from codeknow.graph.analyze import (
     _file_category,
     _is_concept_node,

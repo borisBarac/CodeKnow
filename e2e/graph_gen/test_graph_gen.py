@@ -2,7 +2,6 @@ import logging
 from pathlib import Path
 
 import pytest
-
 from codeknow.extract.ast import extract_ast
 from codeknow.extract.detect import detect
 from codeknow.graph.build import build
