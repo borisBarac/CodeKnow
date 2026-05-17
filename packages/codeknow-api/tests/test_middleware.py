@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
-from typing import Any
+from collections.abc import Callable  # noqa: TC003
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable
 
 import pytest
 from codeknow_api.middleware import (
@@ -15,10 +18,6 @@ from codeknow_api.middleware import (
     _extract_url,
     _read_body,
 )
-
-Scope = dict[str, Any]
-Receive = Callable[[], Awaitable[dict[str, Any]]]
-Send = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class TestExtractUrl:
@@ -137,7 +136,9 @@ class TestStubMiddleware:
         assert resp["github_ssh_url"] == "git@github.com:owner/repo.git"
 
     @pytest.mark.anyio
-    async def test_intercepts_post_search(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_intercepts_post_search(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("CODEKNOW_STUB", "1")
         calls: list[Scope] = []
         inner = await _make_inner_app(calls)

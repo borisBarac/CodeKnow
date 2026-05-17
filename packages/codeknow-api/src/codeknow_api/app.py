@@ -12,6 +12,7 @@ from typing import Any
 from codeknow.schemas import ListReposResponse, RepoMetadata
 from fastapi import FastAPI, HTTPException, Query
 
+from codeknow_api.cache import cache_search, close_redis, invalidate_for_slug
 from codeknow_api.middleware import StubMiddleware
 from codeknow_api.models import BuildRequest, BuildResponse, DeleteRepoRequest
 
@@ -30,7 +31,12 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(StubMiddleware)
     app.state.build_status = {}  # type: ignore[assignment]
-    app.state.build_locks: dict[str, asyncio.Lock] = {}
+    build_locks: dict[str, asyncio.Lock] = {}
+    app.state.build_locks = build_locks
+
+    @app.on_event("shutdown")
+    async def _shutdown() -> None:
+        await close_redis()
 
     @app.post("/v1/build", status_code=202)
     async def build(body: BuildRequest) -> BuildResponse:
@@ -50,6 +56,30 @@ def create_app() -> FastAPI:
             )
         try:
             app.state.build_status[slug] = {"status": "building", "progress": 0}
+
+            if (GRAPH_DIR / slug).exists():
+                shutil.rmtree(GRAPH_DIR / slug, ignore_errors=True)
+                shutil.rmtree(TEMP_DIR / slug, ignore_errors=True)
+                try:
+                    from codeknow.vector.chroma import ChromaConfig, ChromaStore
+                    from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
+
+                    embeddings = create_embeddings(EmbeddingConfig())
+                    collection_name = config.chroma_collection or f"codeknow_{slug}"
+                    store = ChromaStore(
+                        config=ChromaConfig(
+                            host=config.chroma_host,
+                            port=config.chroma_port,
+                            collection_name=collection_name,
+                        ),
+                        embeddings=embeddings,
+                    )
+                    store.delete_by_slug(slug)
+                except Exception:
+                    logger.warning(
+                        "ChromaDB cleanup failed for slug '%s'", slug, exc_info=True
+                    )
+
             try:
                 result = await asyncio.to_thread(run_pipeline, config)
             except Exception as exc:
@@ -57,6 +87,7 @@ def create_app() -> FastAPI:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
             shutil.rmtree(TEMP_DIR / slug, ignore_errors=True)
             app.state.build_status[slug] = {"status": "done", "progress": 100}
+            await invalidate_for_slug(slug)
 
             return BuildResponse(
                 status="done",
@@ -70,6 +101,7 @@ def create_app() -> FastAPI:
             lock.release()
 
     @app.post("/v1/search")
+    @cache_search()
     async def search(body: dict[str, Any]) -> dict[str, Any]:
         from codeknow.vector.multi_search import multi_graph_search
 
