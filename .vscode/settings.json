@@ -1,0 +1,17 @@
+{
+  "mypy-type-checker.args": [
+    "--config-file=pyproject.toml",
+    "--python-version=3.13",
+    "--warn-return-any",
+    "--warn-unused-configs",
+    "--disallow-untyped-defs"
+  ],
+  "mypy-type-checker.ignorePatterns": [
+    "e2e/**",
+    "**/tests/**"
+  ],
+  "cSpell.words": [
+    "codeknow",
+    "ollama"
+  ]
+}

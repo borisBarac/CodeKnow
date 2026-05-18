@@ -76,7 +76,13 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = ["tests.*", "*.tests.*", "e2e.*"]
+module = ["tests.*", "*.tests.*", "e2e.*", "e2e", "e2e.*.*"]
+disallow_untyped_defs = false
+disallow_untyped_calls = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+allow_untyped_defs = true
+allow_untyped_calls = true
 ignore_errors = true
 
 [[tool.mypy.overrides]]

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import atexit
 import logging
-import os
 import shutil
 import tempfile
 import time
