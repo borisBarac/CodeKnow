@@ -4,12 +4,13 @@ Verifies the full lifecycle: generate embeddings from real code text,
 store them in ChromaDB, search by text and by vector, and delete.
 
 No pytest fixtures — all setup runs at module import time:
-  1. Parse e2e/.env.e2e → apply to os.environ
-  2. Health-check Ollama & ChromaDB via check_services.py
-  3. Create Embeddings + ChromaStore
-  4. Write real Python source files to a temp dir
-  5. Build Chunk objects and store embeddings
-  6. atexit cleanup deletes the test collection
+  1. Health-check Ollama & ChromaDB via check_services.py
+  2. Create Embeddings + ChromaStore
+  3. Write real Python source files to a temp dir
+  4. Build Chunk objects and store embeddings
+  5. atexit cleanup deletes the test collection
+
+Env vars are loaded by e2e/conftest.py.
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ from __future__ import annotations
 import atexit
 import hashlib
 import logging
-import os
 import tempfile
 import time
 from pathlib import Path
@@ -61,35 +61,15 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def _parse_env(path: Path) -> dict[str, str]:
-    pairs: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        pairs[key.strip()] = value.strip()
-    return pairs
-
-
 def _file(r) -> str:
     return r.metadata.get("file", "") if r.metadata else ""
 
 
-# ── 1. Load env vars from .env.test ──────────────────────────────────
-_HERE = Path(__file__).resolve().parent
-_ENV_FILE = Path(os.environ.get("E2E_ENV_FILE", str(_HERE / ".env.e2e")))
-
-for _k, _v in _parse_env(_ENV_FILE).items():
-    os.environ.setdefault(_k, _v)
-
-# ── 2. Health-check services ─────────────────────────────────────────
+# ── 1. Health-check services ─────────────────────────────────────────
 check_ollama()
 check_chroma()
 
-# ── 3. Create clients ────────────────────────────────────────────────
+# ── 2. Create clients ────────────────────────────────────────────────
 _emb_cfg = EmbeddingConfig()
 EMBEDDINGS = create_embeddings(_emb_cfg)
 logger.info(
@@ -101,7 +81,7 @@ _store_config = ChromaConfig(collection_name=_COLLECTION)
 STORE = ChromaStore(config=_store_config, embeddings=EMBEDDINGS)
 logger.info("Created ChromaStore: collection=%s", _COLLECTION)
 
-# ── 4. Write real source files ───────────────────────────────────────
+# ── 3. Write real source files ───────────────────────────────────────
 _TMP = tempfile.mkdtemp(prefix="e2e_emb_")
 TMP_DIR = Path(_TMP)
 
@@ -109,7 +89,7 @@ TMP_DIR = Path(_TMP)
 (TMP_DIR / "math_utils.py").write_text(_MATH_CODE)
 (TMP_DIR / "database.py").write_text(_DB_CODE)
 
-# ── 5. Build chunks and store ────────────────────────────────────────
+# ── 4. Build chunks and store ────────────────────────────────────────
 _files_code = {
     "auth.py": _AUTH_CODE,
     "math_utils.py": _MATH_CODE,
@@ -130,7 +110,7 @@ for _fname, _code in _files_code.items():
 STORE.store_chunks(CHUNKS, slug=_SLUG)
 logger.info("Stored %d chunks", len(CHUNKS))
 
-# ── 6. Cleanup ───────────────────────────────────────────────────────
+# ── 5. Cleanup ───────────────────────────────────────────────────────
 
 
 def _cleanup():

@@ -12,13 +12,10 @@ import atexit
 import logging
 import os
 import shutil
-import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import chromadb
 from check_services import check_chroma, check_ollama
@@ -41,21 +38,11 @@ logger = logging.getLogger(__name__)
 
 CODE_TEST_SMALL = Path(__file__).parent / "code-test-small"
 
-# ── 1. Load env vars ──────────────────────────────────────────────────
-_HERE = Path(__file__).resolve().parent.parent
-_ENV_FILE = Path(os.environ.get("E2E_ENV_FILE", str(_HERE / ".env.e2e")))
-for _line in _ENV_FILE.read_text(encoding="utf-8").splitlines():
-    _line = _line.strip()
-    if not _line or _line.startswith("#") or "=" not in _line:
-        continue
-    _key, _, _val = _line.partition("=")
-    os.environ.setdefault(_key.strip(), _val.strip())
-
-# ── 2. Health-check services ──────────────────────────────────────────
+# ── 1. Health-check services ──────────────────────────────────────────
 check_ollama()
 check_chroma()
 
-# ── 3. Run pipeline ───────────────────────────────────────────────────
+# ── 2. Run pipeline ───────────────────────────────────────────────────
 _discovery = detect(CODE_TEST_SMALL)
 _extraction = extract_ast(_discovery["files"])
 _G = build([_extraction])
@@ -63,7 +50,7 @@ _communities = cluster(_G)
 _G_enriched, _chunk_map = map_chunks(_G, _discovery["files"])
 _assign_communities(_G_enriched, _communities)
 
-# ── 4. Save artifacts ─────────────────────────────────────────────────
+# ── 3. Save artifacts ─────────────────────────────────────────────────
 _OUTPUT_DIR = Path(tempfile.mkdtemp(prefix="e2e_hybrid_"))
 _CONFIG = PipelineConfig(
     repo_url="https://github.com/test/code-test-small",
@@ -79,7 +66,7 @@ _RESULT = PipelineResult(
 )
 save_pipeline_result(_RESULT)
 
-# ── 5. Embed chunks into ChromaDB ─────────────────────────────────────
+# ── 4. Embed chunks into ChromaDB ─────────────────────────────────────
 _emb_cfg = EmbeddingConfig()
 _embeddings = create_embeddings(_emb_cfg)
 
@@ -92,7 +79,7 @@ _STORE.store_chunk_map(_chunk_map, slug="e2e-hybrid", extra_metadata=_extra_meta
 logger.info("Stored %d chunks in collection %s", _STORE.count(), _COLLECTION)
 
 
-# ── 6. Cleanup ────────────────────────────────────────────────────────
+# ── 5. Cleanup ────────────────────────────────────────────────────────
 def _cleanup():
     try:
         client = chromadb.HttpClient(

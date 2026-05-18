@@ -14,27 +14,16 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 from codeknow.schemas import HybridSearchResult
+from dotenv import load_dotenv
 
 from judge import JudgeOutput, LLMJudge, from_hybrid_response
 from judge.schemas import JudgeHit, JudgeInput
 
-# ── Load env vars ─────────────────────────────────────────────────────
-_HERE = Path(__file__).resolve().parent.parent
-_ENV_FILE = Path(os.environ.get("E2E_ENV_FILE", str(_HERE / ".env.e2e")))
-if _ENV_FILE.exists():
-    for _line in _ENV_FILE.read_text(encoding="utf-8").splitlines():
-        _line = _line.strip()
-        if not _line or _line.startswith("#") or "=" not in _line:
-            continue
-        _key, _, _val = _line.partition("=")
-        os.environ.setdefault(_key.strip(), _val.strip())
+load_dotenv()
 
 # ── Fail fast if no API key ──────────────────────────────────────────
 _api_key = os.environ.get("JUDGE_LLM_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
