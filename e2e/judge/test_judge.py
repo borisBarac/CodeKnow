@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 
 import pytest
 from codeknow.schemas import HybridSearchResult
@@ -51,6 +50,9 @@ def _hit(
     score: float | None = None,
     relation_to_seed: str | None = None,
     why_retrieved: str | None = None,
+    relation_type: str | None = None,
+    relation_weight: float | None = None,
+    cumulative_weight: float | None = None,
 ) -> JudgeHit:
     return JudgeHit(
         id=hit_id,
@@ -61,6 +63,9 @@ def _hit(
         score=score,
         relation_to_seed=relation_to_seed,
         why_retrieved=why_retrieved or ("semantic match" if kind == "vector" else None),
+        relation_type=relation_type,
+        relation_weight=relation_weight,
+        cumulative_weight=cumulative_weight,
     )
 
 
@@ -93,6 +98,9 @@ def _make_input(
                 snippet="export function createContext() { ... }",
                 relation_to_seed="channelRouter →calls→ createContext",
                 why_retrieved="graph expansion via channelRouter →calls→ createContext",
+                relation_type="calls",
+                relation_weight=0.7,
+                cumulative_weight=0.7,
             ),
             _hit(
                 "g2",
@@ -103,6 +111,9 @@ def _make_input(
                 why_retrieved=(
                     "graph expansion via channelRouter →calls→ postRouter.onPostAdded"
                 ),
+                relation_type="calls",
+                relation_weight=0.7,
+                cumulative_weight=0.7,
             ),
         ]
     merged = list(semantic_hits) + list(graph_hits)
@@ -125,7 +136,8 @@ def _print_report(output: JudgeOutput, label: str) -> None:
     print(f"WINNER:      {output.winner}")
     print("\nSUBSCORES:")
     for field, val in output.subscores.model_dump().items():
-        print(f"  {field:25s} {val:3d}")
+        display = "N/A" if val is None else f"{val:3d}"
+        print(f"  {field:25s} {display}")
     print("\nSTRENGTHS:")
     for s in output.strengths:
         print(f"  + {s}")
@@ -162,6 +174,8 @@ def _assert_valid_output(output: JudgeOutput) -> None:
     assert isinstance(output.unsupported_claims, list)
     assert isinstance(output.missing_evidence, list)
     for field, val in output.subscores.model_dump().items():
+        if val is None:
+            continue
         assert 0 <= val <= 100, f"{field}={val} not in [0, 100]"
 
 
@@ -200,7 +214,10 @@ def test_judge_semantic_only():
     output = judge.judge(judge_input)
     _print_report(output, "semantic only — 5 semantic, 0 graph")
     _assert_valid_output(output)
-    assert output.subscores.kg_expansion_value < 20
+    assert (
+        output.subscores.kg_expansion_value is None
+        or output.subscores.kg_expansion_value < 20
+    )
 
 
 def test_judge_with_agent_analysis():
@@ -254,6 +271,7 @@ def test_from_hybrid_response_converter():
             provenance="graph",
             graph_path=["channelRouter", "→calls→", "createContext"],
             node_labels=["createContext"],
+            cumulative_weight=0.7,
         ),
         HybridSearchResult(
             chunk_hash="c" * 64,
@@ -291,6 +309,134 @@ def test_from_hybrid_response_converter():
     assert graph_hit.kind == "graph"
     assert graph_hit.relation_to_seed is not None
     assert "createContext" in graph_hit.relation_to_seed
+    assert graph_hit.relation_type == "calls"
+    assert graph_hit.relation_weight == 0.7
+    assert graph_hit.cumulative_weight == 0.7
 
     semantic_hit = judge_input.semantic_hits[0]
     assert semantic_hit.why_retrieved == "semantic match"
+    assert semantic_hit.relation_type is None
+    assert semantic_hit.relation_weight is None
+    assert semantic_hit.cumulative_weight is None
+
+
+def test_judge_semantic_saturation():
+    judge = LLMJudge()
+    judge_input = _make_input(
+        query="how does authentication work",
+        semantic_hits=[
+            _hit("s1", snippet="export const authOptions = { ... }"),
+            _hit(
+                "s2",
+                file_path="src/app/api/auth/[...nextauth].ts",
+                snippet="export default NextAuth(authOptions)",
+            ),
+            _hit(
+                "s3",
+                file_path="src/server/context.ts",
+                snippet="export async function getSession() { ... }",
+            ),
+            _hit("s4", snippet="const session = await getSession(req)"),
+            _hit("s5", snippet="if (!session) throw new TRPCError(...)"),
+        ],
+        graph_hits=[],
+    )
+    output = judge.judge(judge_input)
+    _print_report(output, "semantic saturation — 5 strong semantic, 0 graph")
+    _assert_valid_output(output)
+    assert output.subscores.kg_expansion_value is None
+    assert output.winner == "semantic_only"
+    assert output.final_score >= 70
+    assert output.subscores.coverage >= 60
+    assert output.subscores.noise_control >= 60
+    assert any(
+        "saturation" in s.lower() or "no graph" in s.lower() or "semantic" in s.lower()
+        for s in output.strengths
+    )
+
+
+def test_judge_high_value_graph_expansion():
+    judge = LLMJudge()
+    judge_input = _make_input(
+        query="how does the SSE subscription flow work end-to-end",
+        semantic_hits=[
+            _hit(
+                "s1",
+                snippet="export const channelRouter = router({ onPost: subscription })",
+            ),
+            _hit(
+                "s2",
+                file_path="src/app/channels/[channelId]/hooks.ts",
+                snippet="trpc.channel.onPost.useSubscription({ ... })",
+            ),
+        ],
+        graph_hits=[
+            _hit(
+                "g1",
+                kind="graph",
+                file_path="src/server/sse.ts",
+                snippet="export class SSEEmitter { stream() { ... } }",
+                relation_to_seed=("channelRouter →semantically_similar_to→ SSEEmitter"),
+                why_retrieved=(
+                    "graph expansion via"
+                    " channelRouter →semantically_similar_to→ SSEEmitter"
+                ),
+                relation_type="semantically_similar_to",
+                relation_weight=1.0,
+                cumulative_weight=1.0,
+            ),
+            _hit(
+                "g2",
+                kind="graph",
+                file_path="src/server/routers/post.ts",
+                snippet="export async function onPostAdded() { ... }",
+                relation_to_seed=("channelRouter →rationale_for→ onPostAdded"),
+                why_retrieved=(
+                    "graph expansion via channelRouter →rationale_for→ onPostAdded"
+                ),
+                relation_type="rationale_for",
+                relation_weight=0.9,
+                cumulative_weight=0.9,
+            ),
+        ],
+    )
+    output = judge.judge(judge_input)
+    _print_report(output, "high-value graph expansion (1.0 + 0.9 weights)")
+    _assert_valid_output(output)
+    assert output.subscores.kg_expansion_value is not None
+    assert output.subscores.kg_expansion_value >= 60
+    assert output.winner == "hybrid"
+
+
+def test_judge_low_value_graph_expansion():
+    judge = LLMJudge()
+    judge_input = _make_input(
+        query="how does authentication work",
+        semantic_hits=[
+            _hit("s1", snippet="export const authOptions = { ... }"),
+            _hit(
+                "s2",
+                file_path="src/app/api/auth/[...nextauth].ts",
+                snippet="export default NextAuth(authOptions)",
+            ),
+        ],
+        graph_hits=[
+            _hit(
+                "g1",
+                kind="graph",
+                file_path="src/utils/logger.ts",
+                snippet="export function log(message: string) { ... }",
+                relation_to_seed="authOptions →calls→ logger.log",
+                why_retrieved="graph expansion via authOptions →calls→ logger.log",
+                relation_type="calls",
+                relation_weight=0.7,
+                cumulative_weight=0.7,
+            ),
+        ],
+    )
+    output = judge.judge(judge_input)
+    _print_report(output, "low-value graph expansion (tangential calls edge)")
+    _assert_valid_output(output)
+    assert output.subscores.kg_expansion_value is not None
+    assert output.subscores.kg_expansion_value < 50
+    assert output.winner in ("semantic_only", "tie")

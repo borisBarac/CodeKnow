@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import os
 import shutil
 import tempfile
 import time
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import chromadb
+import pytest
 from check_services import check_chroma, check_ollama
 from codeknow.extract.ast import extract_ast
 from codeknow.extract.detect import detect
@@ -32,6 +34,10 @@ from codeknow.vector.chroma import ChromaConfig, ChromaStore
 from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
 from codeknow.vector.metadata import build_chunk_metadata
 from codeknow.vector.search import hybrid_search
+from dotenv import load_dotenv
+from judge import LLMJudge, from_hybrid_response
+
+# ruff: noqa: T201
 
 logger = logging.getLogger(__name__)
 
@@ -168,3 +174,132 @@ def test_hybrid_search_graph_expansion():
         logger.info(
             "No graph expansion results (BFS depth/relations may limit discovery)"
         )
+
+
+# ── 6. Judge LLM gate ──────────────────────────────────────────────────
+load_dotenv()
+_JUDGE_KEY = os.environ.get("JUDGE_LLM_API_KEY") or os.environ.get(
+    "OPENROUTER_API_KEY"
+)
+
+_TRAVERSAL_DEPTH = int(os.environ.get("E2E_TRAVERSAL_DEPTH", "3"))
+
+_REPO_BRIEF = (
+    "tRPC + SSE chat app (Next.js). "
+    "Features: server-sent events subscriptions, Drizzle ORM, next-auth. "
+    "Key dirs: src/server/routers/, src/app/channels/."
+)
+
+_QUERIES: list[tuple[str, str]] = [
+    ("post creation flow", "how does creating a new post work end to end"),
+    ("adding a message", "what happens when a user sends a message"),
+    ("typing indicator", "how does the typing indicator work"),
+    ("auth guard", "how does authentication guard the tRPC procedures"),
+]
+
+
+def _synthesize_analysis(resp: HybridSearchResponse) -> str:
+    """Generate a brief analysis from search results for groundedness evaluation."""
+    files_seen: dict[str, list[str]] = {}
+    graph_paths: list[str] = []
+    for r in resp.results:
+        files_seen.setdefault(r.file, []).append(
+            f"L{r.start_line}-L{r.end_line}"
+        )
+        if r.graph_path:
+            graph_paths.append(" → ".join(r.graph_path))
+
+    parts = [f"Query: {resp.query}"]
+    parts.append(
+        f"Retrieved {resp.vector_hits} vector hits, "
+        f"{resp.graph_expanded} graph-expanded hits "
+        f"({len(resp.results)} total)."
+    )
+    parts.append("Files found:")
+    for f, lines in sorted(files_seen.items()):
+        parts.append(f"  {f}: {', '.join(lines)}")
+    if graph_paths:
+        parts.append("Graph paths traversed:")
+        for p in graph_paths:
+            parts.append(f"  {p}")
+    return "\n".join(parts)
+
+
+def _enforce_semantic_saturation(
+    output, graph_hit_count: int
+) -> None:
+    """Post-process: if no graph hits, force kg_expansion_value=null
+    and recalc score using the saturation formula.
+    """
+    if graph_hit_count > 0:
+        return
+    if output.subscores.kg_expansion_value is None:
+        return
+
+    logger.info(
+        "Enforcing semantic saturation: overriding kg_expansion_value "
+        "%s → null",
+        output.subscores.kg_expansion_value,
+    )
+    output.subscores.kg_expansion_value = None
+    s = output.subscores
+    output.final_score = (
+        s.semantic_relevance * 0.35
+        + 50 * 0.20
+        + s.coverage * 0.20
+        + s.groundedness * 0.15
+        + s.noise_control * 0.10
+    )
+
+
+def _print_judge_report(output, label):
+    sep = "=" * 70
+    print(f"\n{sep}")
+    print(f"JUDGE REPORT: {label}")
+    print(f"FINAL SCORE: {output.final_score:.1f}/100")
+    print(f"CONFIDENCE:  {output.confidence}")
+    print(f"WINNER:      {output.winner}")
+    print("\nSUBSCORES:")
+    for field, val in output.subscores.model_dump().items():
+        display = f"{val:3d}" if val is not None else "N/A"
+        print(f"  {field:25s} {display}")
+    print("\nSTRENGTHS:")
+    for s in output.strengths:
+        print(f"  + {s}")
+    print("\nWEAKNESSES:")
+    for w in output.weaknesses:
+        print(f"  - {w}")
+    if output.unsupported_claims:
+        print("\nUNSUPPORTED CLAIMS:")
+        for uc in output.unsupported_claims:
+            print(f"  ! {uc.claim}")
+            print(f"    Reason: {uc.reason}")
+    if output.missing_evidence:
+        print("\nMISSING EVIDENCE:")
+        for me in output.missing_evidence:
+            print(f"  ? {me}")
+    print(f"\nRATIONALE:\n  {output.rationale}")
+    print("\nEVIDENCE USED:")
+    eu = output.evidence_used
+    print(f"  semantic: {len(eu.semantic_hit_ids)} hits")
+    print(f"  graph:    {len(eu.graph_hit_ids)} hits")
+    print(f"  merged:   {len(eu.merged_hit_ids)} hits")
+    print(sep)
+
+
+@pytest.mark.llm_judge
+@pytest.mark.skipif(not _JUDGE_KEY, reason="no JUDGE_LLM_API_KEY or OPENROUTER_API_KEY")
+@pytest.mark.parametrize(("label", "query"), _QUERIES)
+def test_judge_hybrid_search_quality(label, query):
+    resp = _search(query, n_results=10, traversal_depth=_TRAVERSAL_DEPTH)
+    analysis = _synthesize_analysis(resp)
+    judge_input = from_hybrid_response(
+        resp, repo_brief=_REPO_BRIEF, agent_analysis=analysis
+    )
+    output = LLMJudge().judge(judge_input)
+    _enforce_semantic_saturation(output, graph_hit_count=resp.graph_expanded)
+    _print_judge_report(output, f"{label} — {query}")
+    assert output.final_score >= 60, (
+        f"Query '{query}' scored {output.final_score:.1f}/100 (threshold: 60). "
+        f"Weaknesses: {output.weaknesses}"
+    )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import heapq
 import logging
-from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from codeknow.graph.chunk_mapper import build_reverse_index
@@ -15,57 +15,73 @@ if TYPE_CHECKING:
 
     import networkx as nx
 
+from codeknow.vector.weights import DEFAULT_RELATION_WEIGHT, RELATION_WEIGHTS
+
 logger = logging.getLogger(__name__)
 
-_SKIPPED_RELATIONS = frozenset({"imports", "imports_from", "contains", "method"})
+_MAX_GRAPH_RESULTS = 50
 
 
 def _bfs_seeds(
     graph: nx.Graph,
     seed_nodes: list[str],
     depth: int,
-) -> dict[str, list[str]]:
-    """BFS from seeds. Returns {discovered_node_id: path}.
+    max_results: int = _MAX_GRAPH_RESULTS,
+) -> dict[str, tuple[list[str], float]]:
+    """Weighted BFS from seeds using heapq priority queue.
 
-    Path format: alternating node labels and edge arrows, e.g.:
+    Explores higher-weight edges first (Dijkstra-like). Edges with weight
+    <= 0.0 are not traversed. Unknown relations default to weight 0.0.
+
+    Returns {discovered_node_id: (path, cumulative_weight)} where path format
+    is alternating node labels and edge arrows, e.g.:
       ["Session.login", "→calls→", "TokenStore.validate"]
+    and cumulative_weight is the sum of edge weights along the highest-weight path.
     """
     seeds: list[str] = seed_nodes
     if graph.number_of_nodes() > 5000:
         seeds = seed_nodes[:50]
 
-    discovered: dict[str, list[str]] = {}
-    visited: set[str] = set(seeds)
-    queue: deque[tuple[str, list[str]]] = deque()
+    discovered: dict[str, tuple[list[str], float]] = {}
+    visited: set[str] = set()
+    counter = 0
+    heap: list[tuple[float, int, str, list[str]]] = []
 
     for seed in seeds:
         label = graph.nodes[seed].get("label", seed) if seed in graph.nodes else seed
-        queue.append((seed, [label]))
+        heapq.heappush(heap, (0.0, counter, seed, [label]))
+        counter += 1
 
-    while queue:
-        node_id, path = queue.popleft()
+    while heap:
+        neg_cum, _, node_id, path = heapq.heappop(heap)
+
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+
+        if node_id not in seeds:
+            discovered[node_id] = (path, -neg_cum)
+            if len(discovered) >= max_results:
+                return discovered
+
         if len(path) // 2 >= depth:
             continue
 
         for neighbor in graph.neighbors(node_id):
             edge_data = graph.edges[node_id, neighbor]
             relation = edge_data.get("relation", "")
-            if relation in _SKIPPED_RELATIONS:
+            weight = RELATION_WEIGHTS.get(relation, DEFAULT_RELATION_WEIGHT)
+            if weight <= 0.0:
                 continue
 
+            new_cum = -neg_cum + weight
             new_path = [
                 *path,
                 f"→{relation}→",
                 graph.nodes[neighbor].get("label", neighbor),
             ]
-
-            if neighbor not in visited:
-                visited.add(neighbor)
-                if neighbor not in seeds:
-                    discovered[neighbor] = new_path
-                queue.append((neighbor, new_path))
-            elif neighbor in discovered and len(new_path) < len(discovered[neighbor]):
-                discovered[neighbor] = new_path
+            heapq.heappush(heap, (-new_cum, counter, neighbor, new_path))
+            counter += 1
 
     return discovered
 
@@ -180,33 +196,43 @@ def hybrid_search(
 
     discovered = _bfs_seeds(graph, seed_nodes, traversal_depth)
 
-    for node_id, path in discovered.items():
+    node_chunk_map: dict[str, tuple[list[str], list[str], str, float]] = {}
+    all_new_hashes: set[str] = set()
+
+    for node_id, (path, cum_weight) in discovered.items():
         node_data = graph.nodes[node_id]
         node_chunks = node_data.get("chunks", [])
         if not node_chunks:
             continue
 
         chunk_hashes = [c["hash"] for c in node_chunks if c.get("hash")]
-        if not chunk_hashes:
+        new_hashes = [h for h in chunk_hashes if h not in vector_hashes]
+        if not new_hashes:
             continue
 
-        fetched = _fetch_chunks_from_store(store, chunk_hashes)
-
         node_label = node_data.get("label", node_id)
-        for chunk_hash, (content, meta) in fetched.items():
-            if chunk_hash in vector_hashes:
-                continue
+        node_chunk_map[node_id] = (new_hashes, path, node_label, cum_weight)
+        all_new_hashes.update(new_hashes)
 
-            by_hash[chunk_hash] = HybridSearchResult(
-                chunk_hash=chunk_hash,
-                file=meta.get("file", ""),
-                start_line=int(meta.get("start_line", 1)),
-                end_line=int(meta.get("end_line", 1)),
-                content=content,
-                provenance="graph",
-                graph_path=path,
-                node_labels=[node_label],
-            )
+    if all_new_hashes:
+        fetched = _fetch_chunks_from_store(store, list(all_new_hashes))
+
+        for new_hashes, path, node_label, cum_weight in node_chunk_map.values():
+            for chunk_hash in new_hashes:
+                if chunk_hash not in fetched:
+                    continue
+                content, meta = fetched[chunk_hash]
+                by_hash[chunk_hash] = HybridSearchResult(
+                    chunk_hash=chunk_hash,
+                    file=meta.get("file", ""),
+                    start_line=int(meta.get("start_line", 1)),
+                    end_line=int(meta.get("end_line", 1)),
+                    content=content,
+                    provenance="graph",
+                    graph_path=path,
+                    node_labels=[node_label],
+                    cumulative_weight=cum_weight,
+                )
 
     results = list(by_hash.values())
 
@@ -215,6 +241,7 @@ def hybrid_search(
         return (
             provenance_order.get(r.provenance, 2),
             r.distance if r.distance is not None else float("inf"),
+            -(r.cumulative_weight or 0.0),
             len(r.graph_path or []),
         )
 

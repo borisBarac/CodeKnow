@@ -67,6 +67,9 @@ ignore = [
 [tool.pytest.ini_options]
 testpaths = ["packages/codeknow-lib/tests"]
 pythonpath = ["e2e"]
+markers = [
+    "llm_judge: requires JUDGE_LLM_API_KEY or OPENROUTER_API_KEY",
+]
 
 [tool.mypy]
 python_version = "3.10"

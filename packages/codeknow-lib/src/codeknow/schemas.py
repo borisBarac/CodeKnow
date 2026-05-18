@@ -133,6 +133,7 @@ class HybridSearchResult(BaseModel):
     provenance: str = "vector"
     graph_path: list[str] | None = None
     slug: str | None = None
+    cumulative_weight: float | None = None
 
 
 class HybridSearchResponse(BaseModel):

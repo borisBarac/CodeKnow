@@ -22,6 +22,9 @@ class JudgeHit(BaseModel):
     score: float | None = None
     relation_to_seed: str | None = None
     why_retrieved: str | None = None
+    relation_type: str | None = None
+    relation_weight: float | None = None
+    cumulative_weight: float | None = None
 
 
 class JudgeInput(BaseModel):
@@ -35,7 +38,7 @@ class JudgeInput(BaseModel):
 
 class JudgeSubscores(BaseModel):
     semantic_relevance: int = Field(ge=0, le=100)
-    kg_expansion_value: int = Field(ge=0, le=100)
+    kg_expansion_value: int | None = Field(default=None, ge=0, le=100)
     coverage: int = Field(ge=0, le=100)
     groundedness: int = Field(ge=0, le=100)
     noise_control: int = Field(ge=0, le=100)

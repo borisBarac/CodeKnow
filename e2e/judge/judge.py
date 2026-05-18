@@ -16,6 +16,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from codeknow.vector.weights import RELATION_WEIGHTS as _RELATION_WEIGHTS
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
@@ -34,9 +35,17 @@ You are an expert evaluator of hybrid repository search.
 
 Your job is to evaluate how good a repository search result is for answering a developer query.
 
-The search system uses:
-1. Semantic retrieval over a repository index.
-2. Knowledge-graph expansion over code and repository entities.
+The search system uses a weighted BFS over a knowledge graph:
+1. Semantic retrieval over a repository index (vector search).
+2. Knowledge-graph expansion via weighted BFS that prioritizes semantically valuable edges.
+   Edges with weight 0.0 (unknown/unlisted relations) are skipped entirely.
+   Traversable edges, ordered by weight:
+   - semantically_similar_to (1.0): highest semantic value
+   - rationale_for (0.9): high semantic value
+   - inherits (0.8): strong structural relationship
+   - calls, uses (0.7): partial semantic signal
+   - imports, imports_from, method (0.3): weak dependency tracing
+   - contains (0.15): very broad structural containment
 3. A merged evidence set used by an agent to analyze the repo.
 
 You are NOT grading whether the final answer is universally true.
@@ -65,15 +74,23 @@ Each hit may include fields like:
 - score
 - relation_to_seed
 - why_retrieved
+- relation_type: the edge type that discovered this hit (e.g. "calls", "inherits", "semantically_similar_to")
+- relation_weight: the edge weight (0.0-1.0); higher means stronger semantic signal
+- cumulative_weight: total path weight from seed to this node; higher means more semantically relevant path
 
 Evaluate across these dimensions:
 
 A. Semantic relevance (0-100)
 How well do the semantic hits match the query intent, target symbols, files, modules, or code region?
 
-B. KG expansion value (0-100)
-Did the graph expansion add meaningful connected evidence such as callers, callees, imports, subclasses, configuration links, ownership links, or related files?
+B. KG expansion value (null or 0-100)
+Did the graph expansion add meaningful connected evidence such as callers, callees, subclasses, configuration links, or semantically similar code?
+Use the relation_type and relation_weight fields to judge quality:
+- semantically_similar_to (1.0) and rationale_for (0.9) are high-value expansions
+- inherits (0.8) is strong structural expansion
+- calls/uses (0.7) are moderate expansions
 Give a low score if graph expansion mostly adds tangential or obvious duplicates.
+Set to null if graph_hits is empty (see semantic saturation rule below).
 
 C. Coverage (0-100)
 Does the combined evidence cover enough of the codebase area to support a solid answer?
@@ -94,10 +111,18 @@ Scoring weights:
 - groundedness: 15%
 - noise_control: 10%
 
-Final score formula:
+Final score formula (if kg_expansion_value is not null):
 final_score =
   semantic_relevance * 0.35 +
   kg_expansion_value * 0.20 +
+  coverage * 0.20 +
+  groundedness * 0.15 +
+  noise_control * 0.10
+
+If kg_expansion_value is null (semantic saturation), use 50 as placeholder:
+final_score =
+  semantic_relevance * 0.35 +
+  50 * 0.20 +
   coverage * 0.20 +
   groundedness * 0.15 +
   noise_control * 0.10
@@ -108,9 +133,24 @@ Scoring guidance:
 - 50-69: mixed quality, partial support, noticeable gaps
 - 0-49: poor retrieval, weak grounding, or mostly irrelevant evidence
 
+Semantic saturation rule:
+If graph_hits is empty, it means semantic search was thorough enough that graph expansion
+found no new chunks beyond what vector search already returned. This is NOT a failure of
+the KG system — it means the vector index already covered the relevant neighborhood.
+In this case:
+- Set kg_expansion_value to null (not 0, not a low number — it is simply not applicable).
+- The winner should be "semantic_only" if semantic hits are strong.
+- Do NOT penalize coverage or overall score for the absence of graph hits.
+- Note in the rationale that semantic saturation occurred.
+
 Important judging rules:
 - Judge semantic_hits and graph_hits separately before judging merged_hits.
 - Reward graph expansion only for incremental value, not for volume.
+- Use relation_weight to differentiate: a graph hit via semantically_similar_to (1.0) is
+  more valuable than one via calls (0.7), which is more valuable than imports_from (0.3),
+  which is more valuable than contains (0.15).
+- Use cumulative_weight to compare graph hit quality: higher cumulative_weight means
+  the BFS found a more semantically relevant path to this node.
 - Penalize unsupported claims in agent_analysis.
 - Penalize evidence packs that are broad but not targeted.
 - Penalize duplicated hits dressed up as multiple sources.
@@ -121,7 +161,7 @@ Important judging rules:
 - If evidence is insufficient to judge confidently, lower confidence and explain why.
 
 Additional rule for winner:
-- "semantic_only" if semantic hits already solve the query and graph expansion adds little or adds noise
+- "semantic_only" if semantic hits already solve the query and graph expansion adds little, adds noise, or is absent (semantic saturation)
 - "hybrid" if graph expansion clearly improves coverage, dependency tracing, or groundedness
 - "tie" if both are similarly good
 - "unknown" if evidence is too weak to judge
@@ -155,12 +195,32 @@ class JudgeConfig(BaseSettings):
     }
 
 
+def _extract_last_relation(graph_path: list[str]) -> str | None:
+    """Extract the last relation type from a graph path.
+
+    Coupled to the path format produced by _bfs_seeds in
+    codeknow.vector.search: segments alternate between node labels
+    and '→relation→' arrow strings. Returns None if no arrow segment
+    is found (e.g. seed nodes with no edges).
+    """
+    for segment in reversed(graph_path):
+        if segment.startswith("→") and segment.endswith("→"):
+            return segment[1:-1]
+    return None
+
+
 def _result_to_hit(r: HybridSearchResult) -> JudgeHit:
     relation = None
     why = None
+    relation_type = None
+    relation_weight = None
+
     if r.graph_path:
         relation = " → ".join(r.graph_path)
         why = f"graph expansion via {' → '.join(r.graph_path)}"
+        relation_type = _extract_last_relation(r.graph_path)
+        if relation_type:
+            relation_weight = _RELATION_WEIGHTS.get(relation_type)
     if r.provenance == "vector":
         why = "semantic match"
 
@@ -173,6 +233,9 @@ def _result_to_hit(r: HybridSearchResult) -> JudgeHit:
         score=r.distance,
         relation_to_seed=relation,
         why_retrieved=why,
+        relation_type=relation_type,
+        relation_weight=relation_weight,
+        cumulative_weight=r.cumulative_weight,
     )
 
 
@@ -184,6 +247,13 @@ def from_hybrid_response(
     semantic = [_result_to_hit(r) for r in response.results if r.provenance == "vector"]
     graph = [_result_to_hit(r) for r in response.results if r.provenance == "graph"]
     merged = [_result_to_hit(r) for r in response.results]
+
+    if response.graph_expanded == 0:
+        logger.info(
+            "Semantic saturation — graph expansion found no new chunks "
+            "beyond vector search for query: %s",
+            response.query,
+        )
 
     return JudgeInput(
         query=response.query,
