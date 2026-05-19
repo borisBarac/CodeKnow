@@ -7,7 +7,14 @@ name = "codeknow-cli"
 version = "0.1.0"
 description = "User-facing CLI client for the codeknow API"
 requires-python = ">=3.10,<3.14"
-dependencies = []
+dependencies = [
+    "click>=8.2",
+    "daemonocle>=1.1",
+    "httpx>=0.28",
+]
+
+[project.scripts]
+codeknow = "codeknow_cli.main:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/codeknow_cli"]
