@@ -6,8 +6,8 @@ from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING
 
 from codeknow.schemas import HybridSearchResponse, HybridSearchResult
-from codeknow.vector._utils import sort_key as _sort_key
 from codeknow.vector.search import hybrid_search
+from codeknow.vector.search import sort_key as _sort_key
 
 if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings

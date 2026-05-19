@@ -5,8 +5,8 @@ RED/Green TDD:
 - Tests 5-8: RED (fail with current deque-based BFS, pass after heapq implementation)
 """
 
-import pytest
 import networkx as nx
+import pytest
 from codeknow.vector.search import _bfs_seeds
 
 

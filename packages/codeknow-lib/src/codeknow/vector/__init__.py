@@ -26,8 +26,6 @@ from .embeddings import (
     embed_chunks,
     embed_texts,
 )
-from .metadata import build_chunk_metadata
-from .pipeline_stage import embed
 from .store import SearchResult, VectorStore
 
 with contextlib.suppress(ImportError):
@@ -43,9 +41,7 @@ __all__ = [
     "HybridSearchResult",
     "SearchResult",
     "VectorStore",
-    "build_chunk_metadata",
     "create_embeddings",
-    "embed",
     "embed_chunk_map",
     "embed_chunks",
     "embed_texts",

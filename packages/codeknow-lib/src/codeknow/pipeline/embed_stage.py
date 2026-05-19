@@ -5,9 +5,9 @@ import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from codeknow.pipeline.metadata import build_chunk_metadata
 from codeknow.vector.chroma import ChromaConfig, ChromaStore
 from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
-from codeknow.vector.metadata import build_chunk_metadata
 
 if TYPE_CHECKING:
     from codeknow.pipeline import PipelineResult

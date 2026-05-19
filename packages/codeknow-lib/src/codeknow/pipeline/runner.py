@@ -46,7 +46,7 @@ def run_pipeline(
     from codeknow.graph.build import build
     from codeknow.graph.chunk_mapper import map_chunks as _default_map_chunks
     from codeknow.graph.cluster import cluster
-    from codeknow.vector.pipeline_stage import embed as _default_embed
+    from codeknow.pipeline.embed_stage import embed as _default_embed
 
     _resolve = resolve_fn or resolve
     _detect = detect_fn or detect

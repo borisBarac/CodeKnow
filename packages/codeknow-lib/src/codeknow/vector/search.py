@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 from codeknow.graph.chunk_mapper import build_reverse_index
 from codeknow.pipeline.io import load_graph
 from codeknow.schemas import HybridSearchResponse, HybridSearchResult
-from codeknow.vector._utils import sort_key as _sort_key
 from codeknow.vector.chroma import ChromaConfig, ChromaStore
 from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
 
@@ -242,7 +241,7 @@ def hybrid_search(
 
     results = list(by_hash.values())
 
-    results.sort(key=_sort_key)
+    results.sort(key=sort_key)
 
     vector_hits = sum(1 for r in results if r.provenance == "vector")
     graph_expanded = sum(1 for r in results if r.provenance == "graph")
@@ -252,4 +251,14 @@ def hybrid_search(
         vector_hits=vector_hits,
         graph_expanded=graph_expanded,
         results=results,
+    )
+
+
+def sort_key(r: HybridSearchResult) -> tuple:
+    provenance_order = {"vector": 0, "graph": 1}
+    return (
+        provenance_order.get(r.provenance, 2),
+        r.distance if r.distance is not None else float("inf"),
+        -(r.cumulative_weight or 0.0),
+        len(r.graph_path or []),
     )

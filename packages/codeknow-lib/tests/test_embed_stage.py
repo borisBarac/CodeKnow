@@ -5,9 +5,9 @@ from unittest.mock import MagicMock, patch
 
 import networkx as nx
 from codeknow.pipeline import PipelineConfig, PipelineResult
+from codeknow.pipeline.embed_stage import embed
+from codeknow.pipeline.metadata import build_chunk_metadata
 from codeknow.schemas import Chunk
-from codeknow.vector.metadata import build_chunk_metadata
-from codeknow.vector.pipeline_stage import embed
 
 
 def _make_config(**overrides: Any) -> PipelineConfig:
@@ -99,8 +99,8 @@ class TestBuildChunkMetadata:
 
 
 class TestEmbedStage:
-    @patch("codeknow.vector.pipeline_stage.ChromaStore")
-    @patch("codeknow.vector.pipeline_stage.create_embeddings")
+    @patch("codeknow.pipeline.embed_stage.ChromaStore")
+    @patch("codeknow.pipeline.embed_stage.create_embeddings")
     def test_embed_called_when_enabled(
         self,
         mock_create_emb,
@@ -134,8 +134,8 @@ class TestEmbedStage:
         assert out.embed_stats is None
         assert out is result
 
-    @patch("codeknow.vector.pipeline_stage.ChromaStore")
-    @patch("codeknow.vector.pipeline_stage.create_embeddings")
+    @patch("codeknow.pipeline.embed_stage.ChromaStore")
+    @patch("codeknow.pipeline.embed_stage.create_embeddings")
     def test_uses_custom_collection_name(
         self,
         mock_create_emb,
@@ -155,8 +155,8 @@ class TestEmbedStage:
         assert chroma_config.collection_name == "my_custom_collection"
         mock_create_emb.assert_called_once()
 
-    @patch("codeknow.vector.pipeline_stage.ChromaStore")
-    @patch("codeknow.vector.pipeline_stage.create_embeddings")
+    @patch("codeknow.pipeline.embed_stage.ChromaStore")
+    @patch("codeknow.pipeline.embed_stage.create_embeddings")
     def test_default_collection_name_uses_slug(
         self,
         mock_create_emb,
@@ -176,8 +176,8 @@ class TestEmbedStage:
         assert chroma_config.collection_name == "codeknow_owner-repo"
         mock_create_emb.assert_called_once()
 
-    @patch("codeknow.vector.pipeline_stage.ChromaStore")
-    @patch("codeknow.vector.pipeline_stage.create_embeddings")
+    @patch("codeknow.pipeline.embed_stage.ChromaStore")
+    @patch("codeknow.pipeline.embed_stage.create_embeddings")
     def test_empty_chunk_map_reports_zero(
         self,
         _mock_create_emb,  # noqa: PT019
@@ -204,8 +204,8 @@ class TestEmbedStage:
         assert out.embed_stats["chunks_embedded"] == 0
         mock_store.store_chunk_map.assert_called_once()
 
-    @patch("codeknow.vector.pipeline_stage.ChromaStore")
-    @patch("codeknow.vector.pipeline_stage.create_embeddings")
+    @patch("codeknow.pipeline.embed_stage.ChromaStore")
+    @patch("codeknow.pipeline.embed_stage.create_embeddings")
     def test_custom_provider_and_model(
         self,
         mock_create_emb,

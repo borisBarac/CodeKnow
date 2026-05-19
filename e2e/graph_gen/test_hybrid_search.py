@@ -32,7 +32,7 @@ from codeknow.pipeline.types import PipelineResult
 from codeknow.schemas import HybridSearchResponse
 from codeknow.vector.chroma import ChromaConfig, ChromaStore
 from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
-from codeknow.vector.metadata import build_chunk_metadata
+from codeknow.pipeline.metadata import build_chunk_metadata
 from codeknow.vector.search import hybrid_search
 from dotenv import load_dotenv
 from judge import LLMJudge, from_hybrid_response
