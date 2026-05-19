@@ -110,7 +110,8 @@ def create_app() -> FastAPI:
         repos = body.get("repos")
         if repos is not None and not isinstance(repos, list):
             return {"error": "repos must be a list of slugs", "results": []}
-        result = multi_graph_search(
+        result = await asyncio.to_thread(
+            multi_graph_search,
             query,
             graph_base_dir=GRAPH_DIR,
             slugs=repos,

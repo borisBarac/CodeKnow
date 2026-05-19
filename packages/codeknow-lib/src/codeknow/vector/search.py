@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from codeknow.graph.chunk_mapper import build_reverse_index
 from codeknow.pipeline.io import load_graph
 from codeknow.schemas import HybridSearchResponse, HybridSearchResult
+from codeknow.vector._utils import sort_key as _sort_key
 from codeknow.vector.chroma import ChromaConfig, ChromaStore
 from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
 
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import networkx as nx
+    from langchain_core.embeddings import Embeddings
 
 from codeknow.vector.weights import DEFAULT_RELATION_WEIGHT, RELATION_WEIGHTS
 
@@ -117,38 +119,42 @@ def _fetch_chunks_from_store(
 def hybrid_search(
     query: str,
     *,
-    output_dir: Path,
+    graph_dir: Path,
     collection_name: str,
     n_results: int = 10,
     traversal_depth: int = 2,
     graph_filename: str = "graph.json",
     embed_config: EmbeddingConfig | None = None,
     chroma_config: ChromaConfig | None = None,
+    embeddings: Embeddings | None = None,
+    store: ChromaStore | None = None,
 ) -> HybridSearchResponse:
-    e_config = embed_config or EmbeddingConfig()
-    embeddings = create_embeddings(e_config)
+    if embeddings is None:
+        e_config = embed_config or EmbeddingConfig()
+        embeddings = create_embeddings(e_config)
 
-    c_config = chroma_config or ChromaConfig(collection_name=collection_name)
-    if c_config.collection_name != collection_name:
-        c_config = ChromaConfig(
-            host=c_config.host,
-            port=c_config.port,
-            ssl=c_config.ssl,
-            collection_name=collection_name,
-            tenant=c_config.tenant,
-            database=c_config.database,
-        )
-    store = ChromaStore(config=c_config, embeddings=embeddings)
+    if store is None:
+        c_config = chroma_config or ChromaConfig(collection_name=collection_name)
+        if c_config.collection_name != collection_name:
+            c_config = ChromaConfig(
+                host=c_config.host,
+                port=c_config.port,
+                ssl=c_config.ssl,
+                collection_name=collection_name,
+                tenant=c_config.tenant,
+                database=c_config.database,
+            )
+        store = ChromaStore(config=c_config, embeddings=embeddings)
 
     graph: nx.Graph | None = None
     reverse_index: dict[str, list[str]] = {}
     try:
-        graph = load_graph(output_dir / graph_filename)
+        graph = load_graph(graph_dir / graph_filename)
         reverse_index = build_reverse_index(graph)
     except FileNotFoundError:
         logger.warning(
             "Graph not found at %s — falling back to pure vector search",
-            output_dir / graph_filename,
+            graph_dir / graph_filename,
         )
 
     vector_results = store.search(query, n_results=n_results)
@@ -235,15 +241,6 @@ def hybrid_search(
                 )
 
     results = list(by_hash.values())
-
-    def _sort_key(r: HybridSearchResult) -> tuple:
-        provenance_order = {"vector": 0, "graph": 1}
-        return (
-            provenance_order.get(r.provenance, 2),
-            r.distance if r.distance is not None else float("inf"),
-            -(r.cumulative_weight or 0.0),
-            len(r.graph_path or []),
-        )
 
     results.sort(key=_sort_key)
 

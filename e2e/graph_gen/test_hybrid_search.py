@@ -106,7 +106,7 @@ atexit.register(_cleanup)
 def _search(query: str, **kwargs: Any) -> HybridSearchResponse:
     return hybrid_search(
         query,
-        output_dir=_OUTPUT_DIR,
+        graph_dir=_OUTPUT_DIR,
         collection_name=_COLLECTION,
         **kwargs,
     )
