@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock
 
 import fakeredis.aioredis
 import pytest
+from codeknow_api import cache
 
-import codeknow_api.cache as cache
 
-
-@pytest.fixture()
+@pytest.fixture
 async def fake_redis(monkeypatch: pytest.MonkeyPatch) -> fakeredis.aioredis.FakeRedis:
     client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     monkeypatch.setattr(cache, "_redis", client)
@@ -82,19 +80,25 @@ class TestBodyReferencesSlug:
 
 class TestGetRedis:
     @pytest.mark.anyio
-    async def test_returns_none_when_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_returns_none_when_disabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setattr(cache, "_redis_enabled", False)
         assert await cache.get_redis() is None
 
     @pytest.mark.anyio
-    async def test_returns_client_when_enabled(self, fake_redis: fakeredis.aioredis.FakeRedis) -> None:
+    async def test_returns_client_when_enabled(
+        self, fake_redis: fakeredis.aioredis.FakeRedis
+    ) -> None:
         result = await cache.get_redis()
         assert result is fake_redis
 
 
 class TestCloseRedis:
     @pytest.mark.anyio
-    async def test_resets_to_none(self, fake_redis: fakeredis.aioredis.FakeRedis, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_resets_to_none(
+        self, fake_redis: fakeredis.aioredis.FakeRedis, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         assert cache._redis is fake_redis
         await cache.close_redis()
         assert cache._redis is None
@@ -102,7 +106,9 @@ class TestCloseRedis:
 
 class TestCacheSearch:
     @pytest.mark.anyio
-    async def test_caches_result_on_miss(self, fake_redis: fakeredis.aioredis.FakeRedis) -> None:
+    async def test_caches_result_on_miss(
+        self, fake_redis: fakeredis.aioredis.FakeRedis
+    ) -> None:
         call_count = 0
 
         @cache.cache_search(ttl=60)
@@ -121,7 +127,9 @@ class TestCacheSearch:
         assert json.loads(cached) == {"results": [{"text": "hit"}]}
 
     @pytest.mark.anyio
-    async def test_returns_cached_on_hit(self, fake_redis: fakeredis.aioredis.FakeRedis) -> None:
+    async def test_returns_cached_on_hit(
+        self, fake_redis: fakeredis.aioredis.FakeRedis
+    ) -> None:
         call_count = 0
 
         @cache.cache_search()
@@ -136,7 +144,9 @@ class TestCacheSearch:
         assert call_count == 1
 
     @pytest.mark.anyio
-    async def test_passthrough_when_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_passthrough_when_disabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setattr(cache, "_redis_enabled", False)
         monkeypatch.setattr(cache, "_redis", None)
         call_count = 0
@@ -147,12 +157,14 @@ class TestCacheSearch:
             call_count += 1
             return {"results": []}
 
-        r1 = await handler(body={"query": "test"})
-        r2 = await handler(body={"query": "test"})
+        await handler(body={"query": "test"})
+        await handler(body={"query": "test"})
         assert call_count == 2
 
     @pytest.mark.anyio
-    async def test_different_queries_both_cached(self, fake_redis: fakeredis.aioredis.FakeRedis) -> None:
+    async def test_different_queries_both_cached(
+        self, fake_redis: fakeredis.aioredis.FakeRedis
+    ) -> None:
         @cache.cache_search()
         async def handler(body: dict[str, Any]) -> dict[str, Any]:
             return {"query": body.get("query", ""), "results": []}
@@ -166,12 +178,18 @@ class TestCacheSearch:
 
 class TestInvalidateForSlug:
     @pytest.mark.anyio
-    async def test_deletes_matching_keys(self, fake_redis: fakeredis.aioredis.FakeRedis) -> None:
+    async def test_deletes_matching_keys(
+        self, fake_redis: fakeredis.aioredis.FakeRedis
+    ) -> None:
         key_a = cache._make_key("q1", ["owner/repo"], 10)
         key_b = cache._make_key("q2", ["other/repo"], 10)
 
-        await fake_redis.set(key_a, json.dumps({"repos": ["owner/repo"], "results": []}))
-        await fake_redis.set(key_b, json.dumps({"repos": ["other/repo"], "results": []}))
+        await fake_redis.set(
+            key_a, json.dumps({"repos": ["owner/repo"], "results": []})
+        )
+        await fake_redis.set(
+            key_b, json.dumps({"repos": ["other/repo"], "results": []})
+        )
 
         await cache.invalidate_for_slug("owner/repo")
 
@@ -179,7 +197,9 @@ class TestInvalidateForSlug:
         assert await fake_redis.exists(key_b) == 1
 
     @pytest.mark.anyio
-    async def test_deletes_by_result_slug(self, fake_redis: fakeredis.aioredis.FakeRedis) -> None:
+    async def test_deletes_by_result_slug(
+        self, fake_redis: fakeredis.aioredis.FakeRedis
+    ) -> None:
         key = cache._make_key("q", None, 5)
         await fake_redis.set(
             key,
@@ -190,7 +210,9 @@ class TestInvalidateForSlug:
         assert await fake_redis.exists(key) == 0
 
     @pytest.mark.anyio
-    async def test_preserves_unrelated_keys(self, fake_redis: fakeredis.aioredis.FakeRedis) -> None:
+    async def test_preserves_unrelated_keys(
+        self, fake_redis: fakeredis.aioredis.FakeRedis
+    ) -> None:
         key = cache._make_key("q", ["unrelated/repo"], 10)
         await fake_redis.set(key, json.dumps({"repos": ["unrelated/repo"]}))
 

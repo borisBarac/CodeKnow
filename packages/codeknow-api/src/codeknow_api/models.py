@@ -12,9 +12,8 @@ class BuildRequest(BaseModel):
     @classmethod
     def _validate_url(cls, v: str) -> str:
         if not is_valid_github_ssh_url(v):
-            raise ValueError(
-                "Invalid GitHub SSH URL (expected git@github.com:owner/repo[.git])"
-            )
+            msg = "Invalid GitHub SSH URL (expected git@github.com:owner/repo[.git])"
+            raise ValueError(msg)
         return v
 
 

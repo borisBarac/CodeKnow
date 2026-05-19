@@ -237,7 +237,7 @@ class TestStubMiddleware:
         mw = StubMiddleware(inner)
 
         scope = {"type": "lifespan"}
-        collected, send = await _collect_send()
+        _collected, send = await _collect_send()
         await mw(scope, _body_receive(b""), send)
 
         assert len(calls) == 1
@@ -271,7 +271,7 @@ class TestStubMiddleware:
         assert mw.stub_mode is False
 
         scope = _make_scope("GET", "/v1/repos")
-        collected, send = await _collect_send()
+        _collected, send = await _collect_send()
         await mw(scope, _body_receive(b""), send)
 
         assert len(calls) == 1

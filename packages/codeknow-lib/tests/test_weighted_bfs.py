@@ -132,14 +132,29 @@ def test_max_graph_results_budget():
 def test_complex_multi_seed_mixed_relations():
     G = _graph(
         [
-            ("seed1", "S1"), ("seed2", "S2"), ("seed3", "S3"),
-            ("a", "A"), ("b", "B"), ("c", "C"),
-            ("d", "D"), ("e", "E"), ("f", "F"),
-            ("g", "G"), ("h", "H"), ("i", "I"),
-            ("j", "J"), ("k", "K"), ("l", "L"),
-            ("m", "M"), ("n", "N"), ("o", "O"),
-            ("p", "P"), ("q", "Q"), ("r", "R"),
-            ("s", "S"), ("t", "T"),
+            ("seed1", "S1"),
+            ("seed2", "S2"),
+            ("seed3", "S3"),
+            ("a", "A"),
+            ("b", "B"),
+            ("c", "C"),
+            ("d", "D"),
+            ("e", "E"),
+            ("f", "F"),
+            ("g", "G"),
+            ("h", "H"),
+            ("i", "I"),
+            ("j", "J"),
+            ("k", "K"),
+            ("l", "L"),
+            ("m", "M"),
+            ("n", "N"),
+            ("o", "O"),
+            ("p", "P"),
+            ("q", "Q"),
+            ("r", "R"),
+            ("s", "S"),
+            ("t", "T"),
         ],
         [
             ("seed1", "a", "semantically_similar_to"),
@@ -167,9 +182,26 @@ def test_complex_multi_seed_mixed_relations():
     result = _bfs_seeds(G, ["seed1", "seed2", "seed3"], depth=3)
 
     expected_order = [
-        "a", "d", "j", "b", "e", "k", "c", "f",
-        "i", "m", "n", "g", "h", "l", "o", "p",
-        "q", "r", "s", "t",
+        "a",
+        "d",
+        "j",
+        "b",
+        "e",
+        "k",
+        "c",
+        "f",
+        "i",
+        "m",
+        "n",
+        "g",
+        "h",
+        "l",
+        "o",
+        "p",
+        "q",
+        "r",
+        "s",
+        "t",
     ]
     assert list(result.keys()) == expected_order
 
@@ -181,5 +213,13 @@ def test_complex_multi_seed_mixed_relations():
     assert weight_e == pytest.approx(1.8)
 
     path_j, weight_j = result["j"]
-    assert path_j == ["S1", "→semantically_similar_to→", "A", "→calls→", "D", "→calls→", "J"]
+    assert path_j == [
+        "S1",
+        "→semantically_similar_to→",
+        "A",
+        "→calls→",
+        "D",
+        "→calls→",
+        "J",
+    ]
     assert weight_j == pytest.approx(2.4)

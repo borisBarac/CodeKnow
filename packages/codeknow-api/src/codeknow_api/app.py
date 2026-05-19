@@ -7,7 +7,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from codeknow.schemas import ListReposResponse, RepoMetadata
 from fastapi import FastAPI, HTTPException, Query
@@ -62,7 +62,10 @@ def create_app() -> FastAPI:
                 shutil.rmtree(TEMP_DIR / slug, ignore_errors=True)
                 try:
                     from codeknow.vector.chroma import ChromaConfig, ChromaStore
-                    from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
+                    from codeknow.vector.embeddings import (
+                        EmbeddingConfig,
+                        create_embeddings,
+                    )
 
                     embeddings = create_embeddings(EmbeddingConfig())
                     collection_name = config.chroma_collection or f"codeknow_{slug}"
@@ -159,9 +162,9 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/repos")
     async def list_repos(
-        page: int = Query(default=1, ge=1),
-        page_size: int = Query(default=50, ge=1, le=200),
-        health_check: bool = Query(default=False),
+        page: Annotated[int, Query(ge=1)] = 1,
+        page_size: Annotated[int, Query(ge=1, le=200)] = 50,
+        health_check: Annotated[bool, Query()] = False,
     ) -> ListReposResponse:
         from codeknow.pipeline import load_metadata
 

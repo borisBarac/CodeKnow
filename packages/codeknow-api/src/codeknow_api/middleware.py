@@ -22,10 +22,10 @@ def _extract_url(query_string: str) -> str:
 async def _read_body(receive: Receive) -> bytes:
     body = b""
     message = await receive()
-    body += cast(bytes, message.get("body", b""))
+    body += cast("bytes", message.get("body", b""))
     while message.get("more_body"):
         message = await receive()
-        body += cast(bytes, message.get("body", b""))
+        body += cast("bytes", message.get("body", b""))
     return body
 
 

@@ -27,12 +27,12 @@ from codeknow.graph.chunk_mapper import map_chunks
 from codeknow.graph.cluster import cluster
 from codeknow.pipeline.config import PipelineConfig
 from codeknow.pipeline.io import save_pipeline_result
+from codeknow.pipeline.metadata import build_chunk_metadata
 from codeknow.pipeline.stages import _assign_communities
 from codeknow.pipeline.types import PipelineResult
 from codeknow.schemas import HybridSearchResponse
 from codeknow.vector.chroma import ChromaConfig, ChromaStore
 from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
-from codeknow.pipeline.metadata import build_chunk_metadata
 from codeknow.vector.search import hybrid_search
 from dotenv import load_dotenv
 from judge import LLMJudge, from_hybrid_response
@@ -178,9 +178,7 @@ def test_hybrid_search_graph_expansion():
 
 # ── 6. Judge LLM gate ──────────────────────────────────────────────────
 load_dotenv()
-_JUDGE_KEY = os.environ.get("JUDGE_LLM_API_KEY") or os.environ.get(
-    "OPENROUTER_API_KEY"
-)
+_JUDGE_KEY = os.environ.get("JUDGE_LLM_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
 
 _TRAVERSAL_DEPTH = int(os.environ.get("E2E_TRAVERSAL_DEPTH", "3"))
 
@@ -203,9 +201,7 @@ def _synthesize_analysis(resp: HybridSearchResponse) -> str:
     files_seen: dict[str, list[str]] = {}
     graph_paths: list[str] = []
     for r in resp.results:
-        files_seen.setdefault(r.file, []).append(
-            f"L{r.start_line}-L{r.end_line}"
-        )
+        files_seen.setdefault(r.file, []).append(f"L{r.start_line}-L{r.end_line}")
         if r.graph_path:
             graph_paths.append(" → ".join(r.graph_path))
 
@@ -225,9 +221,7 @@ def _synthesize_analysis(resp: HybridSearchResponse) -> str:
     return "\n".join(parts)
 
 
-def _enforce_semantic_saturation(
-    output, graph_hit_count: int
-) -> None:
+def _enforce_semantic_saturation(output, graph_hit_count: int) -> None:
     """Post-process: if no graph hits, force kg_expansion_value=null
     and recalc score using the saturation formula.
     """
@@ -237,8 +231,7 @@ def _enforce_semantic_saturation(
         return
 
     logger.info(
-        "Enforcing semantic saturation: overriding kg_expansion_value "
-        "%s → null",
+        "Enforcing semantic saturation: overriding kg_expansion_value %s → null",
         output.subscores.kg_expansion_value,
     )
     output.subscores.kg_expansion_value = None
