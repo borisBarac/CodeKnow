@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -108,6 +110,51 @@ def run_pipeline_cli() -> None:
     run_pipeline(config)
 
 
+def gen_client() -> None:
+    """Generate a Python HTTP client from the CodeKnow API OpenAPI spec."""
+    from codeknow_api.app import create_app
+
+    parser = argparse.ArgumentParser(
+        description="Generate a Python HTTP client from the CodeKnow API OpenAPI spec.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        required=True,
+        type=Path,
+        help="Directory where the generated client will be saved (must exist).",
+    )
+    args = parser.parse_args()
+    output_dir = args.output_dir.resolve()
+
+    if not output_dir.is_dir():
+        print(f"Error: output directory does not exist: {output_dir}")  # noqa: T201
+        sys.exit(1)
+
+    app = create_app()
+    schema = app.openapi()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        spec_path = Path(tmp) / "openapi.json"
+        spec_path.write_text(json.dumps(schema, indent=2))
+        print(f"OpenAPI schema written to {spec_path}")  # noqa: T201
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "openapi_python_client",
+            "generate",
+            "--path",
+            str(spec_path),
+            "--output-path",
+            str(output_dir),
+            "--overwrite",
+        ]
+        print(f"+ {' '.join(cmd)}")  # noqa: T201
+        subprocess.check_call(cmd)  # noqa: S603
+
+    print(f"Client generated at {output_dir}")  # noqa: T201
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: project-scripts.py <command>")  # noqa: T201
@@ -117,6 +164,8 @@ def main() -> None:
         dev_check()
     elif cmd == "pipeline":
         run_pipeline_cli()
+    elif cmd == "gen-client":
+        gen_client()
     else:
         print(f"Unknown command: {cmd}")  # noqa: T201
         sys.exit(1)

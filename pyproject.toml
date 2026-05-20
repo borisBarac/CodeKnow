@@ -14,10 +14,11 @@ dev = [
     "types-networkx>=3.6.1.20260508",
     "types-openpyxl>=3.1.5.20260508",
     "fakeredis[lua]>=2.35.0",
+    "openapi-python-client>=0.24",
 ]
 
 [tool.ruff]
-exclude = ["raw", "plan", ".venv"]
+exclude = ["raw", "plan", ".venv", "packages/codeknow-cli/generated"]
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -71,7 +72,7 @@ markers = ["llm_judge: requires JUDGE_LLM_API_KEY or OPENROUTER_API_KEY"]
 
 [tool.mypy]
 python_version = "3.10"
-exclude = ["^packages/.*/tests/", "^e2e/"]
+exclude = ["^packages/.*/tests/", "^e2e/", "^packages/codeknow-cli/generated/"]
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -97,3 +98,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["codeknow.cache.redis"]
 disable_error_code = ["arg-type", "assignment", "misc"]
+
+[[tool.mypy.overrides]]
+module = ["openapi_python_client", "openapi_python_client.*"]
+ignore_missing_imports = true
