@@ -55,6 +55,6 @@ class StubAPIHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not found"})
 
 
-def run_server(port: int = 9999) -> None:
-    with HTTPServer(("127.0.0.1", port), StubAPIHandler) as httpd:
+def run_server(host: str = "127.0.0.1", port: int = 9999) -> None:
+    with HTTPServer((host, port), StubAPIHandler) as httpd:
         httpd.serve_forever()

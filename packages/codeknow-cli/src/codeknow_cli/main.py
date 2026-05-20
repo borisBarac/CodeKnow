@@ -6,7 +6,7 @@ import click
 from daemonocle.cli import DaemonCLI
 
 from codeknow_cli import __version__
-from codeknow_cli.client import Client
+from codeknow_cli.client import DEFAULT_PID_FILE, Client
 from codeknow_cli.daemon import run_server
 
 
@@ -21,7 +21,7 @@ def cli(ctx: click.Context) -> None:
 
 @cli.command(
     cls=DaemonCLI,
-    daemon_params={"pid_file": "/tmp/codeknow-daemon.pid"},  # noqa: S108
+    daemon_params={"pid_file": DEFAULT_PID_FILE},
 )
 def daemon() -> None:
     """Manage the codeknow background service."""
