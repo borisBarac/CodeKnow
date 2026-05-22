@@ -50,6 +50,53 @@ def remove(ctx: click.Context, slug: str) -> None:
         click.echo(f"Chunks deleted: {result['chunks_deleted']}")
 
 
+@cli.command()
+@click.argument("query")
+@click.option(
+    "--slug", "slugs", multiple=True, help="Filter to specific repo slugs (repeatable)."
+)
+@click.pass_context
+def search(ctx: click.Context, query: str, slugs: tuple[str, ...]) -> None:
+    """Search the code index."""
+    client: Client = ctx.obj["client"]
+    slug_list = list(slugs) if slugs else None
+    result = client.search(query, slugs=slug_list)
+
+    click.echo(f"Query: {query}")
+    vector_hits = result.get("vector_hits", 0)
+    graph_expanded = result.get("graph_expanded", 0)
+    click.echo(f"Hits: {vector_hits} vector, {graph_expanded} graph-expanded")
+
+    for i, hit in enumerate(result.get("results", []), start=1):
+        click.echo(f"── Result {i} ──────────────────────────────")
+        file_loc = hit.get("file", "?")
+        start_line = hit.get("start_line")
+        end_line = hit.get("end_line")
+        if start_line is not None and end_line is not None:
+            click.echo(f"  File: {file_loc}:{start_line}-{end_line}")
+        else:
+            click.echo(f"  File: {file_loc}")
+        provenance = hit.get("provenance", "unknown")
+        distance = hit.get("distance")
+        weight = hit.get("weight")
+        if distance is not None:
+            click.echo(f"  Provenance: {provenance} (distance: {distance})")
+        elif weight is not None:
+            click.echo(f"  Provenance: {provenance} (weight: {weight})")
+        else:
+            click.echo(f"  Provenance: {provenance}")
+        slug = hit.get("slug")
+        if slug:
+            click.echo(f"  Slug: {slug}")
+        graph_path = hit.get("graph_path")
+        if graph_path:
+            click.echo(f"  Path: {graph_path}")
+        content = hit.get("content", "")
+        if content:
+            display = content[:200] + "..." if len(content) > 200 else content
+            click.echo(display)
+
+
 @cli.command(
     cls=DaemonCLI,
     daemon_params={"pid_file": DEFAULT_PID_FILE},

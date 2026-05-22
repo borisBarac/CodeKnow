@@ -9,10 +9,16 @@ from code_know_api_client import errors as api_errors
 from code_know_api_client.models import (
     delete_repo_v1_repos_delete_response_delete_repo_v1_repos_delete as _del_resp,
 )
+from code_know_api_client.models import (
+    search_v1_search_post_response_search_v1_search_post as _search_resp,
+)
 from code_know_api_client.models.build_response import BuildResponse
 from code_know_api_client.models.http_validation_error import HTTPValidationError
 from code_know_api_client.models.list_repos_response import ListReposResponse
 from code_know_api_client.models.repo_metadata import RepoMetadata
+from code_know_api_client.models.search_v1_search_post_body import (
+    SearchV1SearchPostBody,
+)
 from code_know_api_client.models.validation_error import ValidationError
 from code_know_api_client.types import Response as ApiResponse
 from codeknow_cli.client import Client, ClientError
@@ -237,3 +243,80 @@ def _unit_client() -> Client:
         port=19998,
         pid_file="/var/tmp/test-unit-client.pid",  # noqa: S108
     )
+
+
+# --- search tests ---
+
+
+def _make_search_response(data: dict) -> ApiResponse:
+    parsed = _search_resp.SearchV1SearchPostResponseSearchV1SearchPost()
+    parsed.additional_properties = data
+    return ApiResponse(status_code=200, content=b"", headers={}, parsed=parsed)
+
+
+@patch("codeknow_cli.client.search_v1_search_post")
+def test_search_basic_returns_dict(mock_search: MagicMock) -> None:
+    c = _unit_client()
+    mock_search.sync_detailed.return_value = _make_search_response(
+        {"query": "test", "vector_hits": 5, "graph_expanded": 3, "results": []}
+    )
+    result = c.search("test")
+    assert result["query"] == "test"
+    assert result["vector_hits"] == 5
+    assert result["graph_expanded"] == 3
+
+
+@patch("codeknow_cli.client.search_v1_search_post")
+def test_search_with_slugs_sends_repos_in_body(mock_search: MagicMock) -> None:
+    c = _unit_client()
+    mock_search.sync_detailed.return_value = _make_search_response(
+        {"query": "test", "vector_hits": 0, "graph_expanded": 0, "results": []}
+    )
+    c.search("test", slugs=["repo-a", "repo-b"])
+    call_body = mock_search.sync_detailed.call_args[1]["body"]
+    assert isinstance(call_body, SearchV1SearchPostBody)
+    assert call_body["repos"] == ["repo-a", "repo-b"]
+
+
+@patch("codeknow_cli.client.search_v1_search_post")
+def test_search_without_slugs_omits_repos(mock_search: MagicMock) -> None:
+    c = _unit_client()
+    mock_search.sync_detailed.return_value = _make_search_response(
+        {"query": "test", "vector_hits": 0, "graph_expanded": 0, "results": []}
+    )
+    c.search("test")
+    call_body = mock_search.sync_detailed.call_args[1]["body"]
+    assert "repos" not in call_body
+
+
+@patch("codeknow_cli.client.search_v1_search_post")
+def test_search_400_unknown_slugs(mock_search: MagicMock) -> None:
+    c = _unit_client()
+    mock_search.sync_detailed.side_effect = api_errors.UnexpectedStatus(
+        400, b'{"detail":"Unknown slugs: [\\"ghost\\"]"}'
+    )
+    with pytest.raises(ClientError, match="Unknown slugs"):
+        c.search("test", slugs=["ghost"])
+
+
+@patch("codeknow_cli.client.search_v1_search_post")
+def test_search_409_rebuilding(mock_search: MagicMock) -> None:
+    c = _unit_client()
+    mock_search.sync_detailed.side_effect = api_errors.UnexpectedStatus(
+        409, b'{"detail":"Repos being rebuilt: [\\"repo\\"]"}'
+    )
+    with pytest.raises(ClientError, match="Repos being rebuilt"):
+        c.search("test")
+
+
+@patch("codeknow_cli.client.search_v1_search_post")
+def test_search_422_validation(mock_search: MagicMock) -> None:
+    c = _unit_client()
+    parsed = HTTPValidationError(
+        detail=[ValidationError(loc=["body"], msg="bad input", type_="value_error")]
+    )
+    mock_search.sync_detailed.return_value = ApiResponse(
+        status_code=422, content=b"", headers={}, parsed=parsed
+    )
+    with pytest.raises(ClientError, match=r"Validation error.*bad input"):
+        c.search("test")

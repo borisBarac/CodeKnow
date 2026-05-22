@@ -55,7 +55,15 @@ class StubAPIHandler(BaseHTTPRequestHandler):
                 },
             )
         elif self.path == "/v1/search":
-            self._send_json(200, {"results": []})
+            self._send_json(
+                200,
+                {
+                    "query": "test",
+                    "vector_hits": 0,
+                    "graph_expanded": 0,
+                    "results": [],
+                },
+            )
         else:
             self._send_json(404, {"error": "not found"})
 

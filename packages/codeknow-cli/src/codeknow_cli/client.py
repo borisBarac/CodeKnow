@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
+from typing import Any
 
 import httpx
 from code_know_api_client import errors as api_errors
@@ -12,16 +14,23 @@ from code_know_api_client.api.default import (
     build_v1_build_post,
     delete_repo_v1_repos_delete,
     list_repos_v1_repos_get,
+    search_v1_search_post,
 )
 from code_know_api_client.client import Client as GeneratedClient
 from code_know_api_client.models import (
     delete_repo_v1_repos_delete_response_delete_repo_v1_repos_delete as _del_resp,
+)
+from code_know_api_client.models import (
+    search_v1_search_post_response_search_v1_search_post as _search_resp,
 )
 from code_know_api_client.models.build_request import BuildRequest
 from code_know_api_client.models.build_response import BuildResponse
 from code_know_api_client.models.delete_repo_request import DeleteRepoRequest
 from code_know_api_client.models.http_validation_error import HTTPValidationError
 from code_know_api_client.models.list_repos_response import ListReposResponse
+from code_know_api_client.models.search_v1_search_post_body import (
+    SearchV1SearchPostBody,
+)
 from code_know_api_client.types import Unset
 
 from codeknow_cli.daemon_manager import DaemonManager
@@ -109,8 +118,59 @@ class Client:
         msg = f"Unexpected response from API (status {resp.status_code})"
         raise ClientError(msg)
 
-    def search(self, query: str, slug: str | None = None) -> dict:
-        raise NotImplementedError
+    @staticmethod
+    def _extract_detail(content: bytes) -> str:
+        try:
+            data: dict[str, Any] = json.loads(content)
+            result: Any = data.get("detail", "")
+            return str(result) if result else ""
+        except (json.JSONDecodeError, AttributeError):
+            return content.decode(errors="ignore")
+
+    def search(self, query: str, slugs: list[str] | None = None) -> dict:
+        body = SearchV1SearchPostBody()
+        body["query"] = query
+        body["top_k"] = 10
+        if slugs:
+            body["repos"] = slugs
+
+        try:
+            resp = search_v1_search_post.sync_detailed(
+                client=self._api_client, body=body
+            )
+        except api_errors.UnexpectedStatus as exc:
+            if exc.status_code == 400:
+                detail = self._extract_detail(exc.content)
+                msg = f"Unknown slugs: {detail}" if detail else "Unknown slugs"
+                raise ClientError(msg) from exc
+            if exc.status_code == 409:
+                detail = self._extract_detail(exc.content)
+                msg = (
+                    f"Repos being rebuilt: {detail}"
+                    if detail
+                    else "Repos being rebuilt"
+                )
+                raise ClientError(msg) from exc
+            body_text = exc.content.decode(errors="ignore")
+            msg = f"Unexpected API status {exc.status_code}: {body_text}"
+            raise ClientError(msg) from exc
+
+        if resp.status_code == 200 and isinstance(
+            resp.parsed, _search_resp.SearchV1SearchPostResponseSearchV1SearchPost
+        ):
+            return dict(resp.parsed.additional_properties)
+
+        if resp.status_code == 422 and isinstance(resp.parsed, HTTPValidationError):
+            val_detail = resp.parsed.detail
+            if not isinstance(val_detail, Unset) and val_detail:
+                msgs = [str(d) for d in val_detail]
+                msg_0 = f"Validation error: {', '.join(msgs)}"
+                raise ClientError(msg_0)
+            msg_0 = "Validation error: Invalid request"
+            raise ClientError(msg_0)
+
+        msg = f"Unexpected response from API (status {resp.status_code})"
+        raise ClientError(msg)
 
     def remove_from_index(self, slug: str) -> dict:
         try:

@@ -102,3 +102,44 @@ def test_main_catches_client_error_and_exits() -> None:
         with pytest.raises(SystemExit) as exc_info:
             main()
         assert exc_info.value.code == 1
+
+
+# --- search command tests ---
+
+
+def test_search_command_shows_help(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["search", "--help"])
+    assert result.exit_code == 0
+    assert "QUERY" in result.output
+
+
+def test_search_command_in_main_help(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["--help"])
+    assert result.exit_code == 0
+    assert "search" in result.output
+
+
+@patch.object(Client, "search")
+def test_search_command_calls_client(mock_search: MagicMock, runner: CliRunner) -> None:
+    mock_search.return_value = {
+        "query": "my query",
+        "vector_hits": 0,
+        "graph_expanded": 0,
+        "results": [],
+    }
+    result = runner.invoke(cli, ["search", "my query"])
+    assert result.exit_code == 0
+    mock_search.assert_called_once_with("my query", slugs=None)
+
+
+@patch.object(Client, "search")
+def test_search_command_with_slugs(mock_search: MagicMock, runner: CliRunner) -> None:
+    mock_search.return_value = {
+        "query": "my query",
+        "vector_hits": 0,
+        "graph_expanded": 0,
+        "results": [],
+    }
+    result = runner.invoke(cli, ["search", "my query", "--slug", "a", "--slug", "b"])
+    assert result.exit_code == 0
+    mock_search.assert_called_once_with("my query", slugs=["a", "b"])

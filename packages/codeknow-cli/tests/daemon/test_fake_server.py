@@ -51,6 +51,16 @@ def test_post_search_returns_200(base_url: str) -> None:
     assert resp.json()["results"] == []
 
 
+def test_post_search_returns_full_response(base_url: str) -> None:
+    resp = httpx.post(base_url + "/v1/search", json={"query": "test"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "query" in data
+    assert "vector_hits" in data
+    assert "graph_expanded" in data
+    assert "results" in data
+
+
 def test_delete_repos_returns_200(base_url: str) -> None:
     resp = httpx.request(
         "DELETE",
