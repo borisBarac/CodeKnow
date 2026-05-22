@@ -14,7 +14,13 @@ from fastapi import FastAPI, HTTPException, Query
 
 from codeknow_api.cache import cache_search, close_redis, invalidate_for_slug
 from codeknow_api.middleware import StubMiddleware
-from codeknow_api.models import BuildRequest, BuildResponse, DeleteRepoRequest
+from codeknow_api.models import (
+    BuildRequest,
+    BuildResponse,
+    DeleteRepoRequest,
+    SearchRequest,
+    SearchResponse,
+)
 
 GRAPH_DIR = Path(os.getenv("CODEKNOW_GRAPH_DIR", "./graph"))
 TEMP_DIR = Path(os.getenv("CODEKNOW_TEMP_DIR", "./temp"))
@@ -105,22 +111,44 @@ def create_app() -> FastAPI:
 
     @app.post("/v1/search")
     @cache_search()
-    async def search(body: dict[str, Any]) -> dict[str, Any]:
+    async def search(body: SearchRequest) -> SearchResponse:
         from codeknow.vector.multi_search import multi_graph_search
 
-        query = body.get("query", "")
-        top_k = body.get("top_k", 10)
-        repos = body.get("repos")
-        if repos is not None and not isinstance(repos, list):
-            return {"error": "repos must be a list of slugs", "results": []}
-        result = await asyncio.to_thread(
-            multi_graph_search,
-            query,
-            graph_base_dir=GRAPH_DIR,
-            slugs=repos,
-            total_limit=top_k,
-        )
-        return result.model_dump()
+        repos = body.repos
+
+        if repos is not None:
+            missing = [
+                s for s in repos if not (GRAPH_DIR / s / "metadata.json").exists()
+            ]
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown slugs: {missing}",
+                )
+
+            building = [
+                s
+                for s in repos
+                if app.state.build_status.get(s, {}).get("status") == "building"
+            ]
+            if building:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Repos being rebuilt: {building}",
+                )
+
+        try:
+            result = await asyncio.to_thread(
+                multi_graph_search,
+                body.query,
+                graph_base_dir=GRAPH_DIR,
+                slugs=repos,
+                total_limit=body.top_k,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        return SearchResponse(**result.model_dump())
 
     @app.delete("/v1/repos")
     async def delete_repo(body: DeleteRepoRequest) -> dict[str, Any]:

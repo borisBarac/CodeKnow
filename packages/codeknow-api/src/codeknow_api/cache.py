@@ -44,7 +44,7 @@ async def close_redis() -> None:
 
 
 def _make_key(query: str, repos: list[str] | None, top_k: int) -> str:
-    repos_sorted = sorted(repos) if repos else None
+    repos_sorted = sorted(repos) if repos is not None else None
     raw = json.dumps({"q": query, "repos": repos_sorted, "k": top_k})
     h = hashlib.sha256(raw.encode()).hexdigest()
     return f"ck:search:{h}"
@@ -107,23 +107,36 @@ def _body_references_slug(data: Any, slug: str) -> bool:
 def cache_search(ttl: int | None = None) -> Any:
     """Decorator that caches the return value of a FastAPI search handler.
 
-    The decorated function must accept a ``dict[str, Any]`` body (or
-    keyword arguments ``query``, ``repos``, ``top_k``).  The cache key
-    is derived from those three parameters so identical queries are
-    served from Redis without re-executing the search.
+    The decorated function must accept a body that is either a
+    ``dict[str, Any]`` or a Pydantic model with ``query``, ``top_k``, and
+    ``repos`` attributes.  The cache key is derived from those three
+    parameters so identical queries are served from Redis without
+    re-executing the search.
     """
     _ttl = ttl or DEFAULT_TTL
 
     def decorator(func: Any) -> Any:
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            body: dict[str, Any] = kwargs.get("body", args[0] if args else {})
-            if not isinstance(body, dict):
-                body = {}
+            raw = kwargs.get("body", args[0] if args else {})
 
-            query = body.get("query", "")
-            top_k = body.get("top_k", 10)
-            repos = body.get("repos")
+            if isinstance(raw, dict):
+                query = raw.get("query", "")
+                top_k = raw.get("top_k", 10)
+                repos = raw.get("repos")
+            elif (
+                hasattr(raw, "query")
+                and hasattr(raw, "top_k")
+                and hasattr(raw, "repos")
+            ):
+                query = raw.query
+                top_k = raw.top_k
+                repos = raw.repos
+            else:
+                query = ""
+                top_k = 10
+                repos = None
+
             cache_key = _make_key(query, repos, top_k)
             redis = await get_redis()
 
@@ -137,17 +150,19 @@ def cache_search(ttl: int | None = None) -> Any:
 
             result = await func(*args, **kwargs)
 
+            payload = result.model_dump() if hasattr(result, "model_dump") else result
+
             if redis is not None:
                 try:
                     await redis.set(
                         cache_key,
-                        json.dumps(result, default=str),
+                        json.dumps(payload, default=str),
                         ex=_ttl,
                     )
                 except Exception:
                     logger.warning("Search cache write failed", exc_info=True)
 
-            return result
+            return payload
 
         return wrapper
 
