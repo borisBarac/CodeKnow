@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import click
 import pytest
 from click.testing import CliRunner
-from codeknow_cli.client import Client
+from codeknow_cli.client import Client, ClientError
 from codeknow_cli.main import cli
 
 
@@ -54,3 +56,49 @@ def test_add_command_shows_in_help(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
     assert "add" in result.output
+
+
+def test_remove_command_shows_help(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["remove", "--help"])
+    assert result.exit_code == 0
+    assert "SLUG" in result.output
+
+
+def test_remove_command_shows_in_help(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["--help"])
+    assert result.exit_code == 0
+    assert "remove" in result.output
+
+
+@patch.object(Client, "remove_from_index")
+def test_remove_command_output(mock_remove: MagicMock, runner: CliRunner) -> None:
+    mock_remove.return_value = {
+        "status": "deleted",
+        "slug": "my-repo",
+        "chunks_deleted": 5,
+    }
+    result = runner.invoke(cli, ["remove", "my-repo"])
+    assert result.exit_code == 0
+    assert "Status: deleted" in result.output
+    assert "Slug:   my-repo" in result.output
+    assert "Chunks deleted: 5" in result.output
+
+
+@patch.object(Client, "remove_from_index")
+def test_remove_command_propagates_error(
+    mock_remove: MagicMock, runner: CliRunner
+) -> None:
+    mock_remove.side_effect = ClientError("Repo with slug 'x' not found")
+    result = runner.invoke(cli, ["remove", "x"])
+    assert result.exception is not None
+    assert isinstance(result.exception, ClientError)
+    assert "Repo with slug 'x' not found" in str(result.exception)
+
+
+def test_main_catches_client_error_and_exits() -> None:
+    with patch("codeknow_cli.main.cli", side_effect=ClientError("boom")):
+        from codeknow_cli.main import main
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1

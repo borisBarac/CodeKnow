@@ -1,27 +1,17 @@
 from __future__ import annotations
 
-import atexit
 import contextlib
-import os
-import signal
-import socket
 import sys
 from typing import TYPE_CHECKING
 
 import pytest
 from codeknow_cli.daemon_manager import DaemonManager
 
+from .conftest import _free_port, _started_pids
+
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
-
-_started_pids: set[int] = set()
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def _worker_command(port: int) -> list[str]:
@@ -30,15 +20,6 @@ def _worker_command(port: int) -> list[str]:
         f" run_server(port={port})"
     )
     return [sys.executable, "-c", code]
-
-
-def _atexit_cleanup() -> None:
-    for pid in _started_pids:
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.kill(pid, signal.SIGKILL)
-
-
-atexit.register(_atexit_cleanup)
 
 
 @pytest.fixture

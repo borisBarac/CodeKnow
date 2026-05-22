@@ -28,11 +28,12 @@ def test_get_repos_returns_200(base_url: str) -> None:
     assert resp.status_code == 200
 
 
-def test_get_repos_returns_empty_list(base_url: str) -> None:
+def test_get_repos_returns_stub_repo(base_url: str) -> None:
     resp = httpx.get(base_url + "/v1/repos")
     data = resp.json()
-    assert data["repos"] == []
-    assert data["total"] == 0
+    assert len(data["repos"]) == 1
+    assert data["repos"][0]["slug"] == "stub-slug"
+    assert data["total"] == 1
 
 
 def test_post_build_returns_202(base_url: str) -> None:

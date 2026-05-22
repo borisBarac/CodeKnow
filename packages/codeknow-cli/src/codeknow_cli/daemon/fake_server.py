@@ -2,9 +2,22 @@ from __future__ import annotations
 
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import ClassVar
+
+_STUB_REPO = {
+    "github_ssh_url": "git@github.com:stub/repo.git",
+    "slug": "stub-slug",
+    "commit_hash": "abc123",
+    "built_at": "2025-01-01T00:00:00Z",
+    "node_count": 10,
+    "edge_count": 20,
+    "community_count": 2,
+}
 
 
 class StubAPIHandler(BaseHTTPRequestHandler):
+    STUB_REPO: ClassVar[dict] = _STUB_REPO
+
     def _send_json(self, status: int, body: dict | list) -> None:
         payload = json.dumps(body).encode()
         self.send_response(status)
@@ -18,8 +31,8 @@ class StubAPIHandler(BaseHTTPRequestHandler):
             self._send_json(
                 200,
                 {
-                    "repos": [],
-                    "total": 0,
+                    "repos": [self.STUB_REPO],
+                    "total": 1,
                     "page": 1,
                     "page_size": 50,
                     "errors": [],

@@ -36,6 +36,20 @@ def add(ctx: click.Context, ssh_url: str) -> None:
         click.echo(f"Edges:  {result.edge_count}")
 
 
+@cli.command()
+@click.argument("slug")
+@click.pass_context
+def remove(ctx: click.Context, slug: str) -> None:
+    """Remove a repo from the index (by slug)."""
+    client: Client = ctx.obj["client"]
+    result = client.remove_from_index(slug)
+    click.echo(f"Status: {result.get('status')}")
+    if result.get("slug"):
+        click.echo(f"Slug:   {result['slug']}")
+    if result.get("chunks_deleted") is not None:
+        click.echo(f"Chunks deleted: {result['chunks_deleted']}")
+
+
 @cli.command(
     cls=DaemonCLI,
     daemon_params={"pid_file": DEFAULT_PID_FILE},

@@ -8,11 +8,20 @@ import time
 
 import httpx
 from code_know_api_client import errors as api_errors
-from code_know_api_client.api.default import build_v1_build_post
+from code_know_api_client.api.default import (
+    build_v1_build_post,
+    delete_repo_v1_repos_delete,
+    list_repos_v1_repos_get,
+)
 from code_know_api_client.client import Client as GeneratedClient
+from code_know_api_client.models import (
+    delete_repo_v1_repos_delete_response_delete_repo_v1_repos_delete as _del_resp,
+)
 from code_know_api_client.models.build_request import BuildRequest
 from code_know_api_client.models.build_response import BuildResponse
+from code_know_api_client.models.delete_repo_request import DeleteRepoRequest
 from code_know_api_client.models.http_validation_error import HTTPValidationError
+from code_know_api_client.models.list_repos_response import ListReposResponse
 from code_know_api_client.types import Unset
 
 from codeknow_cli.daemon_manager import DaemonManager
@@ -85,9 +94,7 @@ class Client:
                 raise ClientError(msg) from exc
             body = exc.content.decode(errors="ignore")
             msg_0 = f"Unexpected API status {exc.status_code}: {body}"
-            raise ClientError(
-                msg_0
-            ) from exc
+            raise ClientError(msg_0) from exc
 
         if resp.status_code == 202 and isinstance(resp.parsed, BuildResponse):
             return resp.parsed
@@ -106,7 +113,70 @@ class Client:
         raise NotImplementedError
 
     def remove_from_index(self, slug: str) -> dict:
-        raise NotImplementedError
+        try:
+            list_resp = list_repos_v1_repos_get.sync_detailed(
+                client=self._api_client,
+            )
+        except api_errors.UnexpectedStatus as exc:
+            body = exc.content.decode(errors="ignore")
+            msg = f"Unexpected API status {exc.status_code}: {body}"
+            raise ClientError(msg) from exc
+
+        if list_resp.status_code == 422 and isinstance(
+            list_resp.parsed, HTTPValidationError
+        ):
+            detail = list_resp.parsed.detail
+            if not isinstance(detail, Unset) and detail:
+                msgs = [str(d) for d in detail]
+                msg_0 = f"Validation error: {', '.join(msgs)}"
+                raise ClientError(msg_0)
+            msg_0 = "Validation error listing repos"
+            raise ClientError(msg_0)
+
+        if not (
+            list_resp.status_code == 200
+            and isinstance(list_resp.parsed, ListReposResponse)
+        ):
+            msg = f"Unexpected response from API (status {list_resp.status_code})"
+            raise ClientError(msg)
+
+        repo = next((r for r in list_resp.parsed.repos if r.slug == slug), None)
+        if repo is None:
+            msg = f"Repo with slug '{slug}' not found"
+            raise ClientError(msg)
+
+        try:
+            del_resp = delete_repo_v1_repos_delete.sync_detailed(
+                client=self._api_client,
+                body=DeleteRepoRequest(url=repo.github_ssh_url),
+            )
+        except api_errors.UnexpectedStatus as exc:
+            if exc.status_code == 404:
+                msg = "Repo not found"
+                raise ClientError(msg) from exc
+            body = exc.content.decode(errors="ignore")
+            msg = f"Unexpected API status {exc.status_code}: {body}"
+            raise ClientError(msg) from exc
+
+        if del_resp.status_code == 200 and isinstance(
+            del_resp.parsed,
+            _del_resp.DeleteRepoV1ReposDeleteResponseDeleteRepoV1ReposDelete,
+        ):
+            return dict(del_resp.parsed.additional_properties)
+
+        if del_resp.status_code == 422 and isinstance(
+            del_resp.parsed, HTTPValidationError
+        ):
+            detail = del_resp.parsed.detail
+            if not isinstance(detail, Unset) and detail:
+                msgs = [str(d) for d in detail]
+                msg_0 = f"Validation error: {', '.join(msgs)}"
+                raise ClientError(msg_0)
+            msg_0 = "Validation error deleting repo"
+            raise ClientError(msg_0)
+
+        msg = f"Unexpected response from API (status {del_resp.status_code})"
+        raise ClientError(msg)
 
     def _wait_for_ready(self, timeout: float = 5.0) -> None:
         deadline = time.monotonic() + timeout
