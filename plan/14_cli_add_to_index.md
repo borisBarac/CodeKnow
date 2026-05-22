@@ -1,5 +1,7 @@
 # Plan 14: `add_to_index(ssh_url: str) -> BuildResponse`
 
+[implemented]
+
 ## Overview
 
 Use the generated API client (`code_know_api_client`) instead of raw `httpx` calls. This gives us typed request/response models and keeps the CLI decoupled from `httpx`.
