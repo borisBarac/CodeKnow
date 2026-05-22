@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import sys
+
 import click
 from daemonocle.cli import DaemonCLI
 
 from codeknow_cli import __version__
-from codeknow_cli.client import DEFAULT_PID_FILE, Client
+from codeknow_cli.client import DEFAULT_PID_FILE, Client, ClientError
 from codeknow_cli.daemon import run_server
 
 
@@ -17,6 +19,21 @@ def cli(ctx: click.Context) -> None:
     """Codeknow — code knowledge graph toolkit."""
     ctx.ensure_object(dict)
     ctx.obj["client"] = Client()
+
+
+@cli.command()
+@click.argument("ssh_url")
+@click.pass_context
+def add(ctx: click.Context, ssh_url: str) -> None:
+    """Add a GitHub repo to the index (by SSH URL)."""
+    client: Client = ctx.obj["client"]
+    result = client.add_to_index(ssh_url)
+    click.echo(f"Status: {result.status}")
+    if result.slug:
+        click.echo(f"Slug:   {result.slug}")
+    if result.node_count is not None:
+        click.echo(f"Nodes:  {result.node_count}")
+        click.echo(f"Edges:  {result.edge_count}")
 
 
 @cli.command(
@@ -30,4 +47,8 @@ def daemon() -> None:
 
 def main() -> None:
     """Entry point for the ``codeknow`` console script."""
-    cli()
+    try:
+        cli()
+    except ClientError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)

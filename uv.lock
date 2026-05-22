@@ -343,6 +343,23 @@ wheels = [
 ]
 
 [[package]]
+name = "code-know-api-client"
+version = "0.1.0"
+source = { directory = "packages/codeknow-cli/generated" }
+dependencies = [
+    { name = "attrs" },
+    { name = "httpx" },
+    { name = "python-dateutil" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "attrs", specifier = ">=22.2.0" },
+    { name = "httpx", specifier = ">=0.23.0,<0.29.0" },
+    { name = "python-dateutil", specifier = ">=2.8.0,<3.0.0" },
+]
+
+[[package]]
 name = "codeknow-api"
 version = "0.1.0"
 source = { editable = "packages/codeknow-api" }
@@ -365,12 +382,14 @@ version = "0.1.0"
 source = { editable = "packages/codeknow-cli" }
 dependencies = [
     { name = "click" },
+    { name = "code-know-api-client" },
     { name = "daemonocle" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.2" },
+    { name = "code-know-api-client", directory = "packages/codeknow-cli/generated" },
     { name = "daemonocle", specifier = ">=1.1" },
 ]
 

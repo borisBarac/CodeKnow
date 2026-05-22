@@ -7,6 +7,13 @@ import sys
 import time
 
 import httpx
+from code_know_api_client import errors as api_errors
+from code_know_api_client.api.default import build_v1_build_post
+from code_know_api_client.client import Client as GeneratedClient
+from code_know_api_client.models.build_request import BuildRequest
+from code_know_api_client.models.build_response import BuildResponse
+from code_know_api_client.models.http_validation_error import HTTPValidationError
+from code_know_api_client.types import Unset
 
 from codeknow_cli.daemon_manager import DaemonManager
 
@@ -15,6 +22,9 @@ DEFAULT_PORT = 9999
 DEFAULT_PID_FILE = "/tmp/codeknow-daemon.pid"  # noqa: S108
 _ENV_HOST = "CODEKNOW_HOST"
 _ENV_PORT = "CODEKNOW_PORT"
+
+
+class ClientError(Exception): ...
 
 
 class Client:
@@ -43,6 +53,12 @@ class Client:
             ],
         )
 
+        self._api_client = GeneratedClient(
+            base_url=self.base_url,
+            raise_on_unexpected_status=True,
+            timeout=httpx.Timeout(300.0),
+        )
+
     def start_daemon(self, timeout: float = 5.0) -> dict:
         pid = self._manager.start()
         self._daemon_pid = pid
@@ -57,8 +73,34 @@ class Client:
     def check_daemon(self) -> bool:
         return self._manager.is_running()
 
-    def add_to_index(self, ssh_url: str) -> dict:
-        raise NotImplementedError
+    def add_to_index(self, ssh_url: str) -> BuildResponse:
+        try:
+            resp = build_v1_build_post.sync_detailed(
+                client=self._api_client,
+                body=BuildRequest(github_ssh_url=ssh_url),
+            )
+        except api_errors.UnexpectedStatus as exc:
+            if exc.status_code == 409:
+                msg = "Repo is already being built"
+                raise ClientError(msg) from exc
+            body = exc.content.decode(errors="ignore")
+            msg_0 = f"Unexpected API status {exc.status_code}: {body}"
+            raise ClientError(
+                msg_0
+            ) from exc
+
+        if resp.status_code == 202 and isinstance(resp.parsed, BuildResponse):
+            return resp.parsed
+        if resp.status_code == 422 and isinstance(resp.parsed, HTTPValidationError):
+            detail = resp.parsed.detail
+            if not isinstance(detail, Unset) and detail:
+                msgs = [str(d) for d in detail]
+                msg_0 = f"Validation error: {', '.join(msgs)}"
+                raise ClientError(msg_0)
+            msg_0 = "Validation error: Invalid GitHub SSH URL"
+            raise ClientError(msg_0)
+        msg = f"Unexpected response from API (status {resp.status_code})"
+        raise ClientError(msg)
 
     def search(self, query: str, slug: str | None = None) -> dict:
         raise NotImplementedError

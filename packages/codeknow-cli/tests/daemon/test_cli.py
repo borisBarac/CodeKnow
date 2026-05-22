@@ -42,3 +42,15 @@ def test_context_has_client() -> None:
     runner.invoke(cli, ["__test_ctx"], catch_exceptions=False)
     assert isinstance(captured["client"], Client)
     assert captured["client"].base_url == "http://127.0.0.1:9999"
+
+
+def test_add_command_shows_help(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["add", "--help"])
+    assert result.exit_code == 0
+    assert "SSH_URL" in result.output
+
+
+def test_add_command_shows_in_help(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["--help"])
+    assert result.exit_code == 0
+    assert "add" in result.output
