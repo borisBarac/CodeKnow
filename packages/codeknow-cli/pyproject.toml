@@ -11,6 +11,7 @@ dependencies = [
     "click>=8.2",
     "daemonocle>=1.1",
     "code-know-api-client",
+    "codeknow-api>=0.1.0",
 ]
 
 [project.scripts]
@@ -21,3 +22,4 @@ packages = ["src/codeknow_cli"]
 
 [tool.uv.sources]
 code-know-api-client = { path = "./generated" }
+codeknow-api = { workspace = true }

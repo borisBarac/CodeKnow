@@ -59,13 +59,18 @@ class Client:
         self._pid_file = pid_file or DEFAULT_PID_FILE
         self._daemon_pid: int | None = None
 
+        _module = (
+            "fake_server"
+            if os.getenv("FAKE_SERVER", "").lower() in ("1", "true")
+            else "server"
+        )
         self._manager = DaemonManager(
             pid_file=self._pid_file,
             worker_command=[
                 sys.executable,
                 "-c",
                 (
-                    "from codeknow_cli.daemon.fake_server import run_server;"
+                    f"from codeknow_cli.daemon.{_module} import run_server;"
                     f" run_server(host={self._bind_host!r}, port={self.port})"
                 ),
             ],

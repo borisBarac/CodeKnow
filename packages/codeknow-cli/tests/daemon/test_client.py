@@ -31,7 +31,10 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def client(tmp_path: Path) -> Generator[Client, None, None]:
+def client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Generator[Client, None, None]:
+    monkeypatch.setenv("FAKE_SERVER", "1")
     port = _free_port()
     pid_file = str(tmp_path / "test-daemon.pid")
     c = Client(host="127.0.0.1", port=port, pid_file=pid_file)

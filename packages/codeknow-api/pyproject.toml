@@ -7,7 +7,7 @@ name = "codeknow-api"
 version = "0.1.0"
 description = "FastAPI service for the codeknow knowledge graph"
 requires-python = ">=3.10,<3.14"
-dependencies = ["codeknow-lib>=0.1.0", "fastapi>=0.115", "uvicorn>=0.30"]
+dependencies = ["codeknow-lib>=0.1.0", "fastapi[standard]>=0.115", "uvicorn>=0.30"]
 
 [project.scripts]
 codeknow-api = "codeknow_api.app:main"
