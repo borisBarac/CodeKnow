@@ -41,12 +41,6 @@ class ExtractAstFn(Protocol):
     ) -> ExtractionResult: ...
 
 
-class ExtractSemanticFn(Protocol):
-    def __call__(
-        self, files: dict[str, list[str]], **kwargs: Any
-    ) -> ExtractionResult: ...
-
-
 class BuildGraphFn(Protocol):
     def __call__(self, extractions: list[dict], **kwargs: Any) -> nx.Graph: ...
 
@@ -69,7 +63,6 @@ STAGES = [
     "resolve",
     "detect",
     "extract_ast",
-    "extract_semantic",
     "build_graph",
     "map_chunks",
     "cluster",
@@ -90,13 +83,6 @@ STAGE_IO: dict[str, dict[str, str]] = {
         "output": (
             "ExtractionResult (structural entities via"
             " tree-sitter, confidence=EXTRACTED)"
-        ),
-    },
-    "extract_semantic": {
-        "input": "FileDiscovery.files",
-        "output": (
-            "ExtractionResult (conceptual entities via"
-            " LangChain, confidence=INFERRED|AMBIGUOUS)"
         ),
     },
     "build_graph": {

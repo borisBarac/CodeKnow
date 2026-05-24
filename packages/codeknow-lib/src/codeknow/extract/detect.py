@@ -360,8 +360,7 @@ def detect(root: Path, *, follow_symlinks: bool = False) -> dict:
     elif total_words >= CORPUS_UPPER_THRESHOLD or total_files >= FILE_COUNT_UPPER:
         warning = (
             f"Large corpus: {total_files} files · ~{total_words:,} words. "
-            f"Semantic extraction will be expensive (many Claude tokens). "
-            f"Consider running on a subfolder, or use --no-semantic to run AST-only."
+            f"Consider running on a subfolder."
         )
 
     return {

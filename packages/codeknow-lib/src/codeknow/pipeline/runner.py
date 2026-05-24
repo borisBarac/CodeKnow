@@ -17,7 +17,6 @@ if TYPE_CHECKING:
         DetectFn,
         EmbedFn,
         ExtractAstFn,
-        ExtractSemanticFn,
         MapChunksFn,
         ResolveFn,
     )
@@ -29,7 +28,6 @@ def run_pipeline(
     resolve_fn: ResolveFn | None = None,
     detect_fn: DetectFn | None = None,
     extract_ast_fn: ExtractAstFn | None = None,
-    extract_semantic_fn: ExtractSemanticFn | None = None,
     build_graph_fn: BuildGraphFn | None = None,
     map_chunks_fn: MapChunksFn | None = None,
     cluster_fn: ClusterFn | None = None,
@@ -39,7 +37,7 @@ def run_pipeline(
     """Execute: resolve → detect → extract → build → map_chunks → cluster → embed.
 
     Each ``*_fn`` argument overrides the default implementation.
-    Stubs are used for stages not yet implemented (extract_semantic, map_chunks).
+    Stubs are used for stages not yet implemented.
     """
     from codeknow.extract.ast import extract_ast
     from codeknow.extract.detect import detect
@@ -67,12 +65,6 @@ def run_pipeline(
     extractions.append(
         ast_result if isinstance(ast_result, dict) else _to_dict(ast_result)
     )
-
-    if not config.no_semantic and extract_semantic_fn is not None:
-        sem_result = extract_semantic_fn(discovery.get("files", {}))
-        extractions.append(
-            sem_result if isinstance(sem_result, dict) else _to_dict(sem_result)
-        )
 
     G = _build(extractions)
 

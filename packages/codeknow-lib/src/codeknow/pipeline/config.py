@@ -29,7 +29,6 @@ class PipelineConfig:
     output_dir: Path | None = None
     graph_filename: str = "graph.json"
     chunk_map_filename: str = "chunk_map.json"
-    no_semantic: bool = False
     no_embed: bool = False
     embed_provider: Literal["ollama", "openrouter"] = "ollama"
     embed_model: str = "qwen3-embedding:4b"

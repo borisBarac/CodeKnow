@@ -91,11 +91,6 @@ def run_pipeline_cli() -> None:
         default="chunk_map.json",
         help="Filename for the chunk map output (default: chunk_map.json)",
     )
-    parser.add_argument(
-        "--no-semantic",
-        action="store_true",
-        help="Skip semantic extraction stage",
-    )
     args = parser.parse_args()
 
     config = PipelineConfig(
@@ -104,7 +99,6 @@ def run_pipeline_cli() -> None:
         output_dir=args.output_dir,
         graph_filename=args.graph_file,
         chunk_map_filename=args.chunk_map_file,
-        no_semantic=args.no_semantic,
     )
 
     run_pipeline(config)

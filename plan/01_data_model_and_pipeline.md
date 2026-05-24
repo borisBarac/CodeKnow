@@ -43,9 +43,8 @@ The pipeline is: `detect() → extract_ast() → extract_semantic() → build_gr
 ## Pipeline Infrastructure (implemented, not in original plan)
 
 - **`PipelineResult` dataclass** (`pipeline.py:20-28`): holds graph, communities, chunk_map, discovery, stats
-- **6 Protocol types** (`pipeline.py:31-58`): `DetectFn`, `ExtractAstFn`, `ExtractSemanticFn`, `BuildGraphFn`, `MapChunksFn`, `ClusterFn`
+- **5 Protocol types** (`pipeline.py:31-58`): `DetectFn`, `ExtractAstFn`, `BuildGraphFn`, `MapChunksFn`, `ClusterFn`
 - **`run_pipeline()` orchestrator** (`pipeline.py:103-168`): composable via dependency injection (`*_fn` kwargs)
-- **`no_semantic` flag** (`pipeline.py:112`): skips semantic extraction when True
 - **`_assign_communities()` helper** (`pipeline.py:171-177`): writes community IDs onto graph nodes
 
 ## Unplanned Modules (implemented, not in original plan)

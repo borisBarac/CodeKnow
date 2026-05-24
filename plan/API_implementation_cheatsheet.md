@@ -155,7 +155,7 @@
 - `metadata.build_chunk_metadata(result) -> dict[str, dict]` — Attach node labels/communities to chunks
 
 ### `pipeline/`
-- `config.PipelineConfig` — Dataclass: `repo_url`, `output_dir`, `no_semantic`, `no_embed`, chroma settings, etc. Supports both HTTPS and SSH GitHub URLs.
+- `config.PipelineConfig` — Dataclass: `repo_url`, `output_dir`, `no_embed`, chroma settings, etc. Supports both HTTPS and SSH GitHub URLs.
 - `config.PipelineConfig.slug` — Property: extracts `owner-repo` from URL (HTTPS or SSH format)
 - `runner.run_pipeline(config) -> PipelineResult` — Orchestrate all 8 stages; captures `commit_hash` before cleanup
 - `io.load_graph(path) -> nx.Graph` — Read graph.json from disk
@@ -164,7 +164,7 @@
 - `io.save_pipeline_result(result) -> Path` — Write graph.json + chunk_map.json + embed_stats.json + metadata.json
 - `io.communities_from_graph(G) -> dict[int, list[str]]` — Extract community attrs
 - `types.PipelineResult` — Frozen dataclass: `graph, communities, chunk_map, discovery, stats, config, commit_hash, embed_stats, graph_path`
-- `types.STAGES` — `["resolve", "detect", "extract_ast", "extract_semantic", "build_graph", "map_chunks", "cluster", "embed"]`
+- `types.STAGES` — `["resolve", "detect", "extract_ast", "build_graph", "map_chunks", "cluster", "embed"]`
 
 ### `cache/`
 - `protocol.CacheStore` — Async Protocol: `get`, `store`, `has`, `delete`, `evict`, `close`

@@ -12,4 +12,4 @@
 - `codeknow-api` — starts the FastAPI server (`codeknow_api.app:main`). Run via `uv run codeknow-api`.
 - `project-scripts.py` — project CLI with subcommands (run via `uv run project-scripts.py <command>`):
   - `dev-check` — runs all static checks in sequence: ruff check (with fix + unsafe-fixes), ruff format, mypy.
-  - `pipeline` — runs the codeknow pipeline on a GitHub repo. Accepts `--repo-url`, `--input-dir`, `-o/--output-dir`, `-g/--graph-file`, `--chunk-map-file`, `--no-semantic`.
+  - `pipeline` — runs the codeknow pipeline on a GitHub repo. Accepts `--repo-url`, `--input-dir`, `-o/--output-dir`, `-g/--graph-file`, `--chunk-map-file`.

@@ -74,11 +74,13 @@ def _daemon_lifecycle(tmp_path_factory: pytest.TempPathFactory) -> None:
     result = _CLIENT.start_daemon(timeout=10)
     _STARTED_PIDS.add(result["pid"])
 
-    _CLI_ENV.update({
-        "CODEKNOW_STUB": "1",
-        "CODEKNOW_HOST": _CLIENT.host,
-        "CODEKNOW_PORT": str(_CLIENT.port),
-    })
+    _CLI_ENV.update(
+        {
+            "CODEKNOW_STUB": "1",
+            "CODEKNOW_HOST": _CLIENT.host,
+            "CODEKNOW_PORT": str(_CLIENT.port),
+        }
+    )
 
     yield
 

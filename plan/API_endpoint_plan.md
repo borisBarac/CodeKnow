@@ -8,7 +8,7 @@ Based on analysis of `app.py` against `API_implementation_cheatsheet.md`.
 
 | # | Priority | Task | Details |
 |---|----------|------|---------|
-| 1 | **HIGH** | Add Pydantic request model `BuildRequest` | Replace `dict[str, Any]` with a typed model. Use existing `validate_github_ssh_url` from `params.py`. Expose `no_embed`, `no_semantic`, `embed_provider`, `embed_model` as optional fields. |
+| 1 | **HIGH** | Add Pydantic request model `BuildRequest` | Replace `dict[str, Any]` with a typed model. Use existing `validate_github_ssh_url` from `params.py`. Expose `no_embed`, `embed_provider`, `embed_model` as optional fields. |
 | 2 | **HIGH** | Fix error HTTP status code | Errors currently return HTTP 202. Use `JSONResponse(status_code=500)` or `HTTPException` for failures. |
 | 3 | **MEDIUM** | Make async behavior consistent with 202 | Either: (A) use `BackgroundTasks`/`asyncio.create_task` to run pipeline and return immediately with `{"status": "started", "slug": slug}`, or (B) change to `status_code=200` if synchronous is intended. |
 | 4 | **MEDIUM** | Add concurrency guard | Prevent duplicate builds for the same slug using a per-slug `asyncio.Lock` or check `build_status` before starting. Return HTTP 409 if already building. |

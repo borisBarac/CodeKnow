@@ -66,9 +66,7 @@ def create_app() -> FastAPI:
             ("codeknow.git_download", ("get_path", "unregister")),
         )
         checks = [
-            r
-            for r in (_check_import(m, n) for m, n in lazy_imports)
-            if r is not None
+            r for r in (_check_import(m, n) for m, n in lazy_imports) if r is not None
         ]
         if checks:
             raise HTTPException(

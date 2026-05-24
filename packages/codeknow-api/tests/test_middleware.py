@@ -11,11 +11,11 @@ if TYPE_CHECKING:
 
 import pytest
 from codeknow_api.middleware import (
+    _STUB_REPO,
     Receive,
     Scope,
     Send,
     StubMiddleware,
-    _STUB_REPO,
     _read_body,
 )
 
