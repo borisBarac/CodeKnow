@@ -383,7 +383,6 @@ source = { editable = "packages/codeknow-cli" }
 dependencies = [
     { name = "click" },
     { name = "code-know-api-client" },
-    { name = "codeknow-api" },
     { name = "daemonocle" },
 ]
 
@@ -391,7 +390,6 @@ dependencies = [
 requires-dist = [
     { name = "click", specifier = ">=8.2" },
     { name = "code-know-api-client", directory = "packages/codeknow-cli/generated" },
-    { name = "codeknow-api", editable = "packages/codeknow-api" },
     { name = "daemonocle", specifier = ">=1.1" },
 ]
 
