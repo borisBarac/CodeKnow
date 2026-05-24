@@ -111,9 +111,12 @@ def _body_receive(body: bytes) -> Receive:
 
 
 class TestStubMiddleware:
-    @pytest.mark.anyio
-    async def test_intercepts_post_build(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.fixture(autouse=True)
+    def _stub_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("CODEKNOW_STUB", "1")
+
+    @pytest.mark.anyio
+    async def test_intercepts_post_build(self) -> None:
         calls: list[Scope] = []
         inner = await _make_inner_app(calls)
         mw = StubMiddleware(inner)
@@ -136,10 +139,7 @@ class TestStubMiddleware:
         assert resp["github_ssh_url"] == "git@github.com:owner/repo.git"
 
     @pytest.mark.anyio
-    async def test_intercepts_post_search(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("CODEKNOW_STUB", "1")
+    async def test_intercepts_post_search(self) -> None:
         calls: list[Scope] = []
         inner = await _make_inner_app(calls)
         mw = StubMiddleware(inner)
@@ -158,10 +158,7 @@ class TestStubMiddleware:
         assert resp["results"] == []
 
     @pytest.mark.anyio
-    async def test_intercepts_delete_repos(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("CODEKNOW_STUB", "1")
+    async def test_intercepts_delete_repos(self) -> None:
         calls: list[Scope] = []
         inner = await _make_inner_app(calls)
         mw = StubMiddleware(inner)
@@ -180,8 +177,7 @@ class TestStubMiddleware:
         assert resp["github_ssh_url"] == "git@github.com:owner/repo.git"
 
     @pytest.mark.anyio
-    async def test_intercepts_get_repos(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("CODEKNOW_STUB", "1")
+    async def test_intercepts_get_repos(self) -> None:
         calls: list[Scope] = []
         inner = await _make_inner_app(calls)
         mw = StubMiddleware(inner)
@@ -212,10 +208,7 @@ class TestStubMiddleware:
         assert collected[1]["body"] == b"inner"
 
     @pytest.mark.anyio
-    async def test_passthrough_for_unknown_path(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("CODEKNOW_STUB", "1")
+    async def test_passthrough_for_unknown_path(self) -> None:
         calls: list[Scope] = []
         inner = await _make_inner_app(calls)
         mw = StubMiddleware(inner)
@@ -228,10 +221,7 @@ class TestStubMiddleware:
         assert collected[1]["body"] == b"inner"
 
     @pytest.mark.anyio
-    async def test_passthrough_for_non_http_scope(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("CODEKNOW_STUB", "1")
+    async def test_passthrough_for_non_http_scope(self) -> None:
         calls: list[Scope] = []
         inner = await _make_inner_app(calls)
         mw = StubMiddleware(inner)
@@ -277,10 +267,7 @@ class TestStubMiddleware:
         assert len(calls) == 1
 
     @pytest.mark.anyio
-    async def test_response_content_type_is_json(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("CODEKNOW_STUB", "1")
+    async def test_response_content_type_is_json(self) -> None:
         calls: list[Scope] = []
         inner = await _make_inner_app(calls)
         mw = StubMiddleware(inner)

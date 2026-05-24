@@ -6,17 +6,11 @@ import json
 import os
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
-from urllib.parse import parse_qs
 
 Scope = dict[str, Any]
 Receive = Callable[[], Awaitable[dict[str, Any]]]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
-
-
-def _extract_url(query_string: str) -> str:
-    params = parse_qs(query_string)
-    return params.get("url", [""])[0]
 
 
 async def _read_body(receive: Receive) -> bytes:
@@ -29,20 +23,29 @@ async def _read_body(receive: Receive) -> bytes:
     return body
 
 
+_STUB_REPO = {
+    "github_ssh_url": "git@github.com:stub/repo.git",
+    "slug": "stub-repo",
+    "commit_hash": "a" * 40,
+    "built_at": "2025-01-01T00:00:00Z",
+    "node_count": 10,
+    "edge_count": 20,
+    "community_count": 2,
+}
+
 _Handler = Callable[[bytes, str], tuple[int, dict[str, Any]]]
 
 _STUB_ROUTES: dict[str, dict[str, _Handler]] = {
     "POST": {
-        "/v1/build": lambda body, _qs: (
+        "/v1/build": lambda _body, _qs: (
             202,
             {
                 "status": "done",
-                "slug": "stub-owner-stub-repo",
-                "commit_hash": "a" * 40,
-                "node_count": 0,
-                "edge_count": 0,
-                "community_count": 0,
-                "github_ssh_url": json.loads(body).get("github_ssh_url", ""),
+                "slug": _STUB_REPO["slug"],
+                "commit_hash": _STUB_REPO["commit_hash"],
+                "node_count": _STUB_REPO["node_count"],
+                "edge_count": _STUB_REPO["edge_count"],
+                "community_count": _STUB_REPO["community_count"],
             },
         ),
         "/v1/search": lambda body, _qs: (
@@ -56,18 +59,26 @@ _STUB_ROUTES: dict[str, dict[str, _Handler]] = {
         ),
     },
     "DELETE": {
-        "/v1/repos": lambda body, _qs: (
+        "/v1/repos": lambda _body, _qs: (
             200,
             {
                 "status": "deleted",
-                "slug": "stub-owner-stub-repo",
+                "slug": _STUB_REPO["slug"],
                 "chunks_deleted": 0,
-                "github_ssh_url": json.loads(body).get("url", ""),
             },
         ),
     },
     "GET": {
-        "/v1/repos": lambda _body, _qs: (200, {"repos": []}),
+        "/v1/repos": lambda _body, _qs: (
+            200,
+            {
+                "repos": [_STUB_REPO],
+                "total": 1,
+                "page": 1,
+                "page_size": 50,
+                "errors": [],
+            },
+        ),
     },
 }
 
