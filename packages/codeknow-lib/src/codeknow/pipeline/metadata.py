@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from codeknow.graph.chunk_mapper import build_reverse_index
+from codeknow.chunking.index import build_reverse_index
 
 if TYPE_CHECKING:
     from codeknow.pipeline import PipelineResult

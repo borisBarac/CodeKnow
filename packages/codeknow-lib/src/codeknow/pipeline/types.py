@@ -92,6 +92,7 @@ STAGE_IO: dict[str, dict[str, str]] = {
     "map_chunks": {
         "input": "NetworkX Graph + FileDiscovery.files",
         "output": "(enriched NetworkX Graph with chunks[], ChunkMap)",
+        "default": "pipeline.chunk_stage.map_chunks",
     },
     "cluster": {
         "input": "NetworkX Graph",

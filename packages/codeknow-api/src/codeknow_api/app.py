@@ -278,12 +278,24 @@ def create_app() -> FastAPI:
 
 def main() -> None:
     """Run the API server."""
+    import argparse
+
     import uvicorn
 
-    host = os.getenv("CODEKNOW_API_HOST", "127.0.0.1")
+    parser = argparse.ArgumentParser(description="CodeKnow API server")
+    parser.add_argument(
+        "--host",
+        default=os.getenv("CODEKNOW_API_HOST", "127.0.0.1"),
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("CODEKNOW_API_PORT", "8080")),
+    )
+    args = parser.parse_args()
     uvicorn.run(
         "codeknow_api.app:create_app",
         factory=True,
-        host=host,
-        port=8080,
+        host=args.host,
+        port=args.port,
     )

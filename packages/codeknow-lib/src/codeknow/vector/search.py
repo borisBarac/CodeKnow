@@ -4,7 +4,7 @@ import heapq
 import logging
 from typing import TYPE_CHECKING, Any
 
-from codeknow.graph.chunk_mapper import build_reverse_index
+from codeknow.chunking.index import build_reverse_index
 from codeknow.pipeline.io import load_graph
 from codeknow.schemas import HybridSearchResponse, HybridSearchResult
 from codeknow.vector.chroma import ChromaConfig, ChromaStore

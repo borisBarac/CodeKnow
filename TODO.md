@@ -6,4 +6,4 @@
 [x] e2e test of search ( semantic + graph)
 
 
-[] api and cli usage of the lib in separate package
+[x] api and cli usage of the lib in separate package

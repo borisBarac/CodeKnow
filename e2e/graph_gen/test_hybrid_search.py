@@ -23,8 +23,8 @@ from check_services import check_chroma, check_ollama
 from codeknow.extract.ast import extract_ast
 from codeknow.extract.detect import detect
 from codeknow.graph.build import build
-from codeknow.graph.chunk_mapper import map_chunks
 from codeknow.graph.cluster import cluster
+from codeknow.pipeline.chunk_stage import map_chunks
 from codeknow.pipeline.config import PipelineConfig
 from codeknow.pipeline.io import save_pipeline_result
 from codeknow.pipeline.metadata import build_chunk_metadata

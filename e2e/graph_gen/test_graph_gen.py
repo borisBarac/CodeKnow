@@ -162,7 +162,7 @@ def test_graph_node_count_is_positive(pipeline):
 
 def test_save_and_load_graph_roundtrip(pipeline, tmp_path):
     G, communities, discovery, _ = pipeline
-    from codeknow.graph.chunk_mapper import map_chunks
+    from codeknow.pipeline.chunk_stage import map_chunks
     from codeknow.pipeline.config import PipelineConfig
     from codeknow.pipeline.io import load_graph, save_pipeline_result
     from codeknow.pipeline.stages import _assign_communities
@@ -200,7 +200,7 @@ def test_save_and_load_graph_roundtrip(pipeline, tmp_path):
 
 def test_load_graph_reconstructs_communities(pipeline, tmp_path):
     G, communities, discovery, _ = pipeline
-    from codeknow.graph.chunk_mapper import map_chunks
+    from codeknow.pipeline.chunk_stage import map_chunks
     from codeknow.pipeline.config import PipelineConfig
     from codeknow.pipeline.io import (
         communities_from_graph,
@@ -238,7 +238,7 @@ def test_chunk_map_roundtrip(pipeline, tmp_path):
     G, communities, discovery, _ = pipeline
     import json
 
-    from codeknow.graph.chunk_mapper import map_chunks
+    from codeknow.pipeline.chunk_stage import map_chunks
     from codeknow.pipeline.config import PipelineConfig
     from codeknow.pipeline.io import save_pipeline_result
     from codeknow.pipeline.stages import _assign_communities
