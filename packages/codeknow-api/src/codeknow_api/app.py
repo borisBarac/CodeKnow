@@ -44,6 +44,39 @@ def create_app() -> FastAPI:
     async def _shutdown() -> None:
         await close_redis()
 
+    def _check_import(
+        module_path: str, names: tuple[str, ...]
+    ) -> dict[str, str] | None:
+        try:
+            mod = __import__(module_path, fromlist=names)
+            for name in names:
+                getattr(mod, name)
+        except Exception as exc:
+            return {"module": module_path, "error": str(exc)}
+        return None
+
+    @app.get("/health")
+    async def health() -> dict[str, Any]:
+        lazy_imports = (
+            ("codeknow.pipeline", ("PipelineConfig", "run_pipeline", "load_metadata")),
+            ("codeknow.pipeline.io", ("load_graph",)),
+            ("codeknow.vector.chroma", ("ChromaConfig", "ChromaStore")),
+            ("codeknow.vector.embeddings", ("EmbeddingConfig", "create_embeddings")),
+            ("codeknow.vector.multi_search", ("multi_graph_search",)),
+            ("codeknow.git_download", ("get_path", "unregister")),
+        )
+        checks = [
+            r
+            for r in (_check_import(m, n) for m, n in lazy_imports)
+            if r is not None
+        ]
+        if checks:
+            raise HTTPException(
+                status_code=503,
+                detail={"status": "unhealthy", "errors": checks},
+            )
+        return {"status": "ok"}
+
     @app.post("/v1/build", status_code=202)
     async def build(body: BuildRequest) -> BuildResponse:
         from codeknow.pipeline import PipelineConfig, run_pipeline

@@ -15,23 +15,9 @@ from codeknow_api.middleware import (
     Scope,
     Send,
     StubMiddleware,
-    _extract_url,
+    _STUB_REPO,
     _read_body,
 )
-
-
-class TestExtractUrl:
-    def test_returns_url_from_query_string(self) -> None:
-        qs = "url=git%40github.com%3Aowner%2Frepo"
-        assert _extract_url(qs) == "git@github.com:owner/repo"
-
-    def test_returns_first_value_when_multiple(self) -> None:
-        qs = "url=first&url=second"
-        assert _extract_url(qs) == "first"
-
-    def test_returns_empty_when_no_url_param(self) -> None:
-        assert _extract_url("") == ""
-        assert _extract_url("foo=bar") == ""
 
 
 class TestReadBody:
@@ -131,12 +117,11 @@ class TestStubMiddleware:
         assert collected[0]["status"] == 202
         resp = json.loads(collected[1]["body"])
         assert resp["status"] == "done"
-        assert resp["slug"] == "stub-owner-stub-repo"
-        assert resp["commit_hash"] == "a" * 40
-        assert resp["node_count"] == 0
-        assert resp["edge_count"] == 0
-        assert resp["community_count"] == 0
-        assert resp["github_ssh_url"] == "git@github.com:owner/repo.git"
+        assert resp["slug"] == _STUB_REPO["slug"]
+        assert resp["commit_hash"] == _STUB_REPO["commit_hash"]
+        assert resp["node_count"] == _STUB_REPO["node_count"]
+        assert resp["edge_count"] == _STUB_REPO["edge_count"]
+        assert resp["community_count"] == _STUB_REPO["community_count"]
 
     @pytest.mark.anyio
     async def test_intercepts_post_search(self) -> None:
@@ -172,9 +157,8 @@ class TestStubMiddleware:
         assert collected[0]["status"] == 200
         resp = json.loads(collected[1]["body"])
         assert resp["status"] == "deleted"
-        assert resp["slug"] == "stub-owner-stub-repo"
+        assert resp["slug"] == _STUB_REPO["slug"]
         assert resp["chunks_deleted"] == 0
-        assert resp["github_ssh_url"] == "git@github.com:owner/repo.git"
 
     @pytest.mark.anyio
     async def test_intercepts_get_repos(self) -> None:
@@ -188,7 +172,13 @@ class TestStubMiddleware:
 
         assert calls == []
         resp = json.loads(collected[1]["body"])
-        assert resp == {"repos": []}
+        assert resp == {
+            "repos": [_STUB_REPO],
+            "total": 1,
+            "page": 1,
+            "page_size": 50,
+            "errors": [],
+        }
 
     @pytest.mark.anyio
     async def test_passthrough_when_stub_disabled(
@@ -248,7 +238,13 @@ class TestStubMiddleware:
 
         assert calls == []
         resp = json.loads(collected[1]["body"])
-        assert resp == {"repos": []}
+        assert resp == {
+            "repos": [_STUB_REPO],
+            "total": 1,
+            "page": 1,
+            "page_size": 50,
+            "errors": [],
+        }
 
     @pytest.mark.anyio
     async def test_stub_mode_falsy_values(
