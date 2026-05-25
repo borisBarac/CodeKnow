@@ -127,7 +127,7 @@ def info(ctx: click.Context) -> None:
     try:
         repos_resp = client.list_repos()
         repos = repos_resp.repos
-    except (ApiError, DaemonNotRunningError):
+    except (ApiError, DaemonNotRunningError, ValidationError):
         click.echo("Repos: unavailable (could not reach daemon)")
         return
 
@@ -158,11 +158,8 @@ def main() -> None:
     """Entry point for the ``codeknow`` console script."""
     try:
         cli()
-    except DaemonNotRunningError:
-        click.echo(
-            "Error: Cannot connect to the daemon. Start it with: codeknow daemon start",
-            err=True,
-        )
+    except DaemonNotRunningError as exc:
+        click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
     except DaemonTimeoutError:
         click.echo(

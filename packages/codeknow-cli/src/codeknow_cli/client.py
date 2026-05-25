@@ -118,11 +118,8 @@ class Client:
     def _call_api(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
         try:
             return fn(*args, **kwargs)
-        except httpx.ConnectError as exc:
+        except httpx.TransportError as exc:
             msg = "Cannot connect to the daemon. Start it with: codeknow daemon start"
-            raise DaemonNotRunningError(msg) from exc
-        except httpx.TimeoutException as exc:
-            msg = "Daemon is not responding. It may still be starting up."
             raise DaemonNotRunningError(msg) from exc
 
     def add_to_index(self, ssh_url: str) -> BuildResponse:

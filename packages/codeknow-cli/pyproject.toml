@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-codeknow = "codeknow_cli.main:cli"
+codeknow = "codeknow_cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/codeknow_cli"]
