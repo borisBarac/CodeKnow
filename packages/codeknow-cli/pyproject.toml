@@ -10,6 +10,7 @@ requires-python = ">=3.10,<3.14"
 dependencies = [
     "click>=8.2",
     "daemonocle>=1.1",
+    "rich>=13.0",
     "code-know-api-client",
 ]
 

@@ -384,6 +384,7 @@ dependencies = [
     { name = "click" },
     { name = "code-know-api-client" },
     { name = "daemonocle" },
+    { name = "rich" },
 ]
 
 [package.metadata]
@@ -391,6 +392,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.2" },
     { name = "code-know-api-client", directory = "packages/codeknow-cli/generated" },
     { name = "daemonocle", specifier = ">=1.1" },
+    { name = "rich", specifier = ">=13.0" },
 ]
 
 [[package]]
