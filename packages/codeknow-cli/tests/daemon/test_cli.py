@@ -5,7 +5,8 @@ from unittest.mock import MagicMock, patch
 import click
 import pytest
 from click.testing import CliRunner
-from codeknow_cli.client import Client, ClientError
+from codeknow_cli.client import Client
+from codeknow_cli.exceptions import ClientError
 from codeknow_cli.main import cli
 
 

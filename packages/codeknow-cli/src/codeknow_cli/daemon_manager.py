@@ -9,6 +9,8 @@ from pathlib import Path
 
 import daemonocle
 
+from codeknow_cli.exceptions import DaemonAlreadyRunningError, DaemonTimeoutError
+
 
 class DaemonManager:
     """Manages the daemon process lifecycle.
@@ -26,7 +28,7 @@ class DaemonManager:
         if self.is_running():
             pid = self._read_pid()
             msg = f"Daemon already running (PID {pid})"
-            raise RuntimeError(msg)
+            raise DaemonAlreadyRunningError(msg)
 
         proc = subprocess.Popen(  # noqa: S603
             self._worker_command,
@@ -85,7 +87,7 @@ class DaemonManager:
                 return
             time.sleep(0.1)
         msg = f"Daemon (PID {pid}) did not stop within timeout"
-        raise TimeoutError(msg)
+        raise DaemonTimeoutError(msg)
 
     def _write_pid(self, pid: int) -> None:
         with self._pid_file.open("w") as f:

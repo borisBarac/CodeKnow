@@ -8,8 +8,19 @@ import click
 from daemonocle.cli import DaemonCLI
 
 from codeknow_cli import __version__
-from codeknow_cli.client import DEFAULT_PID_FILE, Client, ClientError
+from codeknow_cli.client import DEFAULT_PID_FILE, Client
 from codeknow_cli.daemon import run_server
+from codeknow_cli.exceptions import (
+    ApiError,
+    CodeknowError,
+    ConfigError,
+    DaemonAlreadyRunningError,
+    DaemonNotRunningError,
+    DaemonTimeoutError,
+    RepoConflictError,
+    RepoNotFoundError,
+    ValidationError,
+)
 
 
 @click.group()
@@ -110,6 +121,38 @@ def main() -> None:
     """Entry point for the ``codeknow`` console script."""
     try:
         cli()
-    except ClientError as exc:
+    except DaemonNotRunningError:
+        click.echo(
+            "Error: Cannot connect to the daemon. "
+            "Start it with: codeknow daemon start",
+            err=True,
+        )
+        sys.exit(1)
+    except DaemonTimeoutError:
+        click.echo(
+            "Error: Daemon is not responding. "
+            "It may still be starting up — try again in a moment.",
+            err=True,
+        )
+        sys.exit(1)
+    except DaemonAlreadyRunningError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    except ConfigError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    except RepoNotFoundError as exc:
+        click.echo(f"Repo not found: {exc}", err=True)
+        sys.exit(1)
+    except RepoConflictError as exc:
+        click.echo(f"Conflict: {exc}", err=True)
+        sys.exit(1)
+    except ValidationError as exc:
+        click.echo(f"Invalid input: {exc}", err=True)
+        sys.exit(1)
+    except ApiError as exc:
+        click.echo(f"API error: {exc}", err=True)
+        sys.exit(1)
+    except CodeknowError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)

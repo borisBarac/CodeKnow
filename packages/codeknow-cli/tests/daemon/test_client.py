@@ -19,9 +19,18 @@ from code_know_api_client.models.repo_metadata import RepoMetadata
 from code_know_api_client.models.search_v1_search_post_body import (
     SearchV1SearchPostBody,
 )
-from code_know_api_client.models.validation_error import ValidationError
+from code_know_api_client.models.validation_error import (
+    ValidationError as ApiValidationError,
+)
 from code_know_api_client.types import Response as ApiResponse
-from codeknow_cli.client import Client, ClientError
+from codeknow_cli.client import Client
+from codeknow_cli.exceptions import (
+    ApiError,
+    DaemonNotRunningError,
+    RepoConflictError,
+    RepoNotFoundError,
+    ValidationError,
+)
 
 from .conftest import _free_port, _started_pids
 
@@ -39,7 +48,7 @@ def client(
     pid_file = str(tmp_path / "test-daemon.pid")
     c = Client(host="127.0.0.1", port=port, pid_file=pid_file)
     yield c
-    with contextlib.suppress(TimeoutError, RuntimeError):
+    with contextlib.suppress(DaemonNotRunningError, Exception):
         c.stop_daemon(timeout=2)
 
 
@@ -81,7 +90,9 @@ def test_remove_from_index_success(client: Client) -> None:
 def test_remove_from_index_slug_not_found(client: Client) -> None:
     result = client.start_daemon(timeout=5)
     _started_pids.add(result["pid"])
-    with pytest.raises(ClientError, match="Repo with slug 'nonexistent' not found"):
+    with pytest.raises(
+        RepoNotFoundError, match="Repo with slug 'nonexistent' not found"
+    ):
         client.remove_from_index("nonexistent")
 
 
@@ -148,7 +159,7 @@ def test_remove_raises_when_slug_not_found(mock_list: MagicMock) -> None:
     )
     mock_list.sync_detailed.return_value = _make_list_response([])
 
-    with pytest.raises(ClientError, match="Repo with slug 'missing' not found"):
+    with pytest.raises(RepoNotFoundError, match="Repo with slug 'missing' not found"):
         c.remove_from_index("missing")
 
 
@@ -164,7 +175,7 @@ def _make_build_response() -> ApiResponse:
 def test_add_raises_on_409(mock_build: MagicMock) -> None:
     c = _unit_client()
     mock_build.sync_detailed.side_effect = api_errors.UnexpectedStatus(409, b"conflict")
-    with pytest.raises(ClientError, match="already being built"):
+    with pytest.raises(RepoConflictError, match="already being built"):
         c.add_to_index("git@github.com:org/repo.git")
 
 
@@ -174,7 +185,7 @@ def test_add_raises_on_unexpected_status(mock_build: MagicMock) -> None:
     mock_build.sync_detailed.side_effect = api_errors.UnexpectedStatus(
         500, b"server error"
     )
-    with pytest.raises(ClientError, match="Unexpected API status 500"):
+    with pytest.raises(ApiError, match="Unexpected API status 500"):
         c.add_to_index("git@github.com:org/repo.git")
 
 
@@ -182,12 +193,12 @@ def test_add_raises_on_unexpected_status(mock_build: MagicMock) -> None:
 def test_add_raises_on_422_with_detail(mock_build: MagicMock) -> None:
     c = _unit_client()
     parsed = HTTPValidationError(
-        detail=[ValidationError(loc=["body"], msg="bad url", type_="value_error")]
+        detail=[ApiValidationError(loc=["body"], msg="bad url", type_="value_error")]
     )
     mock_build.sync_detailed.return_value = ApiResponse(
         status_code=422, content=b"", headers={}, parsed=parsed
     )
-    with pytest.raises(ClientError, match=r"Validation error.*bad url"):
+    with pytest.raises(ValidationError, match=r"Validation error.*bad url"):
         c.add_to_index("not-a-url")
 
 
@@ -198,7 +209,9 @@ def test_add_raises_on_422_without_detail(mock_build: MagicMock) -> None:
     mock_build.sync_detailed.return_value = ApiResponse(
         status_code=422, content=b"", headers={}, parsed=parsed
     )
-    with pytest.raises(ClientError, match="Validation error: Invalid GitHub SSH URL"):
+    with pytest.raises(
+        ValidationError, match="Validation error: Invalid GitHub SSH URL"
+    ):
         c.add_to_index("not-a-url")
 
 
@@ -208,7 +221,7 @@ def test_add_raises_on_unexpected_response_code(mock_build: MagicMock) -> None:
     mock_build.sync_detailed.return_value = ApiResponse(
         status_code=503, content=b"", headers={}, parsed=None
     )
-    with pytest.raises(ClientError, match="Unexpected response from API"):
+    with pytest.raises(ApiError, match="Unexpected response from API"):
         c.add_to_index("git@github.com:org/repo.git")
 
 
@@ -236,7 +249,7 @@ def test_remove_raises_on_404_from_delete(
     mock_delete.sync_detailed.side_effect = api_errors.UnexpectedStatus(
         404, b"not found"
     )
-    with pytest.raises(ClientError, match="Repo not found"):
+    with pytest.raises(RepoNotFoundError, match="Repo not found"):
         c.remove_from_index("x")
 
 
@@ -298,7 +311,7 @@ def test_search_400_unknown_slugs(mock_search: MagicMock) -> None:
     mock_search.sync_detailed.side_effect = api_errors.UnexpectedStatus(
         400, b'{"detail":"Unknown slugs: [\\"ghost\\"]"}'
     )
-    with pytest.raises(ClientError, match="Unknown slugs"):
+    with pytest.raises(RepoNotFoundError, match="Unknown slugs"):
         c.search("test", slugs=["ghost"])
 
 
@@ -308,7 +321,7 @@ def test_search_409_rebuilding(mock_search: MagicMock) -> None:
     mock_search.sync_detailed.side_effect = api_errors.UnexpectedStatus(
         409, b'{"detail":"Repos being rebuilt: [\\"repo\\"]"}'
     )
-    with pytest.raises(ClientError, match="Repos being rebuilt"):
+    with pytest.raises(RepoConflictError, match="Repos being rebuilt"):
         c.search("test")
 
 
@@ -316,10 +329,10 @@ def test_search_409_rebuilding(mock_search: MagicMock) -> None:
 def test_search_422_validation(mock_search: MagicMock) -> None:
     c = _unit_client()
     parsed = HTTPValidationError(
-        detail=[ValidationError(loc=["body"], msg="bad input", type_="value_error")]
+        detail=[ApiValidationError(loc=["body"], msg="bad input", type_="value_error")]
     )
     mock_search.sync_detailed.return_value = ApiResponse(
         status_code=422, content=b"", headers={}, parsed=parsed
     )
-    with pytest.raises(ClientError, match=r"Validation error.*bad input"):
+    with pytest.raises(ValidationError, match=r"Validation error.*bad input"):
         c.search("test")

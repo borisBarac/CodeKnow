@@ -35,15 +35,20 @@ from code_know_api_client.models.search_v1_search_post_body import (
 from code_know_api_client.types import Unset
 
 from codeknow_cli.daemon_manager import DaemonManager
+from codeknow_cli.exceptions import (
+    ApiError,
+    ConfigError,
+    DaemonNotRunningError,
+    RepoConflictError,
+    RepoNotFoundError,
+    ValidationError,
+)
 
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 9999
 DEFAULT_PID_FILE = "/tmp/codeknow-daemon.pid"  # noqa: S108
 _ENV_HOST = "CODEKNOW_HOST"
 _ENV_PORT = "CODEKNOW_PORT"
-
-
-class ClientError(Exception): ...
 
 
 class Client:
@@ -73,7 +78,7 @@ class Client:
             api_bin = shutil.which("codeknow-api")
             if api_bin is None:
                 msg = "codeknow-api is not installed. Run: uv sync"
-                raise RuntimeError(msg)
+                raise ConfigError(msg)
             worker_command = [
                 api_bin,
                 "--host",
@@ -107,19 +112,30 @@ class Client:
     def check_daemon(self) -> bool:
         return self._manager.is_running()
 
+    def _call_api(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except httpx.ConnectError as exc:
+            msg = "Cannot connect to the daemon. Start it with: codeknow daemon start"
+            raise DaemonNotRunningError(msg) from exc
+        except httpx.TimeoutException as exc:
+            msg = "Daemon is not responding. It may still be starting up."
+            raise DaemonNotRunningError(msg) from exc
+
     def add_to_index(self, ssh_url: str) -> BuildResponse:
         try:
-            resp = build_v1_build_post.sync_detailed(
+            resp = self._call_api(
+                build_v1_build_post.sync_detailed,
                 client=self._api_client,
                 body=BuildRequest(github_ssh_url=ssh_url),
             )
         except api_errors.UnexpectedStatus as exc:
             if exc.status_code == 409:
                 msg = "Repo is already being built"
-                raise ClientError(msg) from exc
+                raise RepoConflictError(msg) from exc
             body = exc.content.decode(errors="ignore")
             msg_0 = f"Unexpected API status {exc.status_code}: {body}"
-            raise ClientError(msg_0) from exc
+            raise ApiError(msg_0) from exc
 
         if resp.status_code == 202 and isinstance(resp.parsed, BuildResponse):
             return resp.parsed
@@ -128,11 +144,11 @@ class Client:
             if not isinstance(detail, Unset) and detail:
                 msgs = [str(d) for d in detail]
                 msg_0 = f"Validation error: {', '.join(msgs)}"
-                raise ClientError(msg_0)
+                raise ValidationError(msg_0)
             msg_0 = "Validation error: Invalid GitHub SSH URL"
-            raise ClientError(msg_0)
+            raise ValidationError(msg_0)
         msg = f"Unexpected response from API (status {resp.status_code})"
-        raise ClientError(msg)
+        raise ApiError(msg)
 
     @staticmethod
     def _extract_detail(content: bytes) -> str:
@@ -151,14 +167,16 @@ class Client:
             body["repos"] = slugs
 
         try:
-            resp = search_v1_search_post.sync_detailed(
-                client=self._api_client, body=body
+            resp = self._call_api(
+                search_v1_search_post.sync_detailed,
+                client=self._api_client,
+                body=body,
             )
         except api_errors.UnexpectedStatus as exc:
             if exc.status_code == 400:
                 detail = self._extract_detail(exc.content)
                 msg = f"Unknown slugs: {detail}" if detail else "Unknown slugs"
-                raise ClientError(msg) from exc
+                raise RepoNotFoundError(msg) from exc
             if exc.status_code == 409:
                 detail = self._extract_detail(exc.content)
                 msg = (
@@ -166,10 +184,10 @@ class Client:
                     if detail
                     else "Repos being rebuilt"
                 )
-                raise ClientError(msg) from exc
+                raise RepoConflictError(msg) from exc
             body_text = exc.content.decode(errors="ignore")
             msg = f"Unexpected API status {exc.status_code}: {body_text}"
-            raise ClientError(msg) from exc
+            raise ApiError(msg) from exc
 
         if resp.status_code == 200 and isinstance(
             resp.parsed, _search_resp.SearchV1SearchPostResponseSearchV1SearchPost
@@ -181,22 +199,23 @@ class Client:
             if not isinstance(val_detail, Unset) and val_detail:
                 msgs = [str(d) for d in val_detail]
                 msg_0 = f"Validation error: {', '.join(msgs)}"
-                raise ClientError(msg_0)
+                raise ValidationError(msg_0)
             msg_0 = "Validation error: Invalid request"
-            raise ClientError(msg_0)
+            raise ValidationError(msg_0)
 
         msg = f"Unexpected response from API (status {resp.status_code})"
-        raise ClientError(msg)
+        raise ApiError(msg)
 
     def remove_from_index(self, slug: str) -> dict:
         try:
-            list_resp = list_repos_v1_repos_get.sync_detailed(
+            list_resp = self._call_api(
+                list_repos_v1_repos_get.sync_detailed,
                 client=self._api_client,
             )
         except api_errors.UnexpectedStatus as exc:
             body = exc.content.decode(errors="ignore")
             msg = f"Unexpected API status {exc.status_code}: {body}"
-            raise ClientError(msg) from exc
+            raise ApiError(msg) from exc
 
         if list_resp.status_code == 422 and isinstance(
             list_resp.parsed, HTTPValidationError
@@ -205,34 +224,35 @@ class Client:
             if not isinstance(detail, Unset) and detail:
                 msgs = [str(d) for d in detail]
                 msg_0 = f"Validation error: {', '.join(msgs)}"
-                raise ClientError(msg_0)
+                raise ValidationError(msg_0)
             msg_0 = "Validation error listing repos"
-            raise ClientError(msg_0)
+            raise ValidationError(msg_0)
 
         if not (
             list_resp.status_code == 200
             and isinstance(list_resp.parsed, ListReposResponse)
         ):
             msg = f"Unexpected response from API (status {list_resp.status_code})"
-            raise ClientError(msg)
+            raise ApiError(msg)
 
         repo = next((r for r in list_resp.parsed.repos if r.slug == slug), None)
         if repo is None:
             msg = f"Repo with slug '{slug}' not found"
-            raise ClientError(msg)
+            raise RepoNotFoundError(msg)
 
         try:
-            del_resp = delete_repo_v1_repos_delete.sync_detailed(
+            del_resp = self._call_api(
+                delete_repo_v1_repos_delete.sync_detailed,
                 client=self._api_client,
                 body=DeleteRepoRequest(url=repo.github_ssh_url),
             )
         except api_errors.UnexpectedStatus as exc:
             if exc.status_code == 404:
                 msg = "Repo not found"
-                raise ClientError(msg) from exc
+                raise RepoNotFoundError(msg) from exc
             body = exc.content.decode(errors="ignore")
             msg = f"Unexpected API status {exc.status_code}: {body}"
-            raise ClientError(msg) from exc
+            raise ApiError(msg) from exc
 
         if del_resp.status_code == 200 and isinstance(
             del_resp.parsed,
@@ -247,12 +267,12 @@ class Client:
             if not isinstance(detail, Unset) and detail:
                 msgs = [str(d) for d in detail]
                 msg_0 = f"Validation error: {', '.join(msgs)}"
-                raise ClientError(msg_0)
+                raise ValidationError(msg_0)
             msg_0 = "Validation error deleting repo"
-            raise ClientError(msg_0)
+            raise ValidationError(msg_0)
 
         msg = f"Unexpected response from API (status {del_resp.status_code})"
-        raise ClientError(msg)
+        raise ApiError(msg)
 
     def _wait_for_ready(self, timeout: float = 5.0) -> None:
         deadline = time.monotonic() + timeout
@@ -265,4 +285,4 @@ class Client:
                 pass
             time.sleep(0.1)
         msg = "Daemon did not become ready within timeout"
-        raise TimeoutError(msg)
+        raise DaemonNotRunningError(msg)

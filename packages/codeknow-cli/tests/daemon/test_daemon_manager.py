@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from codeknow_cli.daemon_manager import DaemonManager
+from codeknow_cli.exceptions import DaemonAlreadyRunningError, DaemonTimeoutError
 
 from .conftest import _free_port, _started_pids
 
@@ -28,7 +29,7 @@ def daemon_manager(tmp_path: Path) -> Generator[DaemonManager, None, None]:
     port = _free_port()
     manager = DaemonManager(pid_file=pid_file, worker_command=_worker_command(port))
     yield manager
-    with contextlib.suppress(TimeoutError, RuntimeError):
+    with contextlib.suppress(DaemonTimeoutError, DaemonAlreadyRunningError):
         manager.stop(timeout=2)
 
 
@@ -50,7 +51,7 @@ def test_start_writes_pid_file(daemon_manager: DaemonManager, tmp_path: Path) ->
 def test_start_raises_if_already_running(daemon_manager: DaemonManager) -> None:
     pid = daemon_manager.start()
     _started_pids.add(pid)
-    with pytest.raises(RuntimeError, match="already running"):
+    with pytest.raises(DaemonAlreadyRunningError, match="already running"):
         daemon_manager.start()
 
 
