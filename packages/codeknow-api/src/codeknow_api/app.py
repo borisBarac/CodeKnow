@@ -22,8 +22,9 @@ from codeknow_api.models import (
     SearchResponse,
 )
 
-GRAPH_DIR = Path(os.getenv("CODEKNOW_GRAPH_DIR", "./graph"))
-TEMP_DIR = Path(os.getenv("CODEKNOW_TEMP_DIR", "./temp"))
+_CODEKNOW_HOME = Path.home() / ".codeknow"
+GRAPH_DIR = Path(os.getenv("CODEKNOW_GRAPH_DIR", str(_CODEKNOW_HOME / "graph")))
+TEMP_DIR = Path(os.getenv("CODEKNOW_TEMP_DIR", str(_CODEKNOW_HOME / "temp")))
 
 logger = logging.getLogger(__name__)
 
