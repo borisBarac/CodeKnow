@@ -112,6 +112,9 @@ class Client:
     def check_daemon(self) -> bool:
         return self._manager.is_running()
 
+    def get_daemon_pid(self) -> int | None:
+        return self._manager._read_pid()
+
     def _call_api(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
         try:
             return fn(*args, **kwargs)
@@ -272,6 +275,32 @@ class Client:
             raise ValidationError(msg_0)
 
         msg = f"Unexpected response from API (status {del_resp.status_code})"
+        raise ApiError(msg)
+
+    def list_repos(self) -> ListReposResponse:
+        try:
+            resp = self._call_api(
+                list_repos_v1_repos_get.sync_detailed,
+                client=self._api_client,
+            )
+        except api_errors.UnexpectedStatus as exc:
+            body = exc.content.decode(errors="ignore")
+            msg = f"Unexpected API status {exc.status_code}: {body}"
+            raise ApiError(msg) from exc
+
+        if resp.status_code == 200 and isinstance(resp.parsed, ListReposResponse):
+            return resp.parsed
+
+        if resp.status_code == 422 and isinstance(resp.parsed, HTTPValidationError):
+            detail = resp.parsed.detail
+            if not isinstance(detail, Unset) and detail:
+                msgs = [str(d) for d in detail]
+                msg_0 = f"Validation error: {', '.join(msgs)}"
+                raise ValidationError(msg_0)
+            msg_0 = "Validation error listing repos"
+            raise ValidationError(msg_0)
+
+        msg = f"Unexpected response from API (status {resp.status_code})"
         raise ApiError(msg)
 
     def _wait_for_ready(self, timeout: float = 5.0) -> None:

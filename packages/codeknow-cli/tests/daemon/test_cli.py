@@ -5,8 +5,10 @@ from unittest.mock import MagicMock, patch
 import click
 import pytest
 from click.testing import CliRunner
+from code_know_api_client.models.list_repos_response import ListReposResponse
+from code_know_api_client.models.repo_metadata import RepoMetadata
 from codeknow_cli.client import Client
-from codeknow_cli.exceptions import ClientError
+from codeknow_cli.exceptions import ApiError, ClientError
 from codeknow_cli.main import cli
 
 
@@ -144,3 +146,83 @@ def test_search_command_with_slugs(mock_search: MagicMock, runner: CliRunner) ->
     result = runner.invoke(cli, ["search", "my query", "--slug", "a", "--slug", "b"])
     assert result.exit_code == 0
     mock_search.assert_called_once_with("my query", slugs=["a", "b"])
+
+
+# --- info command tests ---
+
+
+def test_info_command_shows_in_help(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["--help"])
+    assert result.exit_code == 0
+    assert "info" in result.output
+
+
+def test_info_command_shows_help(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["info", "--help"])
+    assert result.exit_code == 0
+    assert "daemon status" in result.output.lower() or "Show daemon" in result.output
+
+
+@patch.object(Client, "check_daemon", return_value=False)
+def test_info_when_daemon_not_running(mock_check: MagicMock, runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["info"])
+    assert result.exit_code == 0
+    assert "Daemon: not running" in result.output
+
+
+@patch.object(Client, "list_repos")
+@patch.object(Client, "check_daemon", return_value=True)
+def test_info_when_daemon_running_with_repos(
+    mock_check: MagicMock, mock_list: MagicMock, runner: CliRunner
+) -> None:
+    repos = [
+        RepoMetadata(
+            github_ssh_url="git@github.com:org/a.git",
+            slug="repo-a",
+            commit_hash="abc123",
+            built_at="2025-01-01T00:00:00Z",
+            node_count=10,
+            edge_count=20,
+            community_count=2,
+        ),
+        RepoMetadata(
+            github_ssh_url="git@github.com:org/b.git",
+            slug="repo-b",
+            commit_hash="def456",
+            built_at="2025-01-02T00:00:00Z",
+            node_count=5,
+            edge_count=10,
+            community_count=1,
+        ),
+    ]
+    mock_list.return_value = ListReposResponse(
+        repos=repos, total=2, page=1, page_size=50
+    )
+    result = runner.invoke(cli, ["info"])
+    assert result.exit_code == 0
+    assert "Daemon: running" in result.output
+    assert "repo-a" in result.output
+    assert "repo-b" in result.output
+
+
+@patch.object(Client, "list_repos")
+@patch.object(Client, "check_daemon", return_value=True)
+def test_info_when_daemon_running_no_repos(
+    mock_check: MagicMock, mock_list: MagicMock, runner: CliRunner
+) -> None:
+    mock_list.return_value = ListReposResponse(repos=[], total=0, page=1, page_size=50)
+    result = runner.invoke(cli, ["info"])
+    assert result.exit_code == 0
+    assert "Daemon: running" in result.output
+    assert "none" in result.output.lower()
+
+
+@patch.object(Client, "list_repos", side_effect=ApiError("unreachable"))
+@patch.object(Client, "check_daemon", return_value=True)
+def test_info_when_daemon_running_but_api_fails(
+    mock_check: MagicMock, mock_list: MagicMock, runner: CliRunner
+) -> None:
+    result = runner.invoke(cli, ["info"])
+    assert result.exit_code == 0
+    assert "Daemon: running" in result.output
+    assert "unavailable" in result.output.lower()

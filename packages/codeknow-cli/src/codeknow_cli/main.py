@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 
 import click
+from code_know_api_client.types import Unset
 from daemonocle.cli import DaemonCLI
 
 from codeknow_cli import __version__
@@ -108,6 +109,42 @@ def search(ctx: click.Context, query: str, slugs: tuple[str, ...]) -> None:
             click.echo(display)
 
 
+@cli.command()
+@click.pass_context
+def info(ctx: click.Context) -> None:
+    """Show daemon status and available repo slugs."""
+    client: Client = ctx.obj["client"]
+
+    running = client.check_daemon()
+    if not running:
+        click.echo("Daemon: not running")
+        return
+
+    pid = client.get_daemon_pid()
+    pid_str = f" (PID {pid})" if pid else ""
+    click.echo(f"Daemon: running{pid_str}")
+
+    try:
+        repos_resp = client.list_repos()
+        repos = repos_resp.repos
+    except (ApiError, DaemonNotRunningError):
+        click.echo("Repos: unavailable (could not reach daemon)")
+        return
+
+    if not repos:
+        click.echo("Repos: (none)")
+        return
+
+    click.echo(f"Repos ({len(repos)}):")
+    for repo in repos:
+        parts = [repo.slug]
+        if not isinstance(repo.build_status, Unset) and repo.build_status:
+            parts.append(f"build={repo.build_status}")
+        if not isinstance(repo.health, Unset) and repo.health:
+            parts.append(f"health={repo.health}")
+        click.echo(f"  {'  '.join(parts)}")
+
+
 @cli.command(
     cls=DaemonCLI,
     daemon_params={"pid_file": DEFAULT_PID_FILE},
@@ -123,8 +160,7 @@ def main() -> None:
         cli()
     except DaemonNotRunningError:
         click.echo(
-            "Error: Cannot connect to the daemon. "
-            "Start it with: codeknow daemon start",
+            "Error: Cannot connect to the daemon. Start it with: codeknow daemon start",
             err=True,
         )
         sys.exit(1)
