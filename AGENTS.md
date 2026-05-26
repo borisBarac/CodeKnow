@@ -13,3 +13,6 @@
 - `project-scripts.py` — project CLI with subcommands (run via `uv run project-scripts.py <command>`):
   - `dev-check` — runs all static checks in sequence: ruff check (with fix + unsafe-fixes), ruff format, mypy.
   - `pipeline` — runs the codeknow pipeline on a GitHub repo. Accepts `--repo-url`, `--input-dir`, `-o/--output-dir`, `-g/--graph-file`, `--chunk-map-file`.
+  - `clean` — removes cached repos, graph output, and temp files. Flags: `-y` (skip confirmation).
+- `codeknow` — user-facing CLI. Subcommands: `add`, `remove`, `search`, `info`, `daemon`, `clean`.
+  - `clean` — stops the daemon, then removes cached repos, graph output, and temp files. Flags: `-y` (skip confirmation).

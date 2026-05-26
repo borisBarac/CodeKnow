@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import sys
+from pathlib import Path
 
 import click
 from code_know_api_client.types import Unset
@@ -23,6 +26,22 @@ from codeknow_cli.exceptions import (
     ValidationError,
 )
 from codeknow_cli.formatters import format_search_results
+
+
+def _env_path(key: str, default: Path) -> Path:
+    raw = os.environ.get(key)
+    return Path(raw) if raw else default
+
+
+def _dir_size(path: Path) -> str:
+    total = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    if total < 1024:
+        return f"{total} B"
+    if total < 1024 * 1024:
+        return f"{total / 1024:.1f} KB"
+    if total < 1024 * 1024 * 1024:
+        return f"{total / (1024 * 1024):.1f} MB"
+    return f"{total / (1024 * 1024 * 1024):.1f} GB"
 
 
 @click.group()
@@ -111,6 +130,44 @@ def info(ctx: click.Context) -> None:
         if not isinstance(repo.health, Unset) and repo.health:
             parts.append(f"health={repo.health}")
         click.echo(f"  {'  '.join(parts)}")
+
+
+@cli.command()
+@click.option("-y", "--yes", is_flag=True, help="Skip confirmation prompt.")
+@click.pass_context
+def clean(ctx: click.Context, yes: bool) -> None:
+    """Remove cached repos, graph output, and temp files."""
+    from codeknow.pipeline.config import _CODEKNOW_HOME
+
+    client: Client = ctx.obj["client"]
+
+    if client.check_daemon():
+        click.echo("Stopping daemon...")
+        client.stop_daemon()
+        click.echo("Daemon stopped.")
+
+    default_input = _env_path("CODEKNOW_INPUT_DIR", _CODEKNOW_HOME / "repos")
+    default_output = _env_path("CODEKNOW_OUTPUT_DIR", _CODEKNOW_HOME / "graph")
+    default_temp = _env_path("CODEKNOW_TEMP_DIR", _CODEKNOW_HOME / "temp")
+    targets = [
+        ("repos cache", default_input),
+        ("graph output", default_output),
+        ("temp files", default_temp),
+    ]
+
+    for label, path in targets:
+        if not path.exists():
+            click.echo(f"{label}: {path} does not exist, skipping.")
+            continue
+
+        size = _dir_size(path)
+        if not yes:
+            if not click.confirm(f"Remove {label} at {path} ({size})?"):
+                click.echo(f"Skipped {label}.")
+                continue
+
+        shutil.rmtree(path)
+        click.echo(f"Removed {label}: {path} ({size})")
 
 
 @cli.command(

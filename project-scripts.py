@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -70,7 +72,7 @@ def run_pipeline_cli() -> None:
         type=Path,
         help=(
             "Directory to clone repos into "
-            "(default: $CODEKNOW_INPUT_DIR or ./.codeknow/repos)"
+            "(default: $CODEKNOW_INPUT_DIR or ~/.codeknow/repos)"
         ),
     )
     parser.add_argument(
@@ -78,7 +80,7 @@ def run_pipeline_cli() -> None:
         "--output-dir",
         default=None,
         type=Path,
-        help="Output directory (default: $CODEKNOW_OUTPUT_DIR or ./codeknow-out)",
+        help="Output directory (default: $CODEKNOW_OUTPUT_DIR or ~/.codeknow/graph)",
     )
     parser.add_argument(
         "-g",
@@ -149,6 +151,51 @@ def gen_client() -> None:
     print(f"Client generated at {output_dir}")  # noqa: T201
 
 
+def _env_path(key: str, default: Path) -> Path:
+    raw = os.environ.get(key)
+    return Path(raw) if raw else default
+
+
+def clean() -> None:
+    """Remove cached repos, graph output, and temp files."""
+    from codeknow.pipeline.config import _CODEKNOW_HOME
+
+    parser = argparse.ArgumentParser(
+        description="Remove cached repos, graph output, and temp files.",
+    )
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        default=False,
+        help="Skip confirmation prompt",
+    )
+    args = parser.parse_args()
+
+    default_input = _env_path("CODEKNOW_INPUT_DIR", _CODEKNOW_HOME / "repos")
+    default_output = _env_path("CODEKNOW_OUTPUT_DIR", _CODEKNOW_HOME / "graph")
+    default_temp = _env_path("CODEKNOW_TEMP_DIR", _CODEKNOW_HOME / "temp")
+    targets_to_clean = [
+        ("repos cache", default_input),
+        ("graph output", default_output),
+        ("temp files", default_temp),
+    ]
+
+    for label, path in targets_to_clean:
+        if not path.exists():
+            print(f"{label}: {path} does not exist, skipping.")  # noqa: T201
+            continue
+
+        if not args.yes:
+            answer = input(f"Remove {label} at {path}? [y/N] ")
+            if answer.lower() not in ("y", "yes"):
+                print(f"Skipped {label}.")  # noqa: T201
+                continue
+
+        shutil.rmtree(path)
+        print(f"Removed {label}: {path}")  # noqa: T201
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: project-scripts.py <command>")  # noqa: T201
@@ -160,6 +207,8 @@ def main() -> None:
         run_pipeline_cli()
     elif cmd == "gen-client":
         gen_client()
+    elif cmd == "clean":
+        clean()
     else:
         print(f"Unknown command: {cmd}")  # noqa: T201
         sys.exit(1)

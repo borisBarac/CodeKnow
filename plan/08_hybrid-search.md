@@ -80,7 +80,7 @@ from codeknow.vector.search import HybridSearchResult, HybridSearchResponse
 
 response: HybridSearchResponse = hybrid_search(
     "authentication middleware",
-    output_dir=Path("./codeknow-out"),
+    output_dir=Path.home() / ".codeknow" / "graph",
     collection_name="codeknow_owner-repo",
     n_results=10,
     traversal_depth=2,
@@ -288,7 +288,7 @@ from codeknow.vector import hybrid_search
 
 response = hybrid_search(
     "authentication middleware",
-    output_dir=Path("./codeknow-out"),
+    output_dir=Path.home() / ".codeknow" / "graph",
     collection_name="codeknow_owner-repo",
     n_results=10,
     traversal_depth=2,

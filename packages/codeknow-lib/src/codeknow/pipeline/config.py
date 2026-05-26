@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+_CODEKNOW_HOME = Path.home() / ".codeknow"
+
 _GITHUB_RE = re.compile(
     r"^https://github\.com/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$"
 )
@@ -48,10 +50,10 @@ class PipelineConfig:
 
     def resolved_input_dir(self) -> Path:
         return self.input_dir or _env_path(
-            "CODEKNOW_INPUT_DIR", Path.cwd() / ".codeknow" / "repos"
+            "CODEKNOW_INPUT_DIR", _CODEKNOW_HOME / "repos"
         )
 
     def resolved_output_dir(self) -> Path:
         return self.output_dir or _env_path(
-            "CODEKNOW_OUTPUT_DIR", Path.cwd() / "codeknow-out"
+            "CODEKNOW_OUTPUT_DIR", _CODEKNOW_HOME / "graph"
         )

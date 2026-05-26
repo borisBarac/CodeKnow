@@ -8,4 +8,4 @@
 
 [x] api and cli usage of the lib in separate package
 
-[] move all the files to ~/.codeknow
+[x] move all the files to ~/.codeknow
