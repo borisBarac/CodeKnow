@@ -45,7 +45,7 @@ except ImportError as exc:
 logger = logging.getLogger(__name__)
 
 DEFAULT_CHROMA_HOST = "localhost"
-DEFAULT_CHROMA_PORT = 8000
+DEFAULT_CHROMA_PORT = 8018
 DEFAULT_COLLECTION_NAME = "codeknow_chunks"
 
 

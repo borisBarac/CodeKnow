@@ -11,7 +11,7 @@ import urllib.request
 from urllib.error import HTTPError, URLError
 
 DEFAULT_CHROMA_HOST = "localhost"
-DEFAULT_CHROMA_PORT = 8000
+DEFAULT_CHROMA_PORT = 8018
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 
 _TIMEOUT = 3
