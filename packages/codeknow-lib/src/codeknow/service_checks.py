@@ -67,7 +67,7 @@ def check_chroma(host: str | None = None, port: int | None = None) -> None:
         then ``localhost``.
     port:
         Port number. Falls back to the ``CHROMA_PORT`` environment variable,
-        then ``8000``.
+        then ``8018``.
 
     Raises
     ------

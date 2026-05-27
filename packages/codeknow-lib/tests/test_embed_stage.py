@@ -241,7 +241,7 @@ class TestChromaStoreExtraMetadata:
         mock_collection.count.return_value = 0
 
         store = ChromaStore(embeddings=mock_embeddings)
-        store._collection = mock_collection  # noqa: SLF001
+        store._collection = mock_collection
 
         chunk = Chunk(file="auth.py", start_line=1, end_line=10, hash="a" * 64)
         extra = {

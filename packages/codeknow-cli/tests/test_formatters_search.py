@@ -4,6 +4,7 @@ import re
 from io import StringIO
 from unittest.mock import patch
 
+from codeknow_cli.client import SearchHit, SearchResult
 from codeknow_cli.formatters.search import (
     _build_file_label,
     _build_provenance_label,
@@ -12,28 +13,31 @@ from codeknow_cli.formatters.search import (
 )
 from rich.console import Console
 
-_SAMPLE_RESULT = {
-    "vector_hits": 3,
-    "graph_expanded": 1,
-    "results": [
-        {
-            "file": "src/foo.py",
-            "start_line": 10,
-            "end_line": 25,
-            "provenance": "vector",
-            "distance": 0.12,
-            "slug": "my-repo",
-            "graph_path": "A -> B -> C",
-            "content": "def hello(): pass",
-        },
-        {
-            "file": "src/bar.py",
-            "provenance": "graph",
-            "weight": 0.85,
-            "content": "",
-        },
+_SAMPLE_RESULT = SearchResult(
+    vector_hits=3,
+    graph_expanded=1,
+    query="q",
+    results=[
+        SearchHit(
+            file="src/foo.py",
+            start_line=10,
+            end_line=25,
+            provenance="vector",
+            distance=0.12,
+            slug="my-repo",
+            graph_path="A -> B -> C",
+            content="def hello(): pass",
+        ),
+        SearchHit(
+            file="src/bar.py",
+            start_line=None,
+            end_line=None,
+            provenance="graph",
+            weight=0.85,
+            content="",
+        ),
     ],
-}
+)
 
 
 def _make_console() -> Console:
@@ -62,32 +66,54 @@ def _run_plain(query: str, result: dict) -> str:
 
 class TestBuildFileLabel:
     def test_with_line_range(self) -> None:
-        hit = {"file": "src/a.py", "start_line": 1, "end_line": 10}
+        hit = SearchHit(file="src/a.py", start_line=1, end_line=10, provenance="vector")
         assert _build_file_label(hit) == "src/a.py:1-10"
 
     def test_without_line_range(self) -> None:
-        hit = {"file": "src/a.py"}
+        hit = SearchHit(
+            file="src/a.py", start_line=None, end_line=None, provenance="vector"
+        )
         assert _build_file_label(hit) == "src/a.py"
 
     def test_missing_file(self) -> None:
-        assert _build_file_label({}) == "?"
+        assert (
+            _build_file_label(
+                SearchHit(
+                    file="?", start_line=None, end_line=None, provenance="unknown"
+                )
+            )
+            == "?"
+        )
 
 
 class TestBuildProvenanceLabel:
     def test_with_distance(self) -> None:
-        hit = {"provenance": "vector", "distance": 0.5}
+        hit = SearchHit(
+            file="a.py",
+            start_line=None,
+            end_line=None,
+            provenance="vector",
+            distance=0.5,
+        )
         assert _build_provenance_label(hit) == "vector (distance: 0.5)"
 
     def test_with_weight(self) -> None:
-        hit = {"provenance": "graph", "weight": 0.9}
+        hit = SearchHit(
+            file="a.py", start_line=None, end_line=None, provenance="graph", weight=0.9
+        )
         assert _build_provenance_label(hit) == "graph (weight: 0.9)"
 
     def test_without_metrics(self) -> None:
-        hit = {"provenance": "vector"}
+        hit = SearchHit(
+            file="a.py", start_line=None, end_line=None, provenance="vector"
+        )
         assert _build_provenance_label(hit) == "vector"
 
     def test_missing_provenance(self) -> None:
-        assert _build_provenance_label({}) == "unknown"
+        hit = SearchHit(
+            file="a.py", start_line=None, end_line=None, provenance="unknown"
+        )
+        assert _build_provenance_label(hit) == "unknown"
 
 
 class TestTruncateContent:
@@ -130,24 +156,27 @@ class TestFormatSearchResultsPlain:
         assert "Path: A -> B -> C" in output
 
     def test_plain_empty_results(self) -> None:
-        result = {"vector_hits": 0, "graph_expanded": 0, "results": []}
+        result = SearchResult(vector_hits=0, graph_expanded=0, query="q", results=[])
         output = _run_plain("q", result)
         assert "Query: q" in output
         assert "Result" not in output
 
     def test_plain_no_slug_no_path(self) -> None:
-        result = {
-            "vector_hits": 1,
-            "graph_expanded": 0,
-            "results": [
-                {
-                    "file": "a.py",
-                    "provenance": "vector",
-                    "distance": 0.1,
-                    "content": "x",
-                },
+        result = SearchResult(
+            vector_hits=1,
+            graph_expanded=0,
+            query="q",
+            results=[
+                SearchHit(
+                    file="a.py",
+                    start_line=None,
+                    end_line=None,
+                    provenance="vector",
+                    distance=0.1,
+                    content="x",
+                ),
             ],
-        }
+        )
         output = _run_plain("q", result)
         assert "Slug" not in output
         assert "Path" not in output

@@ -92,7 +92,7 @@ class TestCheckChroma:
         mock_urlopen.return_value.__enter__.return_value.status = 200
         check_chroma()
         req = mock_urlopen.call_args[0][0]
-        assert req.full_url == "http://localhost:8000/api/v2/heartbeat"
+        assert req.full_url == "http://localhost:8018/api/v2/heartbeat"
 
     @patch("urllib.request.urlopen")
     def test_http_400_raises_connection_error(self, mock_urlopen):

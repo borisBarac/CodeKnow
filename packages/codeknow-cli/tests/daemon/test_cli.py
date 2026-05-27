@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import click
@@ -7,7 +8,7 @@ import pytest
 from click.testing import CliRunner
 from code_know_api_client.models.list_repos_response import ListReposResponse
 from code_know_api_client.models.repo_metadata import RepoMetadata
-from codeknow_cli.client import Client
+from codeknow_cli.client import Client, DeleteResult, SearchResult
 from codeknow_cli.exceptions import ApiError, ClientError
 from codeknow_cli.main import cli
 
@@ -31,7 +32,16 @@ def test_daemon_help_shows_subcommands(runner: CliRunner) -> None:
 
 
 def test_daemon_status_not_running(runner: CliRunner) -> None:
-    result = runner.invoke(cli, ["daemon", "status"])
+    from codeknow_cli.endpoint import DEFAULT_PID_FILE
+
+    pid_path = Path(DEFAULT_PID_FILE)
+    backup = pid_path.read_bytes() if pid_path.exists() else None
+    pid_path.unlink(missing_ok=True)
+    try:
+        result = runner.invoke(cli, ["daemon", "status"])
+    finally:
+        if backup is not None:
+            pid_path.write_bytes(backup)
     assert "not running" in result.output.lower()
 
 
@@ -46,7 +56,7 @@ def test_context_has_client() -> None:
     runner = CliRunner()
     runner.invoke(cli, ["__test_ctx"], catch_exceptions=False)
     assert isinstance(captured["client"], Client)
-    assert captured["client"].base_url == "http://127.0.0.1:9999"
+    assert captured["client"].base_url == "http://127.0.0.1:8080"
 
 
 def test_add_command_shows_help(runner: CliRunner) -> None:
@@ -75,11 +85,9 @@ def test_remove_command_shows_in_help(runner: CliRunner) -> None:
 
 @patch.object(Client, "remove_from_index")
 def test_remove_command_output(mock_remove: MagicMock, runner: CliRunner) -> None:
-    mock_remove.return_value = {
-        "status": "deleted",
-        "slug": "my-repo",
-        "chunks_deleted": 5,
-    }
+    mock_remove.return_value = DeleteResult(
+        status="deleted", slug="my-repo", chunks_deleted=5
+    )
     result = runner.invoke(cli, ["remove", "my-repo"])
     assert result.exit_code == 0
     assert "Status: deleted" in result.output
@@ -124,12 +132,9 @@ def test_search_command_in_main_help(runner: CliRunner) -> None:
 
 @patch.object(Client, "search")
 def test_search_command_calls_client(mock_search: MagicMock, runner: CliRunner) -> None:
-    mock_search.return_value = {
-        "query": "my query",
-        "vector_hits": 0,
-        "graph_expanded": 0,
-        "results": [],
-    }
+    mock_search.return_value = SearchResult(
+        query="my query", vector_hits=0, graph_expanded=0, results=[]
+    )
     result = runner.invoke(cli, ["search", "my query"])
     assert result.exit_code == 0
     mock_search.assert_called_once_with("my query", slugs=None)
@@ -137,12 +142,9 @@ def test_search_command_calls_client(mock_search: MagicMock, runner: CliRunner) 
 
 @patch.object(Client, "search")
 def test_search_command_with_slugs(mock_search: MagicMock, runner: CliRunner) -> None:
-    mock_search.return_value = {
-        "query": "my query",
-        "vector_hits": 0,
-        "graph_expanded": 0,
-        "results": [],
-    }
+    mock_search.return_value = SearchResult(
+        query="my query", vector_hits=0, graph_expanded=0, results=[]
+    )
     result = runner.invoke(cli, ["search", "my query", "--slug", "a", "--slug", "b"])
     assert result.exit_code == 0
     mock_search.assert_called_once_with("my query", slugs=["a", "b"])

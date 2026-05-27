@@ -14,8 +14,6 @@ from code_know_api_client.models import (
 )
 from code_know_api_client.models.build_response import BuildResponse
 from code_know_api_client.models.http_validation_error import HTTPValidationError
-from code_know_api_client.models.list_repos_response import ListReposResponse
-from code_know_api_client.models.repo_metadata import RepoMetadata
 from code_know_api_client.models.search_v1_search_post_body import (
     SearchV1SearchPostBody,
 )
@@ -23,7 +21,7 @@ from code_know_api_client.models.validation_error import (
     ValidationError as ApiValidationError,
 )
 from code_know_api_client.types import Response as ApiResponse
-from codeknow_cli.client import Client
+from codeknow_cli.client import Client, DaemonStartResult, DeleteResult, SearchResult
 from codeknow_cli.exceptions import (
     ApiError,
     DaemonNotRunningError,
@@ -54,13 +52,14 @@ def client(
 
 def test_start_daemon_process_is_alive(client: Client) -> None:
     result = client.start_daemon(timeout=5)
-    _started_pids.add(result["pid"])
+    assert isinstance(result, DaemonStartResult)
+    _started_pids.add(result.pid)
     assert client.check_daemon()
 
 
 def test_stop_daemon_clears_running_state(client: Client) -> None:
     result = client.start_daemon(timeout=5)
-    _started_pids.add(result["pid"])
+    _started_pids.add(result.pid)
     client.stop_daemon(timeout=5)
     assert not client.check_daemon()
 
@@ -80,42 +79,21 @@ def test_client_uses_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_remove_from_index_success(client: Client) -> None:
     result = client.start_daemon(timeout=5)
-    _started_pids.add(result["pid"])
+    _started_pids.add(result.pid)
     resp = client.remove_from_index("stub-slug")
-    assert resp["status"] == "deleted"
-    assert resp["slug"] == "stub-slug"
-    assert resp["chunks_deleted"] == 0
+    assert isinstance(resp, DeleteResult)
+    assert resp.status == "deleted"
+    assert resp.slug == "stub-slug"
+    assert resp.chunks_deleted == 0
 
 
 def test_remove_from_index_slug_not_found(client: Client) -> None:
     result = client.start_daemon(timeout=5)
-    _started_pids.add(result["pid"])
+    _started_pids.add(result.pid)
     with pytest.raises(
         RepoNotFoundError, match="Repo with slug 'nonexistent' not found"
     ):
         client.remove_from_index("nonexistent")
-
-
-def _make_list_response(repos: list[RepoMetadata]) -> ApiResponse:
-    parsed = ListReposResponse(
-        repos=repos,
-        total=len(repos),
-        page=1,
-        page_size=50,
-    )
-    return ApiResponse(status_code=200, content=b"", headers={}, parsed=parsed)
-
-
-def _make_repo(slug: str, ssh_url: str) -> RepoMetadata:
-    return RepoMetadata(
-        github_ssh_url=ssh_url,
-        slug=slug,
-        commit_hash="abc123",
-        built_at="2025-01-01T00:00:00Z",
-        node_count=10,
-        edge_count=20,
-        community_count=2,
-    )
 
 
 def _make_delete_response(data: dict) -> ApiResponse:
@@ -125,9 +103,7 @@ def _make_delete_response(data: dict) -> ApiResponse:
 
 
 @patch("codeknow_cli.client.delete_repo_v1_repos_delete")
-@patch("codeknow_cli.client.list_repos_v1_repos_get")
-def test_remove_resolves_slug_to_ssh_url(
-    mock_list: MagicMock,
+def test_remove_sends_slug_in_body(
     mock_delete: MagicMock,
 ) -> None:
     c = Client(
@@ -135,29 +111,30 @@ def test_remove_resolves_slug_to_ssh_url(
         port=19999,
         pid_file="/var/tmp/test-remove.pid",  # noqa: S108
     )
-    repo = _make_repo("my-repo", "git@github.com:org/my-repo.git")
-    mock_list.sync_detailed.return_value = _make_list_response([repo])
     mock_delete.sync_detailed.return_value = _make_delete_response(
         {"status": "deleted", "slug": "my-repo", "chunks_deleted": 5},
     )
 
     result = c.remove_from_index("my-repo")
 
-    assert result["status"] == "deleted"
-    assert result["chunks_deleted"] == 5
+    assert isinstance(result, DeleteResult)
+    assert result.status == "deleted"
+    assert result.chunks_deleted == 5
     mock_delete.sync_detailed.assert_called_once()
     call_body = mock_delete.sync_detailed.call_args[1]["body"]
-    assert call_body.url == "git@github.com:org/my-repo.git"
+    assert call_body.slug == "my-repo"
 
 
-@patch("codeknow_cli.client.list_repos_v1_repos_get")
-def test_remove_raises_when_slug_not_found(mock_list: MagicMock) -> None:
+@patch("codeknow_cli.client.delete_repo_v1_repos_delete")
+def test_remove_raises_when_slug_not_found(mock_delete: MagicMock) -> None:
     c = Client(
         host="127.0.0.1",
         port=19999,
         pid_file="/var/tmp/test-remove-notfound.pid",  # noqa: S108
     )
-    mock_list.sync_detailed.return_value = _make_list_response([])
+    mock_delete.sync_detailed.side_effect = api_errors.UnexpectedStatus(
+        404, b"not found"
+    )
 
     with pytest.raises(RepoNotFoundError, match="Repo with slug 'missing' not found"):
         c.remove_from_index("missing")
@@ -209,9 +186,7 @@ def test_add_raises_on_422_without_detail(mock_build: MagicMock) -> None:
     mock_build.sync_detailed.return_value = ApiResponse(
         status_code=422, content=b"", headers={}, parsed=parsed
     )
-    with pytest.raises(
-        ValidationError, match="Validation error: Invalid GitHub SSH URL"
-    ):
+    with pytest.raises(ValidationError, match="Invalid GitHub SSH URL"):
         c.add_to_index("not-a-url")
 
 
@@ -238,18 +213,14 @@ def test_add_returns_build_response_on_202(mock_build: MagicMock) -> None:
 
 
 @patch("codeknow_cli.client.delete_repo_v1_repos_delete")
-@patch("codeknow_cli.client.list_repos_v1_repos_get")
 def test_remove_raises_on_404_from_delete(
-    mock_list: MagicMock,
     mock_delete: MagicMock,
 ) -> None:
     c = _unit_client()
-    repo = _make_repo("x", "git@github.com:org/x.git")
-    mock_list.sync_detailed.return_value = _make_list_response([repo])
     mock_delete.sync_detailed.side_effect = api_errors.UnexpectedStatus(
         404, b"not found"
     )
-    with pytest.raises(RepoNotFoundError, match="Repo not found"):
+    with pytest.raises(RepoNotFoundError, match="Repo with slug 'x' not found"):
         c.remove_from_index("x")
 
 
@@ -271,15 +242,16 @@ def _make_search_response(data: dict) -> ApiResponse:
 
 
 @patch("codeknow_cli.client.search_v1_search_post")
-def test_search_basic_returns_dict(mock_search: MagicMock) -> None:
+def test_search_basic_returns_search_result(mock_search: MagicMock) -> None:
     c = _unit_client()
     mock_search.sync_detailed.return_value = _make_search_response(
         {"query": "test", "vector_hits": 5, "graph_expanded": 3, "results": []}
     )
     result = c.search("test")
-    assert result["query"] == "test"
-    assert result["vector_hits"] == 5
-    assert result["graph_expanded"] == 3
+    assert isinstance(result, SearchResult)
+    assert result.query == "test"
+    assert result.vector_hits == 5
+    assert result.graph_expanded == 3
 
 
 @patch("codeknow_cli.client.search_v1_search_post")
