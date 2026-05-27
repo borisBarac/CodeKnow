@@ -10,6 +10,7 @@ Convert `POST /v1/build` to stream real-time per-stage progress to the client vi
 - Progress tracking is trivial: `build_status` is only set at start (0%) and completion (100%)
 - No SSE/WebSocket/streaming infrastructure exists in the project
 - The pipeline runs 7 sequential stages in a thread via `asyncio.to_thread`
+- CLI client uses a **generated OpenAPI client** (`code_know_api_client`) for all endpoints including build
 
 ## Pipeline Stages (equal weight ~14% each)
 
@@ -29,6 +30,8 @@ Convert `POST /v1/build` to stream real-time per-stage progress to the client vi
 - **Backward compat** — not preserved; CLI client will be updated to consume SSE
 - **No new endpoint** — same `POST /v1/build` URL, different response format
 - **Dependency** — `sse-starlette` for `EventSourceResponse`
+- **OpenAPI schema** — exclude `/v1/build` from the OpenAPI schema (`include_in_schema=False`) since SSE cannot be represented in OpenAPI codegen; the CLI client handles this endpoint manually via `httpx`
+- **Generated client** — all other endpoints (`search`, `remove`, `list_repos`) continue using the generated OpenAPI client; only the build endpoint is handled manually
 
 ## SSE Event Flow
 
@@ -65,14 +68,14 @@ event: error
 data: {"stage": "build", "progress": 57, "message": "something went wrong"}
 ```
 
-## Files to Change
+## Implementation Phases
 
-### 1. `packages/codeknow-api/pyproject.toml`
-- Add `sse-starlette` to dependencies
+### Phase 1: Add `progress_callback` to Pipeline Runner
 
-### 2. `packages/codeknow-lib/src/codeknow/pipeline/runner.py`
+**File:** `packages/codeknow-lib/src/codeknow/pipeline/runner.py`
+
 - Add `progress_callback: Callable[[str, int, str], None] | None = None` parameter to `run_pipeline`
-- Define stage weights and human-readable messages:
+- Define stage weights and human-readable messages as a module-level constant:
 
 ```python
 _STAGES = [
@@ -88,8 +91,19 @@ _STAGES = [
 
 - After each stage call, invoke `progress_callback(stage_name, percent, message)` if provided
 - The final `embed` stage completes at 100% (save + commit_hash are post-embed, negligible)
+- Backward-compatible: when `progress_callback=None`, behavior is identical to current
 
-### 3. `packages/codeknow-api/src/codeknow_api/models.py`
+### Phase 2: Add `sse-starlette` Dependency
+
+**File:** `packages/codeknow-api/pyproject.toml`
+
+- Add `sse-starlette` to the dependency list
+- Run `uv sync`
+
+### Phase 3: Add `BuildProgressEvent` Model
+
+**File:** `packages/codeknow-api/src/codeknow_api/models.py`
+
 - Add `BuildProgressEvent` model:
 
 ```python
@@ -99,12 +113,22 @@ class BuildProgressEvent(BaseModel):
     message: str | None = None
 ```
 
-### 4. `packages/codeknow-api/src/codeknow_api/app.py`
+### Phase 4: Rewrite the Build Endpoint for SSE
+
+**File:** `packages/codeknow-api/src/codeknow_api/app.py`
+
 - Import `EventSourceResponse` from `sse_starlette`
-- Rewrite the `build` handler:
+- Add `include_in_schema=False` to the build route decorator (SSE cannot be represented in OpenAPI)
+- Change the return type of the `build` handler from `BuildResponse` to `EventSourceResponse`
+- Use an `asyncio.Queue` to bridge the sync pipeline thread to the async SSE stream
+- `on_progress` callback does `loop.call_soon_threadsafe(queue.put_nowait, ...)` to emit `progress` events
+- On pipeline completion, emit a `done` event with the full `BuildResponse` data, then `None` sentinel
+- On error, emit an `error` event, then `None` sentinel
+- Keep the existing lock/409/cleanup logic unchanged
+- Keep the `build_status` dict update for `GET /v1/repos` polling compatibility
 
 ```python
-@app.post("/v1/build")
+@app.post("/v1/build", include_in_schema=False)
 async def build(body: BuildRequest):
     from codeknow.pipeline import PipelineConfig, run_pipeline
 
@@ -121,7 +145,7 @@ async def build(body: BuildRequest):
 
     # ... cleanup logic unchanged ...
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
     def on_progress(stage: str, percent: int, message: str) -> None:
@@ -149,7 +173,7 @@ async def build(body: BuildRequest):
                 ).model_dump_json(),
             }
             await queue.put(done_event)
-            await queue.put(None)  # sentinel to end stream
+            await queue.put(None)
         except Exception as exc:
             app.state.build_status[slug] = {"status": "error", "progress": 0}
             await queue.put({"event": "error", "data": json.dumps({"message": str(exc)})})
@@ -169,16 +193,28 @@ async def build(body: BuildRequest):
     return EventSourceResponse(stream())
 ```
 
-- Keep the lock / 409 / cleanup logic
-- `asyncio.create_task` runs the pipeline in background while SSE streams
-- Sentinel `None` ends the SSE stream
-- `build_status` dict still updated for `GET /v1/repos` polling compatibility
+### Phase 5: Update CLI Client — Manual SSE Consumption
 
-### 5. `packages/codeknow-cli/src/codeknow_cli/client.py`
-- Replace generated OpenAPI client call with `httpx` streaming
-- Parse SSE events line-by-line
-- Print progress to terminal (e.g., `[2/7] Discovering files... (28%)`)
-- Return final `BuildResponse` from the `done` event
+**File:** `packages/codeknow-cli/src/codeknow_cli/client.py`
+
+- Replace the generated OpenAPI client call (`build_v1_build_post.sync_detailed`) with direct `httpx` streaming
+- Parse SSE events line-by-line from the `text/event-stream` response
+- Print progress to terminal using `rich` (already a dependency): e.g. `[2/7] Discovering files... (28%)`
+- Return the parsed `BuildResponse` from the `done` event (or raise on `error` event)
+- The generated client remains for all other endpoints (`search`, `remove`, `list_repos`)
+
+### Phase 6: Regenerate OpenAPI Client
+
+- Run `uv run project-scripts.py gen-client --output-dir packages/codeknow-cli/generated`
+- The generated client will no longer include the build endpoint (since `include_in_schema=False`)
+- All other endpoints continue to use the generated client unchanged
+
+### Phase 7: Tests
+
+- Add unit test for `run_pipeline` with a `progress_callback` — verify it's called 7 times with correct stage names and percentages
+- Update the e2e build test to consume SSE events instead of expecting a JSON response
+- Test the 409 concurrent-build case still works
+- Test error propagation through SSE
 
 ## Stage Weight Details
 
