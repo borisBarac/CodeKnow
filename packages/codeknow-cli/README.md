@@ -70,7 +70,7 @@ Results include file location, line range, provenance (vector or graph-expanded)
 | Variable | Default | Description |
 |---|---|---|
 | `CODEKNOW_HOST` | `localhost` | API server host |
-| `CODEKNOW_PORT` | `9999` | API server port |
+| `CODEKNOW_API_PORT` | `8080` | API server port |
 
 ## Prerequisites
 

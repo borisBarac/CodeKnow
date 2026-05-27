@@ -12,8 +12,9 @@ from code_know_api_client.types import Unset
 from daemonocle.cli import DaemonCLI
 
 from codeknow_cli import __version__
-from codeknow_cli.client import DEFAULT_PID_FILE, Client
+from codeknow_cli.client import Client
 from codeknow_cli.daemon import run_server
+from codeknow_cli.endpoint import DEFAULT_PID_FILE
 from codeknow_cli.exceptions import (
     ApiError,
     CodeknowError,
@@ -75,11 +76,10 @@ def remove(ctx: click.Context, slug: str) -> None:
     """Remove a repo from the index (by slug)."""
     client: Client = ctx.obj["client"]
     result = client.remove_from_index(slug)
-    click.echo(f"Status: {result.get('status')}")
-    if result.get("slug"):
-        click.echo(f"Slug:   {result['slug']}")
-    if result.get("chunks_deleted") is not None:
-        click.echo(f"Chunks deleted: {result['chunks_deleted']}")
+    click.echo(f"Status: {result.status}")
+    if result.slug:
+        click.echo(f"Slug:   {result.slug}")
+    click.echo(f"Chunks deleted: {result.chunks_deleted}")
 
 
 @cli.command()
@@ -102,14 +102,17 @@ def info(ctx: click.Context) -> None:
     """Show daemon status and available repo slugs."""
     client: Client = ctx.obj["client"]
 
-    running = client.check_daemon()
-    if not running:
-        click.echo("Daemon: not running")
-        return
+    if client.is_remote:
+        click.echo(f"API: {client.base_url} (remote)")
+    else:
+        running = client.check_daemon()
+        if not running:
+            click.echo("Daemon: not running")
+            return
 
-    pid = client.get_daemon_pid()
-    pid_str = f" (PID {pid})" if pid else ""
-    click.echo(f"Daemon: running{pid_str}")
+        pid = client.get_daemon_pid()
+        pid_str = f" (PID {pid})" if pid else ""
+        click.echo(f"Daemon: running{pid_str}")
 
     try:
         repos_resp = client.list_repos()
@@ -141,7 +144,7 @@ def clean(ctx: click.Context, yes: bool) -> None:
 
     client: Client = ctx.obj["client"]
 
-    if client.check_daemon():
+    if not client.is_remote and client.check_daemon():
         click.echo("Stopping daemon...")
         client.stop_daemon()
         click.echo("Daemon stopped.")

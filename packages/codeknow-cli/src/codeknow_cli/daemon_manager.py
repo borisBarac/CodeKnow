@@ -47,6 +47,9 @@ class DaemonManager:
             return
         self._stop_by_pid(timeout)
 
+    def read_pid(self) -> int | None:
+        return self._read_pid()
+
     def is_running(self) -> bool:
         if self._proc is not None:
             return self._proc.poll() is None
@@ -56,7 +59,9 @@ class DaemonManager:
 
     def _stop_tracked(self, timeout: float) -> None:
         proc = self._proc
-        assert proc is not None
+        if proc is None:
+            msg = "No tracked process to stop"
+            raise RuntimeError(msg)
         proc.terminate()
         try:
             proc.wait(timeout=timeout)

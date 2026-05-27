@@ -64,7 +64,7 @@ atexit.register(_atexit_cleanup)
 def _daemon_lifecycle(tmp_path_factory: pytest.TempPathFactory) -> None:
     global _CLIENT  # noqa: PLW0603
 
-    _save_env(["CODEKNOW_STUB", "CODEKNOW_HOST", "CODEKNOW_PORT"])
+    _save_env(["CODEKNOW_STUB", "CODEKNOW_HOST", "CODEKNOW_API_PORT"])
     os.environ["CODEKNOW_STUB"] = "1"
 
     pid_file = str(tmp_path_factory.mktemp("daemon") / "test-daemon.pid")
@@ -78,7 +78,7 @@ def _daemon_lifecycle(tmp_path_factory: pytest.TempPathFactory) -> None:
         {
             "CODEKNOW_STUB": "1",
             "CODEKNOW_HOST": _CLIENT.host,
-            "CODEKNOW_PORT": str(_CLIENT.port),
+            "CODEKNOW_API_PORT": str(_CLIENT.port),
         }
     )
 

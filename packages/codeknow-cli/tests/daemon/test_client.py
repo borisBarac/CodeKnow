@@ -71,7 +71,7 @@ def test_check_daemon_false_when_not_running(client: Client) -> None:
 
 def test_client_uses_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CODEKNOW_HOST", "myhost")
-    monkeypatch.setenv("CODEKNOW_PORT", "4321")
+    monkeypatch.setenv("CODEKNOW_API_PORT", "4321")
     c = Client()
     assert c.host == "myhost"
     assert c.port == 4321
