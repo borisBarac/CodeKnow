@@ -293,10 +293,18 @@ def main() -> None:
         type=int,
         default=int(os.getenv("CODEKNOW_API_PORT", "8080")),
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="Enable debug mode (auto-reload + debug logging)",
+    )
     args = parser.parse_args()
     uvicorn.run(
         "codeknow_api.app:create_app",
         factory=True,
         host=args.host,
         port=args.port,
+        reload=args.debug,
+        log_level="debug" if args.debug else "info",
     )
