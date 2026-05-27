@@ -35,6 +35,25 @@ _STUB_REPO = {
 
 _Handler = Callable[[bytes, str], tuple[int, dict[str, Any]]]
 
+
+def _stub_delete(body: bytes, _qs: str) -> tuple[int, dict[str, Any]]:
+    data = json.loads(body) if body else {}
+    url = data.get("url") or ""
+    from codeknow.pipeline import PipelineConfig
+
+    slug = data.get("slug") or (PipelineConfig(repo_url=url).slug if url else "")
+    if slug != _STUB_REPO["slug"]:
+        return 404, {"detail": f"Repo not found: {slug}"}
+    return (
+        200,
+        {
+            "status": "deleted",
+            "slug": _STUB_REPO["slug"],
+            "chunks_deleted": 0,
+        },
+    )
+
+
 _STUB_ROUTES: dict[str, dict[str, _Handler]] = {
     "POST": {
         "/v1/build": lambda _body, _qs: (
@@ -59,14 +78,7 @@ _STUB_ROUTES: dict[str, dict[str, _Handler]] = {
         ),
     },
     "DELETE": {
-        "/v1/repos": lambda _body, _qs: (
-            200,
-            {
-                "status": "deleted",
-                "slug": _STUB_REPO["slug"],
-                "chunks_deleted": 0,
-            },
-        ),
+        "/v1/repos": _stub_delete,
     },
     "GET": {
         "/v1/repos": lambda _body, _qs: (

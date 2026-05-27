@@ -148,7 +148,7 @@ class TestStubMiddleware:
         inner = await _make_inner_app(calls)
         mw = StubMiddleware(inner)
 
-        body = json.dumps({"url": "git@github.com:owner/repo.git"}).encode()
+        body = json.dumps({"url": "git@github.com:stub/repo.git"}).encode()
         scope = _make_scope("DELETE", "/v1/repos")
         collected, send = await _collect_send()
         await mw(scope, _body_receive(body), send)

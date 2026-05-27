@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from codeknow_api.params import is_valid_github_ssh_url
 
@@ -27,7 +27,25 @@ class BuildResponse(BaseModel):
 
 
 class DeleteRepoRequest(BaseModel):
-    url: str
+    url: str | None = None
+    slug: str | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> DeleteRepoRequest:
+        if self.url is None and self.slug is None:
+            msg = "Either 'url' or 'slug' must be provided"
+            raise ValueError(msg)
+        return self
+
+    def resolve_slug(self) -> str:
+        if self.slug:
+            return self.slug
+        if self.url:
+            from codeknow.pipeline import PipelineConfig
+
+            return PipelineConfig(repo_url=self.url).slug
+        msg = "Either 'url' or 'slug' must be provided"
+        raise ValueError(msg)
 
 
 class SearchRequest(BaseModel):

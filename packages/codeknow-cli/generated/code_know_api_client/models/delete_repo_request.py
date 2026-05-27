@@ -13,20 +13,24 @@ T = TypeVar("T", bound="DeleteRepoRequest")
 class DeleteRepoRequest:
     """
     Attributes:
-        url (str):
+        url (str | None):
+        slug (str | None):
     """
 
-    url: str
+    url: str | None = None
+    slug: str | None = None
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         url = self.url
+        slug = self.slug
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "url": url,
+                "slug": slug,
             }
         )
 
@@ -35,10 +39,12 @@ class DeleteRepoRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        url = d.pop("url")
+        url = d.pop("url", None)
+        slug = d.pop("slug", None)
 
         delete_repo_request = cls(
             url=url,
+            slug=slug,
         )
 
         delete_repo_request.additional_properties = d

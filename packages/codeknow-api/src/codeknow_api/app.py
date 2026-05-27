@@ -184,17 +184,30 @@ def create_app() -> FastAPI:
 
     @app.delete("/v1/repos")
     async def delete_repo(body: DeleteRepoRequest) -> dict[str, Any]:
-        from codeknow.git_download import get_path, unregister
+        from codeknow.git_download import get_path, get_url, unregister
         from codeknow.pipeline import PipelineConfig
+        from codeknow.pipeline.config import _env_path
         from codeknow.vector.chroma import ChromaConfig, ChromaStore
         from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
 
-        url = body.url
-        config = PipelineConfig(repo_url=url)
-        slug = config.slug
+        try:
+            slug = body.resolve_slug()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-        if get_path(url) is None:
-            raise HTTPException(status_code=404, detail=f"Repo not found: {url}")
+        url = body.url
+        if url is None:
+            input_dir = _env_path("CODEKNOW_INPUT_DIR", _CODEKNOW_HOME / "repos")
+            url = get_url(input_dir / slug)
+
+        if url and get_path(url) is None:
+            if not (GRAPH_DIR / slug).exists():
+                raise HTTPException(status_code=404, detail=f"Repo not found: {slug}")
+
+        if not (GRAPH_DIR / slug).exists() and (url is None or get_path(url) is None):
+            raise HTTPException(status_code=404, detail=f"Repo not found: {slug}")
+
+        config = PipelineConfig(repo_url=url or f"git@github.com:{slug}.git")
 
         shutil.rmtree(GRAPH_DIR / slug, ignore_errors=True)
         shutil.rmtree(TEMP_DIR / slug, ignore_errors=True)
@@ -217,7 +230,8 @@ def create_app() -> FastAPI:
                 "ChromaDB deletion failed for slug '%s'", slug, exc_info=True
             )
 
-        unregister(url)
+        if url:
+            unregister(url)
         return {"status": "deleted", "slug": slug, "chunks_deleted": chunks_deleted}
 
     @app.get("/v1/repos")

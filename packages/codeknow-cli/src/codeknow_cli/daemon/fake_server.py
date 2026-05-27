@@ -67,11 +67,28 @@ class StubAPIHandler(BaseHTTPRequestHandler):
         else:
             self._send_json(404, {"error": "not found"})
 
+    def _read_json_body(self) -> dict[str, object]:
+        length = int(self.headers.get("Content-Length", 0))
+        if length:
+            data: dict[str, object] = json.loads(self.rfile.read(length))
+            return data
+        return {}
+
     def do_DELETE(self) -> None:
         if self.path == "/v1/repos":
-            self._send_json(
-                200, {"status": "deleted", "slug": "stub-slug", "chunks_deleted": 0}
-            )
+            body = self._read_json_body()
+            slug = body.get("slug", "")
+            if slug and slug != "stub-slug":
+                self._send_json(404, {"detail": f"Repo with slug '{slug}' not found"})
+            else:
+                self._send_json(
+                    200,
+                    {
+                        "status": "deleted",
+                        "slug": slug or "stub-slug",
+                        "chunks_deleted": 0,
+                    },
+                )
         else:
             self._send_json(404, {"error": "not found"})
 

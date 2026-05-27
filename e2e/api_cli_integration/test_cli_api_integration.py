@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
-from codeknow_cli.client import Client, ClientError
+from codeknow_cli.client import Client, ClientError, DeleteResult, SearchResult
 from codeknow_cli.main import cli
 
 if TYPE_CHECKING:
@@ -72,7 +72,7 @@ def _daemon_lifecycle(tmp_path_factory: pytest.TempPathFactory) -> None:
 
     _CLIENT = Client(host="127.0.0.1", port=port, pid_file=pid_file)
     result = _CLIENT.start_daemon(timeout=10)
-    _STARTED_PIDS.add(result["pid"])
+    _STARTED_PIDS.add(result.pid)
 
     _CLI_ENV.update(
         {
@@ -87,7 +87,7 @@ def _daemon_lifecycle(tmp_path_factory: pytest.TempPathFactory) -> None:
     if _CLIENT is not None:
         with contextlib.suppress(TimeoutError, RuntimeError):
             _CLIENT.stop_daemon(timeout=5)
-        _STARTED_PIDS.discard(result["pid"])
+        _STARTED_PIDS.discard(result.pid)
     _restore_env()
 
 
@@ -118,25 +118,27 @@ def test_add_to_index_returns_stub_response() -> None:
 def test_search_returns_stub_response() -> None:
     assert _CLIENT is not None
     result = _CLIENT.search("test query")
-    assert result["query"] == "test query"
-    assert result["vector_hits"] == 0
-    assert result["graph_expanded"] == 0
-    assert result["results"] == []
+    assert isinstance(result, SearchResult)
+    assert result.query == "test query"
+    assert result.vector_hits == 0
+    assert result.graph_expanded == 0
+    assert result.results == []
 
 
 def test_search_with_slug_filter() -> None:
     assert _CLIENT is not None
     result = _CLIENT.search("test", slugs=["stub-repo"])
-    assert result["query"] == "test"
-    assert result["results"] == []
+    assert result.query == "test"
+    assert result.results == []
 
 
 def test_remove_from_index_returns_stub_response() -> None:
     assert _CLIENT is not None
     result = _CLIENT.remove_from_index("stub-repo")
-    assert result["status"] == "deleted"
-    assert result["slug"] == "stub-repo"
-    assert result["chunks_deleted"] == 0
+    assert isinstance(result, DeleteResult)
+    assert result.status == "deleted"
+    assert result.slug == "stub-repo"
+    assert result.chunks_deleted == 0
 
 
 def test_remove_nonexistent_slug_raises() -> None:
@@ -189,7 +191,7 @@ def test_cli_remove_command() -> None:
 
 def test_daemon_stop_cleans_up() -> None:
     assert _CLIENT is not None
-    pid_file = Path(_CLIENT._pid_file)  # noqa: SLF001
+    pid_file = Path(_CLIENT._pid_file)
 
     _CLIENT.stop_daemon(timeout=5)
     assert not _CLIENT.check_daemon()

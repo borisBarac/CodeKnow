@@ -59,11 +59,13 @@ ignore = [
     "ARG001",
     "ARG002",
     "ASYNC240",
+    "FBT001",
+    "FBT002",
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/**" = ["ANN001", "ANN201", "ANN202", "INP001", "N802", "S101"]
-"e2e/**" = ["ANN001", "ANN201", "ANN202", "INP001", "N802", "S101"]
+"**/tests/**" = ["ANN001", "ANN201", "ANN202", "INP001", "N802", "S101", "SLF001"]
+"e2e/**" = ["ANN001", "ANN201", "ANN202", "INP001", "N802", "S101", "SLF001"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/codeknow-lib/tests"]
