@@ -1,3 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codeknow"
+version = "0.1.0"
+description = "Index GitHub repos into a searchable code knowledge graph — CLI, API server, and background daemon"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "codeknow-lib",
+    "codeknow-api",
+    "codeknow-cli",
+]
+
+[project.scripts]
+codeknow = "codeknow_cli.main:main"
+codeknow-api = "codeknow_api.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "packages/codeknow-lib/src/codeknow",
+    "packages/codeknow-api/src/codeknow_api",
+    "packages/codeknow-cli/src/codeknow_cli",
+    "packages/codeknow-cli/generated/code_know_api_client",
+]
+
+[tool.hatch.build.targets.editable]
+dev-mode-dirs = [
+    "packages/codeknow-lib/src",
+    "packages/codeknow-api/src",
+    "packages/codeknow-cli/src",
+    "packages/codeknow-cli/generated",
+]
+
 [tool.uv.workspace]
 members = ["packages/*"]
 

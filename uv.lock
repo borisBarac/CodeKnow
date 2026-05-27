@@ -13,20 +13,10 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "codeknow",
     "codeknow-api",
     "codeknow-cli",
     "codeknow-lib",
-]
-
-[manifest.dependency-groups]
-dev = [
-    { name = "fakeredis", extras = ["lua"], specifier = ">=2.35.0" },
-    { name = "mypy", specifier = ">=2.0.0" },
-    { name = "openapi-python-client", specifier = ">=0.24" },
-    { name = "pytest", specifier = ">=9.0.3" },
-    { name = "ruff", specifier = ">=0.11.0" },
-    { name = "types-networkx", specifier = ">=3.6.1.20260508" },
-    { name = "types-openpyxl", specifier = ">=3.1.5.20260508" },
 ]
 
 [[package]]
@@ -357,6 +347,45 @@ requires-dist = [
     { name = "attrs", specifier = ">=22.2.0" },
     { name = "httpx", specifier = ">=0.23.0,<0.29.0" },
     { name = "python-dateutil", specifier = ">=2.8.0,<3.0.0" },
+]
+
+[[package]]
+name = "codeknow"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "codeknow-api" },
+    { name = "codeknow-cli" },
+    { name = "codeknow-lib" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "fakeredis", extra = ["lua"] },
+    { name = "mypy" },
+    { name = "openapi-python-client" },
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "types-networkx" },
+    { name = "types-openpyxl" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "codeknow-api", editable = "packages/codeknow-api" },
+    { name = "codeknow-cli", editable = "packages/codeknow-cli" },
+    { name = "codeknow-lib", editable = "packages/codeknow-lib" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "fakeredis", extras = ["lua"], specifier = ">=2.35.0" },
+    { name = "mypy", specifier = ">=2.0.0" },
+    { name = "openapi-python-client", specifier = ">=0.24" },
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "ruff", specifier = ">=0.11.0" },
+    { name = "types-networkx", specifier = ">=3.6.1.20260508" },
+    { name = "types-openpyxl", specifier = ">=3.1.5.20260508" },
 ]
 
 [[package]]
