@@ -217,3 +217,25 @@ async def delete_repo(body: DeleteRepoRequest):
 - The facade is a wide interface (build, delete, search, list_repos, resolve_slug, cleanup). If it feels too wide, it can be split into narrower facades (e.g., `PipelineRunner` for build/delete, `SearchFacade` for search). But the key win is that the API layer sees only the facade, not the internals.
 - The `cache.py` module (Redis search cache) stays in the API layer — it's an API concern, not a lib concern. The facade returns raw results, and the API layer decides whether to cache them.
 - Stale `.pyc` files in `codeknow_api/__pycache__/` for deleted modules (ws_handlers.py, ws_models.py, asyncapi_spec.py, gen_client.py) should be cleaned up as part of this work.
+
+## Implementation status
+
+**Overall: ~95% done.** `PipelineFacade` fully implemented and adopted by all API layer modules.
+
+### Done
+
+- `PipelineFacade` class in `pipeline/facade.py` (196 lines) with methods: `build()`, `delete()`, `search()`, `list_repos()`, `resolve_slug()`
+- `app.py` only imports `PipelineFacade` from codeknow-lib (plus 1 remaining exception — see below)
+- `_env_path` private import removed from API layer entirely
+- `ChromaConfig`, `EmbeddingConfig`, `ChromaStore`, `PipelineConfig` no longer imported in `app.py`
+- `models.py` uses `PipelineFacade.resolve_slug()` instead of `PipelineConfig`
+- `middleware.py` uses `PipelineFacade.resolve_slug()` instead of `PipelineConfig`
+- `cache.py` has zero lib imports — clean
+- 13 unit tests in `test_pipeline_facade.py`
+
+### Remaining cleanup
+
+| # | Task | Effort | Details |
+|---|------|--------|---------|
+| 1 | **Wrap `get_path(url)` in facade** | Small | `app.py:169` still does `from codeknow.git_download import get_path` in the delete handler (checks if repo was ever downloaded). Add a method like `facade.repo_is_downloaded(url) -> bool` or `facade.get_repo_path(url) -> Path | None` and use it instead. |
+| 2 | **Add `cleanup()` method to `PipelineFacade`** | Small | Bulk version of `delete()` — removes graph dir, temp dir, and all repo_map entries. The plan specified this but nothing currently calls it. Implement only if a use case emerges. |

@@ -226,3 +226,29 @@ The existing e2e test `test_graph_gen.py` calls `extract_ast()` which would dele
 1. Tests at the interface protect all downstream modules from extraction regressions
 2. The internal restructure (language walkers, cross-file resolution, caching) becomes safe to refactor with tests guarding it
 3. Bug fixes (like `total_words`) become possible to verify
+
+## Implementation status
+
+**Overall: ~40% done.** `Extractor` class exists as a thin facade; the pipeline runner and e2e tests still use the old two-stage API.
+
+### Done
+
+- `Extractor` class created at `extract/extractor.py` (45 lines) with `extract()` and `discover()` methods
+- `__init__.py` exports only `Extractor` (old functions not re-exported at package level)
+- 19 unit tests in `test_extractor.py` (8 test classes: Python, cross-file, graphignore, JS, discovery, rationale, caching, word count)
+- `total_words` bug fixed in `detect.py` — now correctly incremented via `total_words += count_words(p)`
+- `_check_tree_sitter_version()` called in `Extractor.__init__()`
+
+### Remaining cleanup
+
+The core problem: **two parallel entry points** exist. The pipeline runner + e2e tests call `detect()` then `extract_ast()` as separate stages. `Extractor.extract()` wraps both but only unit tests use it.
+
+| # | Task | Effort | Details |
+|---|------|--------|---------|
+| 1 | **Wire `pipeline/runner.py` through `Extractor`** | Medium | Currently calls `detect()` (L43) then `extract_ast(files_dict)` (L51) as separate stages. Runner also needs discovery data for stats/chunk_map (L71, L80). Options: (a) make `Extractor.extract()` return richer data including discovery, or (b) have runner call `Extractor.discover()` + `Extractor.extract()` instead of raw functions. |
+| 2 | **Make `extract_ast()` delegate to `Extractor.extract()`** | Small | `ast.py:1063` calls local `extract()` directly. Should route through `Extractor`. Note: `extract_ast()` takes `files` dict from detect, not a repo path — the signature gap must be reconciled. |
+| 3 | **Absorb `ast.py:extract()` into `Extractor`** | Medium | The real orchestrator at L865 (~200 lines). Currently `Extractor.extract()` just delegates to it. Make it a private method `_extract()` on the class. |
+| 4 | **Make `extract_python()`, `extract_js()` private** | Small | L682, L690. Only called internally by `extract()`. Prefix with `_` or move into class. |
+| 5 | **Migrate e2e tests to `Extractor`** | Medium | `e2e/graph_gen/test_graph_gen.py` and `test_hybrid_search.py` import `detect` + `extract_ast` directly from submodules. Switch to `Extractor`. |
+| 6 | **Update `pipeline/types.py`** | Small | `ExtractAstFn` protocol expects `files: dict` (detect output format). If canonical API becomes `Extractor.extract(repo_path)`, this signature changes. |
+| — | **Skip `detect.py`** — `detect()` called from 4 places; extension constants legitimately shared with `graph/analyze.py`. Keep as-is. | — | — |

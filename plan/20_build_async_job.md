@@ -16,6 +16,10 @@ Supersedes `plan/17_build_sse_progress.md` (SSE approach abandoned in favor of p
 6. **One response model** — single `BuildStatusResponse` model for both POST and GET. All fields optional except `status` and `slug`. POST returns it with `status="queued"`, GET returns it with whatever the current state is.
 7. **Raw httpx for CLI build flow** — CLI uses raw `httpx` for POST + polling loop, bypassing the generated OpenAPI client for build. Generated client still used for search, delete, list_repos. More control over retry/timeout behavior.
 8. **Cleanup synchronous before 202** — ChromaDB/vector cleanup and old graph dir deletion happen in the POST handler before returning 202. Only the pipeline run itself moves to the background task. This keeps cleanup errors in the request/response cycle.
+9. **Lock safety with try/finally** — The lock acquired in POST must be wrapped in `try/finally` at the endpoint level (not only inside the background task). If `asyncio.create_task` raises (e.g., during server shutdown), the lock must still be released. The background task's `finally: lock.release()` is the happy-path cleanup; the endpoint-level `try/finally` is the safety net.
+10. **`_STAGES` constant drives callbacks** — The `_STAGES` module-level constant must be the single source of truth for stage name, percentage, and message. `run_pipeline` iterates over `_STAGES` to invoke `progress_callback` rather than duplicating values inline. This avoids drift between the constant and actual behavior.
+11. **CLI polling timeout** — The CLI poll loop must have a configurable max duration (default: 10 minutes) or max retry count. A stuck build or unreachable server should not hang the CLI indefinitely.
+12. **CLI shows per-stage progress** — During polling, the CLI must print each stage update from the 202 response body (`stage`, `message`, `progress`) in the format `[2/7] Discovering files... (28%)`. Silent polling is not acceptable.
 
 ## Current State
 
@@ -51,7 +55,7 @@ _STAGES = [
 ]
 ```
 
-- After each stage call, invoke `progress_callback(stage_name, percent, message)` if provided
+- After each stage call, iterate over `_STAGES` and invoke `progress_callback(stage_name, percent, message)` if provided — do **not** duplicate stage values inline in `run_pipeline`
 - Backward-compatible: when `progress_callback=None`, behavior is identical to current
 
 ### Phase 2: Update Models
@@ -105,11 +109,12 @@ Keep `app.state.build_locks: dict[str, asyncio.Lock]` as-is.
 2. Compute slug, build config
 3. Check lock → 409 if already building
 4. Acquire lock
-5. Run existing cleanup synchronously (rm old graph dir, rm temp dir, ChromaDB delete)
-6. Set initial state: `app.state.build_jobs[slug] = {status: "queued", ...}`
-7. Spawn background task via `asyncio.create_task(_run_build(slug, config))`
-8. Set `Location: /v1/build/{slug}` and `Retry-After: 3` headers
-9. Return `BuildStatusResponse(status="queued", slug=slug, status_url=..., progress=0)`
+5. **Wrap steps 5-9 in `try/finally` that releases lock on failure** (prevents lock leak if `asyncio.create_task` raises)
+6. Run existing cleanup synchronously (rm old graph dir, rm temp dir, ChromaDB delete)
+7. Set initial state: `app.state.build_jobs[slug] = {status: "queued", ...}`
+8. Spawn background task via `asyncio.create_task(_run_build(slug, config))`
+9. Set `Location: /v1/build/{slug}` and `Retry-After: 3` headers
+10. Return `BuildStatusResponse(status="queued", slug=slug, status_url=..., progress=0)`
 
 **Background task `_run_build(slug, config)`:**
 1. Update state to `running`, progress 0
@@ -148,6 +153,7 @@ Keep `app.state.build_locks: dict[str, asyncio.Lock]` as-is.
   )
   ```
 - Add `GET /v1/build/{slug}` route stub that returns `succeeded` immediately with full result
+- **Path matching must be precise**: use exact segment matching (e.g., split on `/` and verify segment count) rather than `startswith("/v1/build/")` — the latter matches paths like `/v1/build/foo/bar` that the actual FastAPI route does not
 
 ### Phase 5: Update CLI Client
 
@@ -160,8 +166,10 @@ def add_to_index(self, ssh_url: str) -> BuildStatusResponse:
     # 1. POST /v1/build via httpx -> get back status + slug
     # 2. Poll GET /v1/build/{slug} every 3s via httpx
     # 3. Print progress per stage: "[2/7] Discovering files... (28%)"
+    #    — must read stage/message/progress from 202 response body
     # 4. When 200 + status="succeeded", return result
     # 5. When 200 + status="failed", raise ApiError
+    # 6. Timeout: raise ApiError after configurable max duration (default 10 min)
 ```
 
 The CLI call in `main.py:add` prints fields from the returned object. Minor updates to field names if needed.
@@ -186,12 +194,14 @@ The CLI call in `main.py:add` prints fields from the returned object. Minor upda
 |---|---|
 | `test_build_submit_returns_202` | POST returns `status="queued"`, `Location` header, `Retry-After` header |
 | `test_build_poll_running_then_done` | Submit, poll until 200 `succeeded`, verify result fields |
-| `test_build_concurrent_409` | Submit build for same slug while running → 409 |
-| `test_build_failure_returns_failed` | Pipeline error → status `failed` with error message |
+| `test_build_concurrent_409` | Submit build for same slug while running → 409. **Must exercise the `lock.locked()` check path — do not skip by patching out the background task.** |
+| `test_build_failure_returns_failed` | Pipeline error → status `failed` with error message. **Must run end-to-end through `_run_build`, not just test model shape.** |
 | `test_build_not_found_404` | Poll unknown slug → 404 |
-| `test_pipeline_progress_callback` | Verify callback called 7 times with correct stage names |
+| `test_pipeline_progress_callback` | Verify callback called 7 times with correct stage names, and that values come from `_STAGES` constant (not hardcoded) |
 | Update `TestSearchBuildCollision` | Adapt to `app.state.build_jobs` |
-| Update stub middleware tests | New response shape |
+| Update stub middleware tests | New response shape, verify precise path matching (no false positives on `/v1/build/foo/bar`) |
+| `test_cli_poll_timeout` | CLI raises `ApiError` when polling exceeds max duration |
+| `test_cli_shows_progress` | CLI prints `[N/7] stage message... (P%)` during polling |
 
 ---
 
@@ -221,3 +231,19 @@ Phase 1 (pipeline callback) → Phase 2 (models) → Phase 3 (endpoints) → Pha
 - **Build for slug with existing succeeded build** → allowed (rebuild), old state overwritten after cleanup
 - **Multiple submissions for same slug before any completes** → second gets 409
 - **Cleanup fails (e.g. ChromaDB down)** → error returned synchronously before 202, build never starts
+- **`asyncio.create_task` raises during POST** → endpoint-level `try/finally` releases lock, preventing permanent 409 for that slug
+- **Stuck build or unreachable server during CLI poll** → timeout after configurable max duration (default 10 min), raise `ApiError`
+
+## Review Findings Addressed
+
+The following issues were identified during review of the initial implementation and are incorporated into this plan:
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Lock leak if `asyncio.create_task` raises | Medium | Design Decision #9, endpoint-level `try/finally` |
+| `_STAGES` constant unused by `run_pipeline` | Low-Medium | Design Decision #10, `run_pipeline` iterates `_STAGES` |
+| No `test_build_concurrent_409` test | Medium | Phase 8 now requires exercising the lock check path |
+| CLI polling loop has no timeout | Low | Design Decision #11, configurable max duration |
+| CLI silently polls without showing progress | Low | Design Decision #12, print stage updates |
+| Middleware `startswith` matches too broadly | Low | Phase 4 middleware section requires precise segment matching |
+| Weak `isinstance(x, object)` assertion in tests | Low | Phase 8 test notes require precise assertions |

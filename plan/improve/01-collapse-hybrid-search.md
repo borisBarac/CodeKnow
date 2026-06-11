@@ -130,3 +130,27 @@ result = GraphSearcher.multi_search(Path(GRAPH_DIR), query, top_k, slugs)
 - `build_reverse_index()` is also used by `pipeline/metadata.py`. If it's absorbed, metadata.py needs to call into the searcher or have its own copy. The function is 6 lines, so a copy is fine, or it can be kept as a shared internal utility.
 - `VectorStore` Protocol currently has only one adapter (`ChromaStore`). If a second adapter is added later, the seam is justified. For now, the Protocol adds indirection. Consider absorbing it and re-introducing the Protocol only when a second adapter is needed ("one adapter = hypothetical seam, two adapters = real seam").
 - The `__init__` cost of loading graph + building reverse index + creating embeddings + connecting to ChromaDB is non-trivial. The class should support lazy initialization or the caller should be able to reuse instances.
+
+## Implementation status
+
+**Overall: ~60% done.** `GraphSearcher` class created and wired as the primary call path, but internals not yet absorbed into the class.
+
+### Done
+
+- `GraphSearcher` class exists at `vector/search.py:134` with `search()` and `multi_search()` classmethod
+- API layer rewired: `app.py` → `PipelineFacade.search()` → `GraphSearcher.multi_search()` (no longer calls `hybrid_search()` or `multi_graph_search()` directly)
+- `_bfs_seeds()` tests exist (9 tests in `test_weighted_bfs.py`)
+- `GraphSearcher` integration tested (`test_graph_searcher.py`)
+
+### Remaining cleanup
+
+| # | Task | Effort | Blockers |
+|---|------|--------|----------|
+| 1 | **Delete `vector/multi_search.py`** — zero live importers, dead code | Trivial | None |
+| 2 | **Absorb 4 module-level functions into `GraphSearcher`**: `_bfs_seeds` (L27), `_fetch_chunks_from_store` (L81), `sort_key` (L104), `_discover_graph_dirs` (L114). Move `_MAX_GRAPH_RESULTS` to class attr. | Small | None |
+| 3 | **Inline `read_chunk_content()` and delete `vector/_utils.py`** — only 2 importers: `chroma.py:18`, `embeddings.py:29`. Update patch path in `test_embed_stage.py:261`. | Small | None |
+| 4 | **Absorb `weights.py` constants into `GraphSearcher`** as class attrs. Update 1 external importer: `e2e/judge/judge.py:19`. | Small | None |
+| 5 | **Remove `hybrid_search()` backward-compat wrapper** (search.py:374). Migrate 2 callers: `e2e/graph_gen/test_hybrid_search.py:36` and `test_graph_searcher.py:157`, then delete the function. | Small | None |
+| 6 | **Clean `__init__.py`** — remove `hybrid_search` from `__all__` once deleted | Trivial | Depends on #5 |
+| — | **Skip `vector/store.py`** — `VectorStore` Protocol and `SearchResult` serve independent roles beyond search | — | — |
+| — | **Skip `chunking/index.py`** — `build_reverse_index()` used by `pipeline/metadata.py` independently | — | — |
