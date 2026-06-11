@@ -1,0 +1,2 @@
+{"id":"int-e397851e","kind":"field_change","created_at":"2026-06-11T20:34:24.779092Z","actor":"boris","issue_id":"CodeKnow-bf2","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-6d4abd7a","kind":"field_change","created_at":"2026-06-11T20:34:43.042235Z","actor":"boris","issue_id":"CodeKnow-hun","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
