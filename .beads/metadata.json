@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "CodeKnow",
+  "project_id": "7f16f9cf-96d5-458b-8509-6d0b991116fe"
+}

@@ -220,3 +220,8 @@ e2e/graph_gen/code-test-small/graph-out/
 packages/*/*.egg-info/
 packages/*/dist/
 packages/*/.eggs/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
