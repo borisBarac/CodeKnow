@@ -54,17 +54,25 @@ def _stub_delete(body: bytes, _qs: str) -> tuple[int, dict[str, Any]]:
     )
 
 
+_STUB_BUILD_STATUS: dict[str, Any] = {
+    "status": "succeeded",
+    "slug": _STUB_REPO["slug"],
+    "progress": 100,
+    "commit_hash": _STUB_REPO["commit_hash"],
+    "node_count": _STUB_REPO["node_count"],
+    "edge_count": _STUB_REPO["edge_count"],
+    "community_count": _STUB_REPO["community_count"],
+}
+
 _STUB_ROUTES: dict[str, dict[str, _Handler]] = {
     "POST": {
         "/v1/build": lambda _body, _qs: (
             202,
             {
-                "status": "done",
+                "status": "queued",
                 "slug": _STUB_REPO["slug"],
-                "commit_hash": _STUB_REPO["commit_hash"],
-                "node_count": _STUB_REPO["node_count"],
-                "edge_count": _STUB_REPO["edge_count"],
-                "community_count": _STUB_REPO["community_count"],
+                "status_url": f"/v1/build/{_STUB_REPO['slug']}",
+                "progress": 0,
             },
         ),
         "/v1/search": lambda body, _qs: (
@@ -116,6 +124,25 @@ class StubMiddleware:
                     {
                         "type": "http.response.start",
                         "status": status,
+                        "headers": [
+                            [b"content-type", b"application/json"],
+                        ],
+                    }
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": payload,
+                    }
+                )
+                return
+
+            if method == "GET" and path.startswith("/v1/build/"):
+                payload = json.dumps(_STUB_BUILD_STATUS).encode()
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 200,
                         "headers": [
                             [b"content-type", b"application/json"],
                         ],

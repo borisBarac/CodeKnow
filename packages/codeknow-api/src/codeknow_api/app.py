@@ -6,17 +6,20 @@ import asyncio
 import logging
 import os
 import shutil
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
 from codeknow.schemas import ListReposResponse, RepoMetadata
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse
 
-from codeknow_api.cache import cache_search, close_redis, invalidate_for_slug
+from codeknow_api.cache import RedisService, cache_search
 from codeknow_api.middleware import StubMiddleware
 from codeknow_api.models import (
+    BuildJob,
     BuildRequest,
-    BuildResponse,
+    BuildStatusResponse,
     DeleteRepoRequest,
     SearchRequest,
     SearchResponse,
@@ -26,7 +29,24 @@ _CODEKNOW_HOME = Path.home() / ".codeknow"
 GRAPH_DIR = Path(os.getenv("CODEKNOW_GRAPH_DIR", str(_CODEKNOW_HOME / "graph")))
 TEMP_DIR = Path(os.getenv("CODEKNOW_TEMP_DIR", str(_CODEKNOW_HOME / "temp")))
 
+JOB_TTL = timedelta(
+    seconds=int(os.getenv("CODEKNOW_JOB_TTL_SECONDS", str(60 * 60)))
+)
+
 logger = logging.getLogger(__name__)
+
+
+def _evict_completed_jobs(jobs: dict[str, BuildJob]) -> None:
+    now = datetime.now(tz=timezone.utc)
+    expired = [
+        slug
+        for slug, job in jobs.items()
+        if job.is_terminal()
+        and job.completed_at is not None
+        and (now - job.completed_at) > JOB_TTL
+    ]
+    for slug in expired:
+        del jobs[slug]
 
 
 def create_app() -> FastAPI:
@@ -37,13 +57,16 @@ def create_app() -> FastAPI:
         description="Knowledge graph service for code",
     )
     app.add_middleware(StubMiddleware)
-    app.state.build_status = {}  # type: ignore[assignment]
+    build_jobs: dict[str, BuildJob] = {}
+    app.state.build_jobs = build_jobs  # type: ignore[assignment]
     build_locks: dict[str, asyncio.Lock] = {}
-    app.state.build_locks = build_locks
+    app.state.build_locks = build_locks  # type: ignore[assignment]
+    redis_service = RedisService.from_env()
+    app.state.redis_service = redis_service  # type: ignore[assignment]
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
-        await close_redis()
+        await redis_service.close()
 
     def _check_import(
         module_path: str, names: tuple[str, ...]
@@ -76,8 +99,8 @@ def create_app() -> FastAPI:
             )
         return {"status": "ok"}
 
-    @app.post("/v1/build", status_code=202)
-    async def build(body: BuildRequest) -> BuildResponse:
+    @app.post("/v1/build")
+    async def build(body: BuildRequest) -> JSONResponse:
         from codeknow.pipeline import PipelineConfig, run_pipeline
 
         slug = PipelineConfig(repo_url=body.github_ssh_url).slug
@@ -88,58 +111,112 @@ def create_app() -> FastAPI:
         )
 
         lock = app.state.build_locks.setdefault(slug, asyncio.Lock())
-        if not await lock.acquire():
+        if lock.locked():
             raise HTTPException(
                 status_code=409, detail="Build already in progress for this repo"
             )
-        try:
-            app.state.build_status[slug] = {"status": "building", "progress": 0}
 
-            if (GRAPH_DIR / slug).exists():
-                shutil.rmtree(GRAPH_DIR / slug, ignore_errors=True)
-                shutil.rmtree(TEMP_DIR / slug, ignore_errors=True)
-                try:
-                    from codeknow.vector.chroma import ChromaConfig, ChromaStore
-                    from codeknow.vector.embeddings import (
-                        EmbeddingConfig,
-                        create_embeddings,
-                    )
+        await lock.acquire()
 
-                    embeddings = create_embeddings(EmbeddingConfig())
-                    collection_name = config.chroma_collection or f"codeknow_{slug}"
-                    store = ChromaStore(
-                        config=ChromaConfig(
-                            host=config.chroma_host,
-                            port=config.chroma_port,
-                            collection_name=collection_name,
-                        ),
-                        embeddings=embeddings,
-                    )
-                    store.delete_by_slug(slug)
-                except Exception:
-                    logger.warning(
-                        "ChromaDB cleanup failed for slug '%s'", slug, exc_info=True
-                    )
+        if (GRAPH_DIR / slug).exists():
+            shutil.rmtree(GRAPH_DIR / slug, ignore_errors=True)
+            shutil.rmtree(TEMP_DIR / slug, ignore_errors=True)
+            try:
+                from codeknow.vector.chroma import ChromaConfig, ChromaStore
+                from codeknow.vector.embeddings import (
+                    EmbeddingConfig,
+                    create_embeddings,
+                )
+
+                embeddings = create_embeddings(EmbeddingConfig())
+                collection_name = config.chroma_collection or f"codeknow_{slug}"
+                store = ChromaStore(
+                    config=ChromaConfig(
+                        host=config.chroma_host,
+                        port=config.chroma_port,
+                        collection_name=collection_name,
+                    ),
+                    embeddings=embeddings,
+                )
+                store.delete_by_slug(slug)
+            except Exception:
+                logger.warning(
+                    "ChromaDB cleanup failed for slug '%s'", slug, exc_info=True
+                )
+
+        _evict_completed_jobs(app.state.build_jobs)
+        app.state.build_jobs[slug] = BuildJob(slug=slug)
+
+        async def _run_build() -> None:
+            loop = asyncio.get_running_loop()
+            job = app.state.build_jobs[slug]
+            job.status = "running"
+
+            def on_progress(stage: str, percent: int, message: str) -> None:
+                def _update() -> None:
+                    j = app.state.build_jobs.get(slug)
+                    if j is not None:
+                        j.progress = percent
+                        j.stage = stage
+                        j.message = message
+
+                loop.call_soon_threadsafe(_update)
 
             try:
-                result = await asyncio.to_thread(run_pipeline, config)
+                result = await asyncio.to_thread(
+                    run_pipeline, config, progress_callback=on_progress
+                )
+                job.status = "succeeded"
+                job.progress = 100
+                job.commit_hash = result.commit_hash
+                job.node_count = result.stats.get("nodes")
+                job.edge_count = result.stats.get("edges")
+                job.community_count = result.stats.get("communities")
+                job.completed_at = datetime.now(tz=timezone.utc)
+                await redis_service.invalidate_for_slug(slug)
+                shutil.rmtree(TEMP_DIR / slug, ignore_errors=True)
             except Exception as exc:
-                app.state.build_status[slug] = {"status": "error", "progress": 0}
-                raise HTTPException(status_code=500, detail=str(exc)) from exc
-            shutil.rmtree(TEMP_DIR / slug, ignore_errors=True)
-            app.state.build_status[slug] = {"status": "done", "progress": 100}
-            await invalidate_for_slug(slug)
+                job.status = "failed"
+                job.error = str(exc)
+                job.completed_at = datetime.now(tz=timezone.utc)
+            finally:
+                lock.release()
 
-            return BuildResponse(
-                status="done",
+        _build_task = asyncio.create_task(_run_build())  # noqa: RUF006
+
+        return JSONResponse(
+            content=BuildStatusResponse(
+                status="queued",
                 slug=slug,
-                commit_hash=result.commit_hash,
-                node_count=result.stats.get("nodes"),
-                edge_count=result.stats.get("edges"),
-                community_count=result.stats.get("communities"),
+                status_url=f"/v1/build/{slug}",
+                progress=0,
+            ).model_dump(exclude_none=True),
+            status_code=202,
+            headers={
+                "Location": f"/v1/build/{slug}",
+                "Retry-After": "3",
+            },
+        )
+
+    @app.get("/v1/build/{slug}")
+    async def build_status(slug: str) -> JSONResponse:
+        _evict_completed_jobs(app.state.build_jobs)
+        job = app.state.build_jobs.get(slug)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Build not found: {slug}")
+
+        resp_data = BuildStatusResponse(**job.to_response_dict()).model_dump(
+            exclude_none=True
+        )
+
+        if job.status in ("queued", "running"):
+            return JSONResponse(
+                content=resp_data,
+                status_code=202,
+                headers={"Retry-After": "3"},
             )
-        finally:
-            lock.release()
+
+        return JSONResponse(content=resp_data, status_code=200)
 
     @app.post("/v1/search")
     @cache_search()
@@ -161,7 +238,8 @@ def create_app() -> FastAPI:
             building = [
                 s
                 for s in repos
-                if app.state.build_status.get(s, {}).get("status") == "building"
+                if app.state.build_jobs.get(s) is not None
+                and app.state.build_jobs[s].status in ("queued", "running")
             ]
             if building:
                 raise HTTPException(
@@ -258,10 +336,10 @@ def create_app() -> FastAPI:
                     errors.append({"slug": slug, "error": str(exc)})
                     continue
 
-                build_info = app.state.build_status.get(slug)
-                if build_info:
-                    meta["build_status"] = build_info["status"]
-                    meta["build_progress"] = build_info["progress"]
+                build_job = app.state.build_jobs.get(slug)
+                if build_job is not None:
+                    meta["build_status"] = build_job.status
+                    meta["build_progress"] = build_job.progress
 
                 if health_check:
                     try:

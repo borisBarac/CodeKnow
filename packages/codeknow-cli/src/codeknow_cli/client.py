@@ -10,26 +10,19 @@ from typing import TYPE_CHECKING, Any, NoReturn, ParamSpec, TypeVar
 import httpx
 from code_know_api_client import errors as api_errors
 from code_know_api_client.api.default import (
-    build_v1_build_post,
     delete_repo_v1_repos_delete,
     list_repos_v1_repos_get,
     search_v1_search_post,
 )
 from code_know_api_client.client import Client as GeneratedClient
 from code_know_api_client.models import (
-    delete_repo_v1_repos_delete_response_delete_repo_v1_repos_delete as _del_resp,
+    delete_repo_v1_repos_delete_response_delete_repo_v1_repos_delete as _del_mod,
 )
-from code_know_api_client.models import (
-    search_v1_search_post_response_search_v1_search_post as _search_resp,
-)
-from code_know_api_client.models.build_request import BuildRequest
-from code_know_api_client.models.build_response import BuildResponse
 from code_know_api_client.models.delete_repo_request import DeleteRepoRequest
 from code_know_api_client.models.http_validation_error import HTTPValidationError
 from code_know_api_client.models.list_repos_response import ListReposResponse
-from code_know_api_client.models.search_v1_search_post_body import (
-    SearchV1SearchPostBody,
-)
+from code_know_api_client.models.search_request import SearchRequest
+from code_know_api_client.models.search_response import SearchResponse
 from code_know_api_client.types import Unset
 
 from codeknow_cli.daemon_manager import DaemonManager
@@ -41,6 +34,8 @@ from codeknow_cli.exceptions import (
     RepoNotFoundError,
     ValidationError,
 )
+
+_DelResp = _del_mod.DeleteRepoV1ReposDeleteResponseDeleteRepoV1ReposDelete
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -86,6 +81,20 @@ class DaemonStartResult:
 @dataclass
 class DaemonStopResult:
     status: str
+
+
+@dataclass
+class BuildStatusResult:
+    status: str
+    slug: str
+    progress: int = 0
+    stage: str | None = None
+    message: str | None = None
+    error: str | None = None
+    commit_hash: str | None = None
+    node_count: int | None = None
+    edge_count: int | None = None
+    community_count: int | None = None
 
 
 class Client:
@@ -189,23 +198,65 @@ class Client:
         msg = f"Unexpected response from API (status {resp.status_code})"
         raise ApiError(msg)
 
-    def add_to_index(self, ssh_url: str) -> BuildResponse:
+    def add_to_index(self, ssh_url: str) -> BuildStatusResult:
+        poll_interval = 3.0
         try:
-            resp = self._call_api(
-                build_v1_build_post.sync_detailed,
-                client=self._api_client,
-                body=BuildRequest(github_ssh_url=ssh_url),
+            submit_resp = httpx.post(
+                f"{self.base_url}/v1/build",
+                json={"github_ssh_url": ssh_url},
+                timeout=httpx.Timeout(30.0),
             )
-        except api_errors.UnexpectedStatus as exc:
-            if exc.status_code == 409:
-                msg = "Repo is already being built"
-                raise RepoConflictError(msg) from exc
-            self._raise_for_unexpected_status(exc)
+        except httpx.TransportError as exc:
+            if self._remote:
+                msg = f"Cannot connect to the API at {self.base_url}"
+            else:
+                msg = (
+                    "Cannot connect to the daemon. Start it with: codeknow daemon start"
+                )
+            raise DaemonNotRunningError(msg) from exc
 
-        if resp.status_code == 202 and isinstance(resp.parsed, BuildResponse):
-            return resp.parsed
-        self._raise_validation_or_error(resp, "Invalid GitHub SSH URL")
-        return None
+        if submit_resp.status_code == 409:
+            msg = "Repo is already being built"
+            raise RepoConflictError(msg)
+        if submit_resp.status_code == 422:
+            detail = self._extract_detail(submit_resp.content)
+            raise ValidationError(detail or "Invalid GitHub SSH URL")
+        if submit_resp.status_code != 202:
+            msg = f"Unexpected API status {submit_resp.status_code}: {submit_resp.text}"
+            raise ApiError(msg)
+
+        body = submit_resp.json()
+        slug = body["slug"]
+
+        while True:
+            time.sleep(poll_interval)
+            poll_resp = httpx.get(
+                f"{self.base_url}/v1/build/{slug}",
+                timeout=httpx.Timeout(10.0),
+            )
+
+            if poll_resp.status_code == 404:
+                msg = f"Build disappeared for slug {slug}"
+                raise ApiError(msg)
+
+            data = poll_resp.json()
+
+            if poll_resp.status_code == 200:
+                status = data.get("status")
+                if status == "succeeded":
+                    return BuildStatusResult(
+                        status="succeeded",
+                        slug=slug,
+                        progress=100,
+                        commit_hash=data.get("commit_hash"),
+                        node_count=data.get("node_count"),
+                        edge_count=data.get("edge_count"),
+                        community_count=data.get("community_count"),
+                    )
+                if status == "failed":
+                    error = data.get("error", "Unknown error")
+                    msg = f"Build failed: {error}"
+                    raise ApiError(msg)
 
     @staticmethod
     def _extract_detail(content: bytes) -> str:
@@ -217,11 +268,9 @@ class Client:
             return content.decode(errors="ignore")
 
     def search(self, query: str, slugs: list[str] | None = None) -> SearchResult:
-        body = SearchV1SearchPostBody()
-        body["query"] = query
-        body["top_k"] = 10
+        body = SearchRequest(query=query, top_k=10)
         if slugs:
-            body["repos"] = slugs
+            body.repos = slugs
 
         try:
             resp = self._call_api(
@@ -244,15 +293,12 @@ class Client:
                 ) from exc
             self._raise_for_unexpected_status(exc)
 
-        if resp.status_code == 200 and isinstance(
-            resp.parsed, _search_resp.SearchV1SearchPostResponseSearchV1SearchPost
-        ):
-            raw = dict(resp.parsed.additional_properties)
-            return SearchResult(
-                query=raw.get("query", ""),
-                vector_hits=raw.get("vector_hits", 0),
-                graph_expanded=raw.get("graph_expanded", 0),
-                results=[
+        if resp.status_code == 200 and isinstance(resp.parsed, SearchResponse):
+            raw = resp.parsed
+            results: list[SearchHit] = []
+            for item in raw.results:
+                h = item.additional_properties
+                results.append(
                     SearchHit(
                         file=h.get("file", "?"),
                         start_line=h.get("start_line"),
@@ -264,8 +310,12 @@ class Client:
                         graph_path=h.get("graph_path"),
                         content=h.get("content", ""),
                     )
-                    for h in raw.get("results", [])
-                ],
+                )
+            return SearchResult(
+                query=raw.query,
+                vector_hits=raw.vector_hits,
+                graph_expanded=raw.graph_expanded,
+                results=results,
             )
 
         self._raise_validation_or_error(resp, "Invalid request")
@@ -286,7 +336,7 @@ class Client:
 
         if del_resp.status_code == 200 and isinstance(
             del_resp.parsed,
-            _del_resp.DeleteRepoV1ReposDeleteResponseDeleteRepoV1ReposDelete,
+            _DelResp,
         ):
             raw = dict(del_resp.parsed.additional_properties)
             return DeleteResult(

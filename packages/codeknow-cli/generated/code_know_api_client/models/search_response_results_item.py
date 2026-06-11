@@ -6,11 +6,11 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-T = TypeVar("T", bound="SearchV1SearchPostResponseSearchV1SearchPost")
+T = TypeVar("T", bound="SearchResponseResultsItem")
 
 
 @_attrs_define
-class SearchV1SearchPostResponseSearchV1SearchPost:
+class SearchResponseResultsItem:
     """ """
 
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -25,10 +25,10 @@ class SearchV1SearchPostResponseSearchV1SearchPost:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        search_v1_search_post_response_search_v1_search_post = cls()
+        search_response_results_item = cls()
 
-        search_v1_search_post_response_search_v1_search_post.additional_properties = d
-        return search_v1_search_post_response_search_v1_search_post
+        search_response_results_item.additional_properties = d
+        return search_response_results_item
 
     @property
     def additional_keys(self) -> list[str]:

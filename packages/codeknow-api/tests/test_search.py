@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import codeknow_api.app as app_module
 import pytest
 from codeknow_api.app import create_app
+from codeknow_api.models import BuildJob
 from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
@@ -92,10 +93,13 @@ class TestSearchBuildCollision:
         self, client: TestClient, graph_dir: Path
     ) -> None:
         _seed_repo(graph_dir, "building-repo")
-        client.app.state.build_status["building-repo"] = {
-            "status": "building",
-            "progress": 42,
-        }
+        client.app.state.build_jobs["building-repo"] = BuildJob(
+            slug="building-repo",
+            status="running",
+            progress=42,
+            stage="build",
+            message="Building graph...",
+        )
         try:
             resp = client.post(
                 "/v1/search",
@@ -104,14 +108,13 @@ class TestSearchBuildCollision:
             assert resp.status_code == 409
             assert "building-repo" in resp.json()["detail"]
         finally:
-            del client.app.state.build_status["building-repo"]
+            del client.app.state.build_jobs["building-repo"]
 
     def test_done_slug_is_searchable(self, client: TestClient, graph_dir: Path) -> None:
         _seed_repo(graph_dir, "done-repo")
-        client.app.state.build_status["done-repo"] = {
-            "status": "done",
-            "progress": 100,
-        }
+        client.app.state.build_jobs["done-repo"] = BuildJob(
+            slug="done-repo", status="succeeded", progress=100
+        )
         try:
             resp = client.post(
                 "/v1/search",
@@ -119,21 +122,23 @@ class TestSearchBuildCollision:
             )
             assert resp.status_code == 200
         finally:
-            del client.app.state.build_status["done-repo"]
+            del client.app.state.build_jobs["done-repo"]
 
     def test_mix_building_and_done_reports_only_building(
         self, client: TestClient, graph_dir: Path
     ) -> None:
         _seed_repo(graph_dir, "done-repo")
         _seed_repo(graph_dir, "building-repo")
-        client.app.state.build_status["done-repo"] = {
-            "status": "done",
-            "progress": 100,
-        }
-        client.app.state.build_status["building-repo"] = {
-            "status": "building",
-            "progress": 50,
-        }
+        client.app.state.build_jobs["done-repo"] = BuildJob(
+            slug="done-repo", status="succeeded", progress=100
+        )
+        client.app.state.build_jobs["building-repo"] = BuildJob(
+            slug="building-repo",
+            status="running",
+            progress=50,
+            stage="build",
+            message="Building graph...",
+        )
         try:
             resp = client.post(
                 "/v1/search",
@@ -143,8 +148,8 @@ class TestSearchBuildCollision:
             assert "building-repo" in resp.json()["detail"]
             assert "done-repo" not in resp.json()["detail"]
         finally:
-            del client.app.state.build_status["done-repo"]
-            del client.app.state.build_status["building-repo"]
+            del client.app.state.build_jobs["done-repo"]
+            del client.app.state.build_jobs["building-repo"]
 
 
 class TestSearchResponseShape:

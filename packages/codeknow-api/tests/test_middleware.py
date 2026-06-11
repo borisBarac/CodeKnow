@@ -116,12 +116,10 @@ class TestStubMiddleware:
         assert calls == []
         assert collected[0]["status"] == 202
         resp = json.loads(collected[1]["body"])
-        assert resp["status"] == "done"
+        assert resp["status"] == "queued"
         assert resp["slug"] == _STUB_REPO["slug"]
-        assert resp["commit_hash"] == _STUB_REPO["commit_hash"]
-        assert resp["node_count"] == _STUB_REPO["node_count"]
-        assert resp["edge_count"] == _STUB_REPO["edge_count"]
-        assert resp["community_count"] == _STUB_REPO["community_count"]
+        assert resp["status_url"] == f"/v1/build/{_STUB_REPO['slug']}"
+        assert resp["progress"] == 0
 
     @pytest.mark.anyio
     async def test_intercepts_post_search(self) -> None:
@@ -179,6 +177,23 @@ class TestStubMiddleware:
             "page_size": 50,
             "errors": [],
         }
+
+    @pytest.mark.anyio
+    async def test_intercepts_get_build_status(self) -> None:
+        calls: list[Scope] = []
+        inner = await _make_inner_app(calls)
+        mw = StubMiddleware(inner)
+
+        scope = _make_scope("GET", f"/v1/build/{_STUB_REPO['slug']}")
+        collected, send = await _collect_send()
+        await mw(scope, _body_receive(b""), send)
+
+        assert calls == []
+        assert collected[0]["status"] == 200
+        resp = json.loads(collected[1]["body"])
+        assert resp["status"] == "succeeded"
+        assert resp["slug"] == _STUB_REPO["slug"]
+        assert resp["progress"] == 100
 
     @pytest.mark.anyio
     async def test_passthrough_when_stub_disabled(
