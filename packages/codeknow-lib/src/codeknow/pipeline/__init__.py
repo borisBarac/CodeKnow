@@ -2,6 +2,7 @@
 
 from .config import PipelineConfig
 from .embed_stage import embed
+from .facade import BuildResult, DeleteResult, PipelineFacade
 from .io import communities_from_graph, load_graph, load_metadata, save_pipeline_result
 from .metadata import build_chunk_metadata
 from .runner import run_pipeline
@@ -11,8 +12,11 @@ from .types import STAGE_IO, STAGES, EmbedFn, PipelineResult, ResolveFn
 __all__ = [
     "STAGES",
     "STAGE_IO",
+    "BuildResult",
+    "DeleteResult",
     "EmbedFn",
     "PipelineConfig",
+    "PipelineFacade",
     "PipelineResult",
     "ResolveFn",
     "build_chunk_metadata",

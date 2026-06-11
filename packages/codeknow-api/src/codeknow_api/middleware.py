@@ -39,9 +39,9 @@ _Handler = Callable[[bytes, str], tuple[int, dict[str, Any]]]
 def _stub_delete(body: bytes, _qs: str) -> tuple[int, dict[str, Any]]:
     data = json.loads(body) if body else {}
     url = data.get("url") or ""
-    from codeknow.pipeline import PipelineConfig
+    from codeknow.pipeline.facade import PipelineFacade
 
-    slug = data.get("slug") or (PipelineConfig(repo_url=url).slug if url else "")
+    slug = data.get("slug") or (PipelineFacade.resolve_slug(url) if url else "")
     if slug != _STUB_REPO["slug"]:
         return 404, {"detail": f"Repo not found: {slug}"}
     return (

@@ -41,9 +41,9 @@ class DeleteRepoRequest(BaseModel):
         if self.slug:
             return self.slug
         if self.url:
-            from codeknow.pipeline import PipelineConfig
+            from codeknow.pipeline.facade import PipelineFacade
 
-            return PipelineConfig(repo_url=self.url).slug
+            return PipelineFacade.resolve_slug(self.url)
         msg = "Either 'url' or 'slug' must be provided"
         raise ValueError(msg)
 
