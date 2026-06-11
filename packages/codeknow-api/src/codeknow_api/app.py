@@ -164,14 +164,11 @@ def create_app() -> FastAPI:
             url = _facade.resolve_url_for_slug(slug)
 
         if not _facade.has_slug(slug):
-            if url is not None:
-                from codeknow.git_download import get_path
+            if url is None:
+                raise HTTPException(status_code=404, detail=f"Repo not found: {slug}")
+            from codeknow.git_download import get_path
 
-                if get_path(url) is None:
-                    raise HTTPException(
-                        status_code=404, detail=f"Repo not found: {slug}"
-                    )
-            else:
+            if get_path(url) is None:
                 raise HTTPException(status_code=404, detail=f"Repo not found: {slug}")
 
         result = await asyncio.to_thread(_facade.delete, slug)

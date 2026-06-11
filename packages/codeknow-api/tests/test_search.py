@@ -19,6 +19,7 @@ def graph_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     gdir = tmp_path / "graph"
     gdir.mkdir()
     monkeypatch.setattr(app_module, "GRAPH_DIR", gdir)
+    monkeypatch.setattr(app_module._facade, "graph_dir", gdir)
     return gdir
 
 

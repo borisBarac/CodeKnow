@@ -5,9 +5,12 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from codeknow.schemas import HybridSearchResponse, ListReposResponse, RepoMetadata
+
+if TYPE_CHECKING:
+    from codeknow.vector.chroma import ChromaStore
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +44,12 @@ class PipelineFacade:
         graph_dir: Path | None = None,
         temp_dir: Path | None = None,
     ) -> None:
-        _home = Path.home() / ".codeknow"
+        self._home = Path.home() / ".codeknow"
         self.graph_dir: Path = graph_dir or Path(
-            os.getenv("CODEKNOW_GRAPH_DIR", str(_home / "graph"))
+            os.getenv("CODEKNOW_GRAPH_DIR", str(self._home / "graph"))
         )
         self.temp_dir: Path = temp_dir or Path(
-            os.getenv("CODEKNOW_TEMP_DIR", str(_home / "temp"))
+            os.getenv("CODEKNOW_TEMP_DIR", str(self._home / "temp"))
         )
 
     @staticmethod
@@ -61,7 +64,7 @@ class PipelineFacade:
     def has_slug(self, slug: str) -> bool:
         return (self.slug_dir(slug) / "metadata.json").exists()
 
-    def _make_store(self, slug: str) -> Any:
+    def _make_store(self, slug: str) -> ChromaStore:
         from codeknow.vector.chroma import ChromaConfig, ChromaStore
         from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
 
@@ -74,8 +77,7 @@ class PipelineFacade:
     def resolve_url_for_slug(self, slug: str) -> str | None:
         from codeknow.git_download import get_url
 
-        _home = Path.home() / ".codeknow"
-        input_dir = Path(os.getenv("CODEKNOW_INPUT_DIR", str(_home / "repos")))
+        input_dir = Path(os.getenv("CODEKNOW_INPUT_DIR", str(self._home / "repos")))
         return get_url(input_dir / slug)
 
     def build(self, ssh_url: str, *, clean_first: bool = False) -> BuildResult:

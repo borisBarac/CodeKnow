@@ -71,5 +71,5 @@ class TestHealthEndpoint:
         assert "codeknow.pipeline.io" in checked
         assert "codeknow.vector.chroma" in checked
         assert "codeknow.vector.embeddings" in checked
-        assert "codeknow.vector.multi_search" in checked
+        assert "codeknow.vector.search" in checked
         assert "codeknow.git_download" in checked
