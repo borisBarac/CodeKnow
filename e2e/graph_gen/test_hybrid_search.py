@@ -176,7 +176,7 @@ def test_hybrid_search_graph_expansion():
         )
 
 
-# ── 6. Judge LLM gate ──────────────────────────────────────────────────
+# ── 6. LLM judge config ────────────────────────────────────────────────
 load_dotenv()
 _JUDGE_KEY = os.environ.get("JUDGE_LLM_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
 
@@ -194,6 +194,118 @@ _QUERIES: list[tuple[str, str]] = [
     ("typing indicator", "how does the typing indicator work"),
     ("auth guard", "how does authentication guard the tRPC procedures"),
 ]
+
+
+# ── 7. Retrieval Quality Ground Truth ──────────────────────────────────
+# Maps (label → set of file-path suffixes) that are relevant for each query.
+# r.file is an absolute path, so matching is done via endswith().
+
+_RELEVANCE_GROUND_TRUTH: dict[str, set[str]] = {
+    "post creation flow": {
+        "src/server/routers/post.ts",
+        "src/app/channels/[channelId]/chat.tsx",
+    },
+    "adding a message": {
+        "src/server/routers/post.ts",
+        "src/app/channels/[channelId]/chat.tsx",
+        "src/app/channels/[channelId]/hooks.ts",
+    },
+    "typing indicator": {
+        "src/app/channels/[channelId]/chat.tsx",
+        "src/app/channels/[channelId]/hooks.ts",
+    },
+    "auth guard": {
+        "src/server/auth.tsx",
+        "src/server/trpc.ts",
+        "src/server/context.ts",
+    },
+    "database connection and queries": {
+        "src/server/db/client.ts",
+        "src/server/db/schema.ts",
+        "drizzle.config.ts",
+    },
+    "user authentication": {
+        "src/server/auth.tsx",
+        "src/app/api/auth/[...nextauth]/route.ts",
+    },
+    "trpc router setup": {
+        "src/server/trpc.ts",
+        "src/server/routers/_app.ts",
+        "src/lib/trpc.ts",
+    },
+    "create channel dialog": {
+        "src/app/create-channel.tsx",
+        "src/components/dialog.tsx",
+        "src/server/routers/channel.ts",
+    },
+    "database schema and migrations": {
+        "src/server/db/schema.ts",
+    },
+}
+
+_GT_QUERIES: list[tuple[str, str]] = [
+    ("database connection and queries", "database connection and queries"),
+    ("user authentication", "user authentication"),
+    ("trpc router setup", "trpc router setup"),
+    ("create channel dialog", "create channel dialog"),
+    ("database schema and migrations", "database schema and migrations"),
+    *_QUERIES,
+]
+
+_K_VALUES = (5, 10)
+
+
+def _is_relevant(result_file: str, relevant_suffixes: set[str]) -> bool:
+    return any(result_file.endswith(s) for s in relevant_suffixes)
+
+
+def _precision_at_k(
+    results: list, relevant: set[str], k: int,
+) -> float:
+    top_k = results[:k]
+    if not top_k:
+        return 0.0
+    return sum(1 for r in top_k if _is_relevant(r.file, relevant)) / k
+
+
+def _recall_at_k(
+    results: list, relevant: set[str], k: int,
+) -> float:
+    if not relevant:
+        return 0.0
+    found = {r.file for r in results[:k] if _is_relevant(r.file, relevant)}
+    return len(found) / len(relevant)
+
+
+def _f1_at_k(precision: float, recall: float) -> float:
+    if precision + recall == 0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
+
+
+def _compute_retrieval_metrics(
+    results: list, relevant: set[str],
+) -> dict[str, dict[str, float]]:
+    metrics: dict[str, dict[str, float]] = {}
+    for k in _K_VALUES:
+        p = _precision_at_k(results, relevant, k)
+        r = _recall_at_k(results, relevant, k)
+        metrics[f"@{k}"] = {"precision": p, "recall": r, "f1": _f1_at_k(p, r)}
+    return metrics
+
+
+def _print_retrieval_report(
+    label: str, metrics: dict[str, dict[str, float]],
+) -> None:
+    sep = "-" * 70
+    print(f"\n{sep}")
+    print(f"RETRIEVAL METRICS: {label}")
+    for at_k, m in metrics.items():
+        print(
+            f"  {at_k}  P={m['precision']:.2f}  "
+            f"R={m['recall']:.2f}  F1={m['f1']:.2f}"
+        )
+    print(sep)
 
 
 def _synthesize_analysis(resp: HybridSearchResponse) -> str:
@@ -280,11 +392,85 @@ def _print_judge_report(output, label):
     print(sep)
 
 
+# ── 8. Deterministic Retrieval Quality Tests ───────────────────────────
+
+
+@pytest.mark.parametrize(("label", "query"), _GT_QUERIES)
+def test_retrieval_precision_at_5(label, query):
+    relevant = _RELEVANCE_GROUND_TRUTH.get(label, set())
+    resp = _search(query, n_results=10, traversal_depth=2)
+    metrics = _compute_retrieval_metrics(resp.results, relevant)
+    _print_retrieval_report(label, metrics)
+    p5 = metrics["@5"]["precision"]
+    assert p5 >= 0.4, (
+        f"P@5={p5:.2f} < 0.4 for '{label}' — query: '{query}'"
+    )
+
+
+@pytest.mark.parametrize(("label", "query"), _GT_QUERIES)
+def test_retrieval_recall_at_10(label, query):
+    relevant = _RELEVANCE_GROUND_TRUTH.get(label, set())
+    resp = _search(query, n_results=10, traversal_depth=2)
+    metrics = _compute_retrieval_metrics(resp.results, relevant)
+    r10 = metrics["@10"]["recall"]
+    assert r10 >= 0.5, (
+        f"R@10={r10:.2f} < 0.5 for '{label}' — query: '{query}'"
+    )
+
+
+@pytest.mark.parametrize(("label", "query"), _GT_QUERIES)
+def test_retrieval_f1_at_10(label, query):
+    relevant = _RELEVANCE_GROUND_TRUTH.get(label, set())
+    resp = _search(query, n_results=10, traversal_depth=2)
+    metrics = _compute_retrieval_metrics(resp.results, relevant)
+    f1_10 = metrics["@10"]["f1"]
+    assert f1_10 >= 0.4, (
+        f"F1@10={f1_10:.2f} < 0.4 for '{label}' — query: '{query}'"
+    )
+
+
+def test_retrieval_metrics_summary():
+    scores: list[dict[str, float]] = []
+    for label, query in _GT_QUERIES:
+        relevant = _RELEVANCE_GROUND_TRUTH.get(label, set())
+        resp = _search(query, n_results=10, traversal_depth=2)
+        metrics = _compute_retrieval_metrics(resp.results, relevant)
+        scores.append(
+            {
+                "p5": metrics["@5"]["precision"],
+                "r10": metrics["@10"]["recall"],
+                "f1_10": metrics["@10"]["f1"],
+            }
+        )
+
+    avg_p5 = sum(s["p5"] for s in scores) / len(scores)
+    avg_r10 = sum(s["r10"] for s in scores) / len(scores)
+    avg_f1 = sum(s["f1_10"] for s in scores) / len(scores)
+
+    print(f"\n{'=' * 70}")
+    print("AGGREGATE RETRIEVAL QUALITY")
+    print(f"  Avg P@5  = {avg_p5:.3f}  (threshold: 0.50)")
+    print(f"  Avg R@10 = {avg_r10:.3f}  (threshold: 0.60)")
+    print(f"  Avg F1@10= {avg_f1:.3f}  (threshold: 0.50)")
+    print(f"{'=' * 70}")
+
+    assert avg_p5 >= 0.50, f"Mean P@5={avg_p5:.3f} < 0.50"
+    assert avg_r10 >= 0.60, f"Mean R@10={avg_r10:.3f} < 0.60"
+    assert avg_f1 >= 0.50, f"Mean F1@10={avg_f1:.3f} < 0.50"
+
+
+# ── 9. Judge LLM gate ──────────────────────────────────────────────────
+
+
 @pytest.mark.llm_judge
 @pytest.mark.skipif(not _JUDGE_KEY, reason="no JUDGE_LLM_API_KEY or OPENROUTER_API_KEY")
 @pytest.mark.parametrize(("label", "query"), _QUERIES)
 def test_judge_hybrid_search_quality(label, query):
     resp = _search(query, n_results=10, traversal_depth=_TRAVERSAL_DEPTH)
+    relevant = _RELEVANCE_GROUND_TRUTH.get(label, set())
+    metrics = _compute_retrieval_metrics(resp.results, relevant)
+    _print_retrieval_report(f"{label} — {query}", metrics)
+
     analysis = _synthesize_analysis(resp)
     judge_input = from_hybrid_response(
         resp, repo_brief=_REPO_BRIEF, agent_analysis=analysis
