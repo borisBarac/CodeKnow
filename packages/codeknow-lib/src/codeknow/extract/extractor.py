@@ -16,7 +16,7 @@ class Extractor:
     extract_ast together.
     """
 
-    def __init__(self, cache_dir: Path | None = None) -> None:
+    def __init__(self, *, cache_dir: Path | None = None) -> None:
         self._cache_dir = cache_dir
         _check_tree_sitter_version()
 
