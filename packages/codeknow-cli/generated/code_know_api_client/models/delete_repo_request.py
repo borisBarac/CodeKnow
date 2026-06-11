@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
+
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="DeleteRepoRequest")
 
@@ -13,34 +15,58 @@ T = TypeVar("T", bound="DeleteRepoRequest")
 class DeleteRepoRequest:
     """
     Attributes:
-        url (str | None):
-        slug (str | None):
+        url (None | str | Unset):
+        slug (None | str | Unset):
     """
 
-    url: str | None = None
-    slug: str | None = None
+    url: None | str | Unset = UNSET
+    slug: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        url = self.url
-        slug = self.slug
+        url: None | str | Unset
+        if isinstance(self.url, Unset):
+            url = UNSET
+        else:
+            url = self.url
+
+        slug: None | str | Unset
+        if isinstance(self.slug, Unset):
+            slug = UNSET
+        else:
+            slug = self.slug
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update(
-            {
-                "url": url,
-                "slug": slug,
-            }
-        )
+        field_dict.update({})
+        if url is not UNSET:
+            field_dict["url"] = url
+        if slug is not UNSET:
+            field_dict["slug"] = slug
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        url = d.pop("url", None)
-        slug = d.pop("slug", None)
+
+        def _parse_url(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        url = _parse_url(d.pop("url", UNSET))
+
+        def _parse_slug(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        slug = _parse_slug(d.pop("slug", UNSET))
 
         delete_repo_request = cls(
             url=url,

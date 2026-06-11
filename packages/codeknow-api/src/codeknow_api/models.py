@@ -1,8 +1,46 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from codeknow_api.params import is_valid_github_ssh_url
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+
+@dataclass
+class BuildJob:
+    slug: str
+    status: str = "queued"
+    progress: int = 0
+    stage: str | None = None
+    message: str | None = None
+    error: str | None = None
+    commit_hash: str | None = None
+    node_count: int | None = None
+    edge_count: int | None = None
+    community_count: int | None = None
+    completed_at: datetime | None = None
+
+    def is_terminal(self) -> bool:
+        return self.status in ("succeeded", "failed")
+
+    def to_response_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "slug": self.slug,
+            "progress": self.progress,
+            "stage": self.stage,
+            "message": self.message,
+            "error": self.error,
+            "commit_hash": self.commit_hash,
+            "node_count": self.node_count,
+            "edge_count": self.edge_count,
+            "community_count": self.community_count,
+        }
 
 
 class BuildRequest(BaseModel):
@@ -17,9 +55,14 @@ class BuildRequest(BaseModel):
         return v
 
 
-class BuildResponse(BaseModel):
+class BuildStatusResponse(BaseModel):
     status: str
-    slug: str | None = None
+    slug: str
+    status_url: str | None = None
+    progress: int = 0
+    stage: str | None = None
+    message: str | None = None
+    error: str | None = None
     commit_hash: str | None = None
     node_count: int | None = None
     edge_count: int | None = None

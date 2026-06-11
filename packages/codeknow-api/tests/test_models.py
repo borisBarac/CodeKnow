@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from codeknow_api.models import (
     BuildRequest,
-    BuildResponse,
+    BuildStatusResponse,
     DeleteRepoRequest,
     SearchRequest,
     SearchResponse,
@@ -47,18 +47,19 @@ class TestBuildRequest:
             BuildRequest()
 
 
-class TestBuildResponse:
+class TestBuildStatusResponse:
     def test_all_fields(self) -> None:
-        resp = BuildResponse(
-            status="done",
+        resp = BuildStatusResponse(
+            status="succeeded",
             slug="owner-repo",
             commit_hash="a" * 40,
             node_count=42,
             edge_count=99,
             community_count=7,
+            progress=100,
         )
         d = resp.model_dump()
-        assert d["status"] == "done"
+        assert d["status"] == "succeeded"
         assert d["slug"] == "owner-repo"
         assert d["commit_hash"] == "a" * 40
         assert d["node_count"] == 42
@@ -66,17 +67,22 @@ class TestBuildResponse:
         assert d["community_count"] == 7
 
     def test_optional_fields_default_none(self) -> None:
-        resp = BuildResponse(status="pending")
-        assert resp.slug is None
+        resp = BuildStatusResponse(status="queued", slug="x")
+        assert resp.status_url is None
         assert resp.commit_hash is None
         assert resp.node_count is None
         assert resp.edge_count is None
         assert resp.community_count is None
+        assert resp.stage is None
+        assert resp.message is None
+        assert resp.error is None
 
     def test_model_dump_round_trip(self) -> None:
-        resp = BuildResponse(status="done", slug="x", commit_hash="abc", node_count=1)
+        resp = BuildStatusResponse(
+            status="succeeded", slug="x", commit_hash="abc", node_count=1
+        )
         d = resp.model_dump()
-        resp2 = BuildResponse(**d)
+        resp2 = BuildStatusResponse(**d)
         assert resp2 == resp
 
 

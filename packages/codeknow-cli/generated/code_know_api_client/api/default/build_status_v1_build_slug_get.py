@@ -1,41 +1,34 @@
 from http import HTTPStatus
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.http_validation_error import HTTPValidationError
-from ...models.search_request import SearchRequest
-from ...models.search_response import SearchResponse
 from ...types import Response
 
 
 def _get_kwargs(
-    *,
-    body: SearchRequest,
+    slug: str,
 ) -> dict[str, Any]:
-    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
-        "method": "post",
-        "url": "/v1/search",
+        "method": "get",
+        "url": "/v1/build/{slug}".format(
+            slug=quote(str(slug), safe=""),
+        ),
     }
 
-    _kwargs["json"] = body.to_dict()
-
-    headers["Content-Type"] = "application/json"
-
-    _kwargs["headers"] = headers
     return _kwargs
 
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> HTTPValidationError | SearchResponse | None:
+) -> Any | HTTPValidationError | None:
     if response.status_code == 200:
-        response_200 = SearchResponse.from_dict(response.json())
-
+        response_200 = response.json()
         return response_200
 
     if response.status_code == 422:
@@ -51,7 +44,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[HTTPValidationError | SearchResponse]:
+) -> Response[Any | HTTPValidationError]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -61,25 +54,25 @@ def _build_response(
 
 
 def sync_detailed(
+    slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: SearchRequest,
-) -> Response[HTTPValidationError | SearchResponse]:
-    """Search
+) -> Response[Any | HTTPValidationError]:
+    """Build Status
 
     Args:
-        body (SearchRequest):
+        slug (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[HTTPValidationError | SearchResponse]
+        Response[Any | HTTPValidationError]
     """
 
     kwargs = _get_kwargs(
-        body=body,
+        slug=slug,
     )
 
     response = client.get_httpx_client().request(
@@ -90,49 +83,49 @@ def sync_detailed(
 
 
 def sync(
+    slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: SearchRequest,
-) -> HTTPValidationError | SearchResponse | None:
-    """Search
+) -> Any | HTTPValidationError | None:
+    """Build Status
 
     Args:
-        body (SearchRequest):
+        slug (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        HTTPValidationError | SearchResponse
+        Any | HTTPValidationError
     """
 
     return sync_detailed(
+        slug=slug,
         client=client,
-        body=body,
     ).parsed
 
 
 async def asyncio_detailed(
+    slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: SearchRequest,
-) -> Response[HTTPValidationError | SearchResponse]:
-    """Search
+) -> Response[Any | HTTPValidationError]:
+    """Build Status
 
     Args:
-        body (SearchRequest):
+        slug (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[HTTPValidationError | SearchResponse]
+        Response[Any | HTTPValidationError]
     """
 
     kwargs = _get_kwargs(
-        body=body,
+        slug=slug,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -141,26 +134,26 @@ async def asyncio_detailed(
 
 
 async def asyncio(
+    slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: SearchRequest,
-) -> HTTPValidationError | SearchResponse | None:
-    """Search
+) -> Any | HTTPValidationError | None:
+    """Build Status
 
     Args:
-        body (SearchRequest):
+        slug (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        HTTPValidationError | SearchResponse
+        Any | HTTPValidationError
     """
 
     return (
         await asyncio_detailed(
+            slug=slug,
             client=client,
-            body=body,
         )
     ).parsed

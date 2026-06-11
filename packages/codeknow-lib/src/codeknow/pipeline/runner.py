@@ -10,6 +10,8 @@ from .stages import _assign_communities, _to_dict, resolve
 from .types import PipelineResult
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from codeknow.pipeline.config import PipelineConfig
     from codeknow.pipeline.types import (
         BuildGraphFn,
@@ -20,6 +22,16 @@ if TYPE_CHECKING:
         MapChunksFn,
         ResolveFn,
     )
+
+_STAGES: list[tuple[str, int, str]] = [
+    ("resolve", 14, "Resolving repository..."),
+    ("detect", 28, "Discovering files..."),
+    ("extract_ast", 42, "Extracting AST..."),
+    ("build", 57, "Building graph..."),
+    ("map_chunks", 71, "Mapping chunks..."),
+    ("cluster", 85, "Detecting communities..."),
+    ("embed", 100, "Generating embeddings..."),
+]
 
 
 def run_pipeline(
@@ -32,6 +44,7 @@ def run_pipeline(
     map_chunks_fn: MapChunksFn | None = None,
     cluster_fn: ClusterFn | None = None,
     embed_fn: EmbedFn | None = None,
+    progress_callback: Callable[[str, int, str], None] | None = None,
     **kwargs: Any,
 ) -> PipelineResult:
     """Execute: resolve → detect → extract → build → map_chunks → cluster → embed.
@@ -55,23 +68,35 @@ def run_pipeline(
     _embed = embed_fn or _default_embed
 
     root = _resolve(config)
+    if progress_callback:
+        progress_callback("resolve", 14, "Resolving repository...")
     commit_hash = get_commit_hash(root)
 
     raw = _detect(root)
     discovery = raw if isinstance(raw, dict) else _to_dict(raw)
+    if progress_callback:
+        progress_callback("detect", 28, "Discovering files...")
 
     extractions: list[dict] = []
     ast_result = _extract_ast(discovery.get("files", {}))
     extractions.append(
         ast_result if isinstance(ast_result, dict) else _to_dict(ast_result)
     )
+    if progress_callback:
+        progress_callback("extract_ast", 42, "Extracting AST...")
 
     G = _build(extractions)
+    if progress_callback:
+        progress_callback("build", 57, "Building graph...")
 
     G, chunk_map = _map_chunks(G, discovery.get("files", {}))
+    if progress_callback:
+        progress_callback("map_chunks", 71, "Mapping chunks...")
 
     communities = _cluster(G)
     _assign_communities(G, communities)
+    if progress_callback:
+        progress_callback("cluster", 85, "Detecting communities...")
 
     stats = {
         "nodes": G.number_of_nodes(),
@@ -91,5 +116,8 @@ def run_pipeline(
     )
 
     result = _embed(result)
+    if progress_callback:
+        progress_callback("embed", 100, "Generating embeddings...")
+
     graph_path = save_pipeline_result(result)
     return replace(result, graph_path=graph_path, commit_hash=commit_hash)

@@ -6,11 +6,11 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-T = TypeVar("T", bound="SearchV1SearchPostBody")
+T = TypeVar("T", bound="HealthHealthGetResponseHealthHealthGet")
 
 
 @_attrs_define
-class SearchV1SearchPostBody:
+class HealthHealthGetResponseHealthHealthGet:
     """ """
 
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -25,10 +25,10 @@ class SearchV1SearchPostBody:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        search_v1_search_post_body = cls()
+        health_health_get_response_health_health_get = cls()
 
-        search_v1_search_post_body.additional_properties = d
-        return search_v1_search_post_body
+        health_health_get_response_health_health_get.additional_properties = d
+        return health_health_get_response_health_health_get
 
     @property
     def additional_keys(self) -> list[str]:

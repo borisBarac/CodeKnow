@@ -11,36 +11,97 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_redis: Any = None
-_redis_enabled: bool = bool(os.getenv("CODEKNOW_REDIS_URL"))
-
 DEFAULT_TTL = int(os.getenv("CODEKNOW_CACHE_TTL", "300"))
+
+_default_service: RedisService | None = None
+
+
+def _get_default_service() -> RedisService:
+    global _default_service  # noqa: PLW0603
+    if _default_service is None:
+        _default_service = RedisService.from_env()
+    return _default_service
+
+
+def set_default_service(service: RedisService) -> None:
+    """Replace the module-level default service (for testing)."""
+    global _default_service  # noqa: PLW0603
+    _default_service = service
 
 
 async def get_redis() -> Any:
-    """Return a lazily-initialised ``redis.asyncio.Redis`` singleton.
+    """Return a lazily-initialised ``redis.asyncio.Redis`` client.
 
-    Returns ``None`` when ``CODEKNOW_REDIS_URL`` is not set, which
-    disables caching entirely without any connection attempts.
+    Returns ``None`` when ``CODEKNOW_REDIS_URL`` is not set.
     """
-    global _redis  # noqa: PLW0603
-    if not _redis_enabled:
-        return None
-    if _redis is not None:
-        return _redis
-    import redis.asyncio as aioredis
-
-    url = os.getenv("CODEKNOW_REDIS_URL", "")
-    _redis = aioredis.from_url(url, decode_responses=True)
-    return _redis
+    return await _get_default_service().get_client()
 
 
 async def close_redis() -> None:
-    """Shut down the shared Redis connection (call on app shutdown)."""
-    global _redis  # noqa: PLW0603
-    if _redis is not None:
-        await _redis.aclose()
-        _redis = None
+    """Shut down the default Redis connection."""
+    global _default_service  # noqa: PLW0603
+    if _default_service is not None:
+        await _default_service.close()
+        _default_service = None
+
+
+class RedisService:
+    """Encapsulates Redis connection lifecycle and cache operations."""
+
+    def __init__(self, enabled: bool = False, url: str = "") -> None:
+        self._enabled = enabled
+        self._url = url
+        self._client: Any = None
+
+    @classmethod
+    def from_env(cls) -> RedisService:
+        url = os.getenv("CODEKNOW_REDIS_URL", "")
+        return cls(enabled=bool(url), url=url)
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    async def get_client(self) -> Any:
+        if not self._enabled:
+            return None
+        if self._client is not None:
+            return self._client
+        import redis.asyncio as aioredis
+
+        self._client = aioredis.from_url(self._url, decode_responses=True)
+        return self._client
+
+    async def close(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    async def invalidate_for_slug(self, slug: str) -> None:
+        redis = await self.get_client()
+        if redis is None:
+            return
+        try:
+            cursor = 0
+            while True:
+                cursor, keys = await redis.scan(
+                    cursor, match="ck:search:*", count=100
+                )
+                if keys:
+                    for key in keys:
+                        val = await redis.get(key)
+                        if val is None:
+                            continue
+                        try:
+                            data = json.loads(val)
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+                        if _body_references_slug(data, slug):
+                            await redis.delete(key)
+                if cursor == 0:
+                    break
+        except Exception:
+            logger.warning("Search cache invalidation failed", exc_info=True)
 
 
 def _make_key(query: str, repos: list[str] | None, top_k: int) -> str:
@@ -50,45 +111,7 @@ def _make_key(query: str, repos: list[str] | None, top_k: int) -> str:
     return f"ck:search:{h}"
 
 
-async def invalidate_for_slug(slug: str) -> None:
-    """Best-effort removal of cached search results that reference *slug*.
-
-    We scan keys matching ``ck:search:*`` and delete those whose stored
-    JSON body contains the slug in a structured field (``repos`` list or
-    top-level ``slug`` key).  This avoids false positives from naive
-    substring matching on serialised JSON.
-    """
-    redis = await get_redis()
-    if redis is None:
-        return
-    try:
-        cursor = 0
-        while True:
-            cursor, keys = await redis.scan(cursor, match="ck:search:*", count=100)
-            if keys:
-                for key in keys:
-                    val = await redis.get(key)
-                    if val is None:
-                        continue
-                    try:
-                        data = json.loads(val)
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-                    if _body_references_slug(data, slug):
-                        await redis.delete(key)
-            if cursor == 0:
-                break
-    except Exception:
-        logger.warning("Search cache invalidation failed", exc_info=True)
-
-
 def _body_references_slug(data: Any, slug: str) -> bool:
-    """Check whether a parsed cache payload references *slug*.
-
-    Inspects known structured fields (``repos`` list, top-level
-    ``slug`` key, and ``slug`` within result items) instead of doing
-    a raw substring search on the serialised JSON.
-    """
     if not isinstance(data, dict):
         return False
     if data.get("slug") == slug:

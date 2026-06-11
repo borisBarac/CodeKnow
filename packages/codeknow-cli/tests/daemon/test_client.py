@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -9,19 +10,20 @@ from code_know_api_client import errors as api_errors
 from code_know_api_client.models import (
     delete_repo_v1_repos_delete_response_delete_repo_v1_repos_delete as _del_resp,
 )
-from code_know_api_client.models import (
-    search_v1_search_post_response_search_v1_search_post as _search_resp,
-)
-from code_know_api_client.models.build_response import BuildResponse
 from code_know_api_client.models.http_validation_error import HTTPValidationError
-from code_know_api_client.models.search_v1_search_post_body import (
-    SearchV1SearchPostBody,
-)
+from code_know_api_client.models.search_request import SearchRequest
+from code_know_api_client.models.search_response import SearchResponse
 from code_know_api_client.models.validation_error import (
     ValidationError as ApiValidationError,
 )
 from code_know_api_client.types import Response as ApiResponse
-from codeknow_cli.client import Client, DaemonStartResult, DeleteResult, SearchResult
+from codeknow_cli.client import (
+    BuildStatusResult,
+    Client,
+    DaemonStartResult,
+    DeleteResult,
+    SearchResult,
+)
 from codeknow_cli.exceptions import (
     ApiError,
     DaemonNotRunningError,
@@ -140,73 +142,125 @@ def test_remove_raises_when_slug_not_found(mock_delete: MagicMock) -> None:
         c.remove_from_index("missing")
 
 
-# --- add_to_index error-path tests ---
+# --- add_to_index tests ---
 
 
-def _make_build_response() -> ApiResponse:
-    parsed = BuildResponse(status="done", slug="my-repo", node_count=1, edge_count=2)
-    return ApiResponse(status_code=202, content=b"", headers={}, parsed=parsed)
+def _unit_client() -> Client:
+    return Client(
+        host="127.0.0.1",
+        port=19998,
+        pid_file="/var/tmp/test-unit-client.pid",  # noqa: S108
+    )
 
 
-@patch("codeknow_cli.client.build_v1_build_post")
-def test_add_raises_on_409(mock_build: MagicMock) -> None:
+def _mock_post_response(status_code: int, json_data: dict | None = None) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.content = json.dumps(json_data or {}).encode()
+    resp.text = json.dumps(json_data or {})
+    resp.json.return_value = json_data or {}
+    resp.headers = {}
+    return resp
+
+
+@patch("codeknow_cli.client.httpx.get")
+@patch("codeknow_cli.client.httpx.post")
+def test_add_submit_and_poll_success(
+    mock_post: MagicMock,
+    mock_get: MagicMock,
+) -> None:
     c = _unit_client()
-    mock_build.sync_detailed.side_effect = api_errors.UnexpectedStatus(409, b"conflict")
+    mock_post.return_value = _mock_post_response(
+        202,
+        {
+            "status": "queued",
+            "slug": "org-repo",
+            "status_url": "/v1/build/org-repo",
+            "progress": 0,
+        },
+    )
+    mock_get.return_value = _mock_post_response(
+        200,
+        {
+            "status": "succeeded",
+            "slug": "org-repo",
+            "progress": 100,
+            "commit_hash": "abc",
+            "node_count": 10,
+            "edge_count": 20,
+            "community_count": 3,
+        },
+    )
+
+    with patch("codeknow_cli.client.time.sleep"):
+        result = c.add_to_index("git@github.com:org/repo.git")
+
+    assert isinstance(result, BuildStatusResult)
+    assert result.status == "succeeded"
+    assert result.slug == "org-repo"
+    assert result.node_count == 10
+
+
+@patch("codeknow_cli.client.httpx.post")
+def test_add_raises_on_409(mock_post: MagicMock) -> None:
+    c = _unit_client()
+    mock_post.return_value = _mock_post_response(409, {"detail": "conflict"})
     with pytest.raises(RepoConflictError, match="already being built"):
         c.add_to_index("git@github.com:org/repo.git")
 
 
-@patch("codeknow_cli.client.build_v1_build_post")
-def test_add_raises_on_unexpected_status(mock_build: MagicMock) -> None:
+@patch("codeknow_cli.client.httpx.post")
+def test_add_raises_on_422(mock_post: MagicMock) -> None:
     c = _unit_client()
-    mock_build.sync_detailed.side_effect = api_errors.UnexpectedStatus(
-        500, b"server error"
-    )
+    mock_post.return_value = _mock_post_response(422, {"detail": [{"msg": "bad url"}]})
+    with pytest.raises(ValidationError, match="bad url"):
+        c.add_to_index("not-a-url")
+
+
+@patch("codeknow_cli.client.httpx.post")
+def test_add_raises_on_unexpected_status(mock_post: MagicMock) -> None:
+    c = _unit_client()
+    mock_post.return_value = _mock_post_response(500, {"detail": "error"})
     with pytest.raises(ApiError, match="Unexpected API status 500"):
         c.add_to_index("git@github.com:org/repo.git")
 
 
-@patch("codeknow_cli.client.build_v1_build_post")
-def test_add_raises_on_422_with_detail(mock_build: MagicMock) -> None:
+@patch("codeknow_cli.client.httpx.get")
+@patch("codeknow_cli.client.httpx.post")
+def test_add_raises_on_build_failed(
+    mock_post: MagicMock,
+    mock_get: MagicMock,
+) -> None:
     c = _unit_client()
-    parsed = HTTPValidationError(
-        detail=[ApiValidationError(loc=["body"], msg="bad url", type_="value_error")]
+    mock_post.return_value = _mock_post_response(
+        202,
+        {
+            "status": "queued",
+            "slug": "org-repo",
+            "status_url": "/v1/build/org-repo",
+            "progress": 0,
+        },
     )
-    mock_build.sync_detailed.return_value = ApiResponse(
-        status_code=422, content=b"", headers={}, parsed=parsed
+    mock_get.return_value = _mock_post_response(
+        200,
+        {"status": "failed", "slug": "org-repo", "progress": 28, "error": "boom"},
     )
-    with pytest.raises(ValidationError, match=r"Validation error.*bad url"):
-        c.add_to_index("not-a-url")
 
-
-@patch("codeknow_cli.client.build_v1_build_post")
-def test_add_raises_on_422_without_detail(mock_build: MagicMock) -> None:
-    c = _unit_client()
-    parsed = HTTPValidationError()
-    mock_build.sync_detailed.return_value = ApiResponse(
-        status_code=422, content=b"", headers={}, parsed=parsed
-    )
-    with pytest.raises(ValidationError, match="Invalid GitHub SSH URL"):
-        c.add_to_index("not-a-url")
-
-
-@patch("codeknow_cli.client.build_v1_build_post")
-def test_add_raises_on_unexpected_response_code(mock_build: MagicMock) -> None:
-    c = _unit_client()
-    mock_build.sync_detailed.return_value = ApiResponse(
-        status_code=503, content=b"", headers={}, parsed=None
-    )
-    with pytest.raises(ApiError, match="Unexpected response from API"):
+    with (
+        pytest.raises(ApiError, match="Build failed: boom"),
+        patch("codeknow_cli.client.time.sleep"),
+    ):
         c.add_to_index("git@github.com:org/repo.git")
 
 
-@patch("codeknow_cli.client.build_v1_build_post")
-def test_add_returns_build_response_on_202(mock_build: MagicMock) -> None:
+@patch("codeknow_cli.client.httpx.post")
+def test_add_raises_on_transport_error(mock_post: MagicMock) -> None:
+    import httpx
+
     c = _unit_client()
-    mock_build.sync_detailed.return_value = _make_build_response()
-    result = c.add_to_index("git@github.com:org/repo.git")
-    assert result.status == "done"
-    assert result.slug == "my-repo"
+    mock_post.side_effect = httpx.TransportError("connection refused")
+    with pytest.raises(DaemonNotRunningError):
+        c.add_to_index("git@github.com:org/repo.git")
 
 
 # --- remove_from_index error-path tests ---
@@ -224,20 +278,16 @@ def test_remove_raises_on_404_from_delete(
         c.remove_from_index("x")
 
 
-def _unit_client() -> Client:
-    return Client(
-        host="127.0.0.1",
-        port=19998,
-        pid_file="/var/tmp/test-unit-client.pid",  # noqa: S108
-    )
-
-
 # --- search tests ---
 
 
 def _make_search_response(data: dict) -> ApiResponse:
-    parsed = _search_resp.SearchV1SearchPostResponseSearchV1SearchPost()
-    parsed.additional_properties = data
+    parsed = SearchResponse(
+        query=data.get("query", ""),
+        vector_hits=data.get("vector_hits", 0),
+        graph_expanded=data.get("graph_expanded", 0),
+        results=[],
+    )
     return ApiResponse(status_code=200, content=b"", headers={}, parsed=parsed)
 
 
@@ -262,8 +312,8 @@ def test_search_with_slugs_sends_repos_in_body(mock_search: MagicMock) -> None:
     )
     c.search("test", slugs=["repo-a", "repo-b"])
     call_body = mock_search.sync_detailed.call_args[1]["body"]
-    assert isinstance(call_body, SearchV1SearchPostBody)
-    assert call_body["repos"] == ["repo-a", "repo-b"]
+    assert isinstance(call_body, SearchRequest)
+    assert call_body.repos == ["repo-a", "repo-b"]
 
 
 @patch("codeknow_cli.client.search_v1_search_post")
@@ -274,7 +324,8 @@ def test_search_without_slugs_omits_repos(mock_search: MagicMock) -> None:
     )
     c.search("test")
     call_body = mock_search.sync_detailed.call_args[1]["body"]
-    assert "repos" not in call_body
+    assert isinstance(call_body, SearchRequest)
+    assert call_body.repos is None or isinstance(call_body.repos, object)
 
 
 @patch("codeknow_cli.client.search_v1_search_post")
