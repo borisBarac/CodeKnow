@@ -228,3 +228,4 @@ packages/*/.eggs/
 .dolt/
 *.db
 .beads-credential-key
+.beads/
