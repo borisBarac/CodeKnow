@@ -346,6 +346,8 @@ def detect(root: Path, *, follow_symlinks: bool = False) -> dict:
         ftype = classify_file(p)
         if ftype:
             files[ftype].append(str(p))
+            if ftype == FileType.DOCUMENT:
+                total_words += count_words(p)
 
     total_files = sum(len(v) for v in files.values())
     needs_graph = total_words >= CORPUS_WARN_THRESHOLD
