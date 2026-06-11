@@ -144,7 +144,7 @@ def create_app() -> FastAPI:
     @app.post("/v1/search")
     @cache_search()
     async def search(body: SearchRequest) -> SearchResponse:
-        from codeknow.vector.multi_search import multi_graph_search
+        from codeknow.vector.search import GraphSearcher
 
         repos = body.repos
 
@@ -171,11 +171,11 @@ def create_app() -> FastAPI:
 
         try:
             result = await asyncio.to_thread(
-                multi_graph_search,
+                GraphSearcher.multi_search,
+                GRAPH_DIR,
                 body.query,
-                graph_base_dir=GRAPH_DIR,
+                top_k=body.top_k,
                 slugs=repos,
-                total_limit=body.top_k,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

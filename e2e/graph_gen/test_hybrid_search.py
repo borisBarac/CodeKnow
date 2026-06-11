@@ -260,7 +260,9 @@ def _is_relevant(result_file: str, relevant_suffixes: set[str]) -> bool:
 
 
 def _precision_at_k(
-    results: list, relevant: set[str], k: int,
+    results: list,
+    relevant: set[str],
+    k: int,
 ) -> float:
     top_k = results[:k]
     if not top_k:
@@ -269,7 +271,9 @@ def _precision_at_k(
 
 
 def _recall_at_k(
-    results: list, relevant: set[str], k: int,
+    results: list,
+    relevant: set[str],
+    k: int,
 ) -> float:
     if not relevant:
         return 0.0
@@ -284,7 +288,8 @@ def _f1_at_k(precision: float, recall: float) -> float:
 
 
 def _compute_retrieval_metrics(
-    results: list, relevant: set[str],
+    results: list,
+    relevant: set[str],
 ) -> dict[str, dict[str, float]]:
     metrics: dict[str, dict[str, float]] = {}
     for k in _K_VALUES:
@@ -295,15 +300,15 @@ def _compute_retrieval_metrics(
 
 
 def _print_retrieval_report(
-    label: str, metrics: dict[str, dict[str, float]],
+    label: str,
+    metrics: dict[str, dict[str, float]],
 ) -> None:
     sep = "-" * 70
     print(f"\n{sep}")
     print(f"RETRIEVAL METRICS: {label}")
     for at_k, m in metrics.items():
         print(
-            f"  {at_k}  P={m['precision']:.2f}  "
-            f"R={m['recall']:.2f}  F1={m['f1']:.2f}"
+            f"  {at_k}  P={m['precision']:.2f}  R={m['recall']:.2f}  F1={m['f1']:.2f}"
         )
     print(sep)
 
@@ -402,9 +407,7 @@ def test_retrieval_precision_at_5(label, query):
     metrics = _compute_retrieval_metrics(resp.results, relevant)
     _print_retrieval_report(label, metrics)
     p5 = metrics["@5"]["precision"]
-    assert p5 >= 0.4, (
-        f"P@5={p5:.2f} < 0.4 for '{label}' — query: '{query}'"
-    )
+    assert p5 >= 0.4, f"P@5={p5:.2f} < 0.4 for '{label}' — query: '{query}'"
 
 
 @pytest.mark.parametrize(("label", "query"), _GT_QUERIES)
@@ -413,9 +416,7 @@ def test_retrieval_recall_at_10(label, query):
     resp = _search(query, n_results=10, traversal_depth=2)
     metrics = _compute_retrieval_metrics(resp.results, relevant)
     r10 = metrics["@10"]["recall"]
-    assert r10 >= 0.5, (
-        f"R@10={r10:.2f} < 0.5 for '{label}' — query: '{query}'"
-    )
+    assert r10 >= 0.5, f"R@10={r10:.2f} < 0.5 for '{label}' — query: '{query}'"
 
 
 @pytest.mark.parametrize(("label", "query"), _GT_QUERIES)
@@ -424,9 +425,7 @@ def test_retrieval_f1_at_10(label, query):
     resp = _search(query, n_results=10, traversal_depth=2)
     metrics = _compute_retrieval_metrics(resp.results, relevant)
     f1_10 = metrics["@10"]["f1"]
-    assert f1_10 >= 0.4, (
-        f"F1@10={f1_10:.2f} < 0.4 for '{label}' — query: '{query}'"
-    )
+    assert f1_10 >= 0.4, f"F1@10={f1_10:.2f} < 0.4 for '{label}' — query: '{query}'"
 
 
 def test_retrieval_metrics_summary():
