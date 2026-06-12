@@ -158,11 +158,13 @@ def test_hybrid_search_results_have_required_fields():
         assert r.end_line >= r.start_line
 
 
-def test_hybrid_search_results_sorted_by_provenance():
+def test_hybrid_search_results_sorted_by_relevance():
     resp = _search("create channel dialog", n_results=10)
-    provenance_order = {"vector": 0, "graph": 1}
-    order = [provenance_order.get(r.provenance, 3) for r in resp.results]
-    assert order == sorted(order)
+    from codeknow.vector.search import GraphSearcher
+    scores = [GraphSearcher._compute_relevance_score(r) for r in resp.results]
+    assert scores == sorted(scores, reverse=True), (
+        f"Results not sorted by relevance: {scores}"
+    )
 
 
 def test_hybrid_search_graph_expansion():

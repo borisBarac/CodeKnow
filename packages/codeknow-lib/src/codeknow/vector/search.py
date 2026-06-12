@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import heapq
 import logging
+import re
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -20,12 +22,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _simple_tokenize(text: str) -> list[str]:
+    return re.findall(r"[a-zA-Z0-9_]+", text.lower())
+
+
 class GraphSearcher:
     """Collapsed hybrid search interface.
 
     Owns the graph, reverse index, vector store, and embeddings as internal
     state.  Callers use ``search()`` for single-graph queries and
     ``multi_search()`` for multi-graph queries.
+
+    Enhanced with:
+    - BM25 sparse retrieval + RRF for hybrid dense/sparse search
+    - Query-aware edge weights for graph traversal
+    - Cross-source re-ranking with unified relevance scoring
+    - Edge confidence_score weighting during BFS
+    - Community-aware boosting during graph expansion
+    - Distance estimates for graph-expanded results
+    - Deduplication of overlapping chunks
     """
 
     _MAX_GRAPH_RESULTS: ClassVar[int] = 50
@@ -43,6 +58,17 @@ class GraphSearcher:
     }
 
     DEFAULT_RELATION_WEIGHT: ClassVar[float] = 0.0
+
+    RRF_K: ClassVar[int] = 60
+    RRF_ALPHA: ClassVar[float] = 0.6
+    RRF_BETA: ClassVar[float] = 0.4
+
+    _INTENT_RULES: ClassVar[list[tuple[list[str], dict[str, float]]]] = [
+        (["flow", "process", "work", "how"], {"calls": 0.9, "uses": 0.9}),
+        (["schema", "structure", "fields", "columns", "table"], {"contains": 0.5}),
+        (["inherit", "extend", "implement", "subclass"], {"inherits": 0.95}),
+        (["similar", "like", "compare", "related"], {"semantically_similar_to": 1.1}),
+    ]
 
     def __init__(
         self,
@@ -97,11 +123,29 @@ class GraphSearcher:
             self._store = ChromaStore(config=c_config, embeddings=embeddings)
         return self._store
 
+    def _classify_query_intent(self, query: str) -> dict[str, float]:
+        boosts: dict[str, float] = {}
+        query_lower = query.lower()
+        for keywords, weight_overrides in self._INTENT_RULES:
+            if any(kw in query_lower for kw in keywords):
+                boosts.update(weight_overrides)
+        return boosts
+
+    def _get_effective_weights(self, query: str) -> dict[str, float]:
+        base = dict(self.RELATION_WEIGHTS)
+        boosts = self._classify_query_intent(query)
+        for relation, weight in boosts.items():
+            if relation in base:
+                base[relation] = weight
+        return base
+
     def _bfs_seeds(
         self,
         seed_nodes: list[str],
         depth: int,
         max_results: int | None = None,
+        effective_weights: dict[str, float] | None = None,
+        dominant_communities: set[int] | None = None,
     ) -> dict[str, tuple[list[str], float]]:
         if max_results is None:
             max_results = self._MAX_GRAPH_RESULTS
@@ -114,6 +158,8 @@ class GraphSearcher:
         seeds: list[str] = seed_nodes
         if graph.number_of_nodes() > 5000:
             seeds = seed_nodes[:50]
+
+        weights = effective_weights or self.RELATION_WEIGHTS
 
         discovered: dict[str, tuple[list[str], float]] = {}
         visited: set[str] = set()
@@ -145,13 +191,25 @@ class GraphSearcher:
             for neighbor in graph.neighbors(node_id):
                 edge_data = graph.edges[node_id, neighbor]
                 relation = edge_data.get("relation", "")
-                weight = self.RELATION_WEIGHTS.get(
-                    relation, self.DEFAULT_RELATION_WEIGHT
-                )
-                if weight <= 0.0:
+                base_weight = weights.get(relation, self.DEFAULT_RELATION_WEIGHT)
+                if base_weight <= 0.0:
                     continue
 
-                new_cum = -neg_cum + weight
+                confidence_score = edge_data.get("confidence_score")
+                if confidence_score is not None:
+                    base_weight = base_weight * confidence_score
+
+                if dominant_communities is not None:
+                    src_community = graph.nodes[node_id].get("community")
+                    tgt_community = graph.nodes[neighbor].get("community")
+                    if src_community is not None and tgt_community is not None:
+                        same = src_community == tgt_community
+                        if same and src_community in dominant_communities:
+                            base_weight *= 1.2
+                        elif not same:
+                            base_weight *= 0.8
+
+                new_cum = -neg_cum + base_weight
                 new_path = [
                     *path,
                     f"\u2192{relation}\u2192",
@@ -186,14 +244,23 @@ class GraphSearcher:
         return fetched
 
     @staticmethod
+    def _compute_relevance_score(r: HybridSearchResult) -> float:
+        if r.provenance == "vector" and r.distance is not None:
+            normalized = min(1.0, max(0.0, r.distance))
+            relevance = 1.0 - normalized
+            return relevance * 1.0
+        if r.provenance == "graph":
+            if r.cumulative_weight is not None and r.cumulative_weight > 0:
+                relevance = min(0.95, r.cumulative_weight / 3.0)
+            else:
+                relevance = 0.3
+            return relevance * 0.95
+        return 0.0
+
+    @staticmethod
     def _sort_key(r: HybridSearchResult) -> tuple:
-        provenance_order = {"vector": 0, "graph": 1}
-        return (
-            provenance_order.get(r.provenance, 2),
-            r.distance if r.distance is not None else float("inf"),
-            -(r.cumulative_weight or 0.0),
-            len(r.graph_path or []),
-        )
+        relevance = GraphSearcher._compute_relevance_score(r)
+        return (-relevance, r.distance if r.distance is not None else float("inf"))
 
     @staticmethod
     def _discover_graph_dirs(
@@ -215,30 +282,184 @@ class GraphSearcher:
                 dirs.append((child.name, child))
         return dirs
 
+    @staticmethod
+    def _parse_labels(meta: dict[str, Any]) -> tuple[list[str], list[int]]:
+        nl = meta.get("node_labels", "")
+        ci = meta.get("community_ids", "")
+        labels = nl.split("|") if nl else []
+        ids = [int(c) for c in ci.split(",") if c]
+        return labels, ids
+
+    def _make_vector_result(self, sr: Any) -> HybridSearchResult:
+        meta = sr.metadata or {}
+        labels, ids = self._parse_labels(meta)
+        return HybridSearchResult(
+            chunk_hash=sr.hash,
+            file=meta.get("file", ""),
+            start_line=int(meta.get("start_line", 1)),
+            end_line=int(meta.get("end_line", 1)),
+            content=sr.document or "",
+            distance=sr.distance,
+            node_labels=labels,
+            community_ids=ids,
+            provenance="vector",
+        )
+
+    def _make_bm25_result(
+        self,
+        hash_val: str,
+        doc: str,
+        meta: dict[str, Any],
+    ) -> HybridSearchResult:
+        labels, ids = self._parse_labels(meta)
+        return HybridSearchResult(
+            chunk_hash=hash_val,
+            file=meta.get("file", ""),
+            start_line=int(meta.get("start_line", 1)),
+            end_line=int(meta.get("end_line", 1)),
+            content=doc,
+            distance=0.5,
+            node_labels=labels,
+            community_ids=ids,
+            provenance="vector",
+        )
+
+    def _bm25_search(
+        self,
+        query: str,
+        store: ChromaStore,
+        n_results: int,
+    ) -> list[tuple[str, float, str, dict[str, Any]]]:
+        try:
+            from rank_bm25 import BM25Okapi
+        except ImportError:
+            logger.warning("rank_bm25 not installed, skipping BM25 stage")
+            return []
+
+        collection = store._get_or_create_collection()  # noqa: SLF001
+        all_results = collection.get(include=["documents", "metadatas"])
+        ids: list[str] = all_results.get("ids", []) or []
+        documents: list[str] = all_results.get("documents", []) or []
+        metadatas_raw = all_results.get("metadatas", []) or []
+        metadatas: list[dict[str, Any]] = [
+            dict(m) if m is not None else {} for m in metadatas_raw
+        ]
+
+        if not ids or not documents:
+            return []
+
+        tokenized_corpus = [_simple_tokenize(doc) for doc in documents]
+        bm25 = BM25Okapi(tokenized_corpus)
+        tokenized_query = _simple_tokenize(query)
+        scores = bm25.get_scores(tokenized_query)
+
+        scored: list[tuple[int, float]] = [
+            (i, s) for i, s in enumerate(scores) if s > 0
+        ]
+        scored.sort(key=lambda x: -x[1])
+        top_indices = scored[:n_results]
+
+        return [
+            (
+                ids[i],
+                float(scores[i]),
+                documents[i] if i < len(documents) else "",
+                metadatas[i] if i < len(metadatas) else {},
+            )
+            for i, _ in top_indices
+        ]
+
+    def _rrf_merge(
+        self,
+        dense_results: list[tuple[str, int]],
+        sparse_results: list[tuple[str, int]],
+    ) -> dict[str, float]:
+        k = self.RRF_K
+        alpha = self.RRF_ALPHA
+        beta = self.RRF_BETA
+
+        rrf_scores: dict[str, float] = {}
+
+        for hash_val, rank in dense_results:
+            rrf_scores[hash_val] = rrf_scores.get(hash_val, 0.0) + alpha / (rank + k)
+
+        for hash_val, rank in sparse_results:
+            rrf_scores[hash_val] = rrf_scores.get(hash_val, 0.0) + beta / (rank + k)
+
+        return rrf_scores
+
+    def _deduplicate_overlapping(
+        self, results: list[HybridSearchResult]
+    ) -> list[HybridSearchResult]:
+        by_file: dict[str, list[int]] = {}
+        for i, r in enumerate(results):
+            by_file.setdefault(r.file, []).append(i)
+
+        remove_indices: set[int] = set()
+
+        for indices in by_file.values():
+            if len(indices) <= 1:
+                continue
+            for a_idx in range(len(indices)):
+                if indices[a_idx] in remove_indices:
+                    continue
+                for b_idx in range(a_idx + 1, len(indices)):
+                    if indices[b_idx] in remove_indices:
+                        continue
+                    ra = results[indices[a_idx]]
+                    rb = results[indices[b_idx]]
+                    if ra.start_line <= rb.end_line and rb.start_line <= ra.end_line:
+                        score_a = self._compute_relevance_score(ra)
+                        score_b = self._compute_relevance_score(rb)
+                        if score_a >= score_b:
+                            remove_indices.add(indices[b_idx])
+                        else:
+                            remove_indices.add(indices[a_idx])
+
+        return [r for i, r in enumerate(results) if i not in remove_indices]
+
+    def _get_dominant_communities(
+        self, results: dict[str, HybridSearchResult]
+    ) -> set[int]:
+        community_counts: Counter[int] = Counter()
+        for r in list(results.values())[:5]:
+            for cid in r.community_ids:
+                community_counts[cid] += 1
+        if not community_counts:
+            return set()
+        threshold = max(1, len(list(results.values())[:5]) // 2)
+        return {cid for cid, count in community_counts.items() if count >= threshold}
+
     def search(self, query: str, top_k: int = 10) -> HybridSearchResponse:
         store = self._get_store()
         vector_results = store.search(query, n_results=top_k)
 
+        bm25_results = self._bm25_search(query, store, n_results=top_k)
+
         by_hash: dict[str, HybridSearchResult] = {}
 
-        for sr in vector_results:
-            meta = sr.metadata or {}
-            node_labels_str = meta.get("node_labels", "")
-            community_ids_str = meta.get("community_ids", "")
+        if bm25_results:
+            dense_ranks = [(sr.hash, rank) for rank, sr in enumerate(vector_results)]
+            sparse_ranks = [(h, rank) for rank, (h, _, _, _) in enumerate(bm25_results)]
+            rrf_scores = self._rrf_merge(dense_ranks, sparse_ranks)
 
-            by_hash[sr.hash] = HybridSearchResult(
-                chunk_hash=sr.hash,
-                file=meta.get("file", ""),
-                start_line=int(meta.get("start_line", 1)),
-                end_line=int(meta.get("end_line", 1)),
-                content=sr.document or "",
-                distance=sr.distance,
-                node_labels=node_labels_str.split("|") if node_labels_str else [],
-                community_ids=[int(c) for c in community_ids_str.split(",") if c],
-                provenance="vector",
-            )
+            all_hashes_by_rrf = sorted(rrf_scores.keys(), key=lambda h: -rrf_scores[h])
 
-        if self._graph is None or not self._reverse_index or not vector_results:
+            vector_hash_to_sr = {sr.hash: sr for sr in vector_results}
+            bm25_map = {h: (sc, doc, meta) for h, sc, doc, meta in bm25_results}
+
+            for hash_val in all_hashes_by_rrf[:top_k]:
+                if hash_val in vector_hash_to_sr:
+                    sr = vector_hash_to_sr[hash_val]
+                    by_hash[sr.hash] = self._make_vector_result(sr)
+                elif hash_val in bm25_map:
+                    _, doc, meta = bm25_map[hash_val]
+                    by_hash[hash_val] = self._make_bm25_result(hash_val, doc, meta)
+        else:
+            for sr in vector_results:
+                by_hash[sr.hash] = self._make_vector_result(sr)
+
+        if self._graph is None or not self._reverse_index or not by_hash:
             return HybridSearchResponse(
                 query=query,
                 vector_hits=len(by_hash),
@@ -260,7 +481,30 @@ class GraphSearcher:
                 results=list(by_hash.values()),
             )
 
-        discovered = self._bfs_seeds(seed_nodes, self._traversal_depth)
+        effective_weights = self._get_effective_weights(query)
+        dominant_communities = self._get_dominant_communities(by_hash)
+
+        discovered = self._bfs_seeds(
+            seed_nodes,
+            self._traversal_depth,
+            effective_weights=effective_weights,
+            dominant_communities=dominant_communities,
+        )
+
+        seed_distances: dict[str, float] = {}
+        for h, r in by_hash.items():
+            if r.distance is not None:
+                seed_distances[h] = r.distance
+
+        node_seed_map: dict[str, str] = {}
+        for h in vector_hashes:
+            for node_id in self._reverse_index.get(h, []):
+                if node_id not in node_seed_map:
+                    node_seed_map[node_id] = h
+
+        max_cum_weight = max((cw for _, (_, cw) in discovered.items()), default=1.0)
+        if max_cum_weight <= 0:
+            max_cum_weight = 1.0
 
         node_chunk_map: dict[str, tuple[list[str], list[str], str, float]] = {}
         all_new_hashes: set[str] = set()
@@ -283,17 +527,32 @@ class GraphSearcher:
         if all_new_hashes:
             fetched = self._fetch_chunks_from_store(store, list(all_new_hashes))
 
-            for new_hashes, path, node_label, cum_weight in node_chunk_map.values():
+            for node_id, (
+                new_hashes,
+                path,
+                node_label,
+                cum_weight,
+            ) in node_chunk_map.items():
+                seed_hash = node_seed_map.get(node_id)
+                seed_dist = seed_distances.get(seed_hash, 0.8) if seed_hash else 0.8
+
                 for chunk_hash in new_hashes:
                     if chunk_hash not in fetched:
                         continue
                     content, meta = fetched[chunk_hash]
+
+                    weight_ratio = min(0.8, cum_weight / max_cum_weight)
+                    estimated_distance = seed_dist * (1.0 - weight_ratio)
+                    est = seed_dist * (1.0 - weight_ratio)
+                    estimated_distance = max(0.1, min(seed_dist * 0.8, est))
+
                     by_hash[chunk_hash] = HybridSearchResult(
                         chunk_hash=chunk_hash,
                         file=meta.get("file", ""),
                         start_line=int(meta.get("start_line", 1)),
                         end_line=int(meta.get("end_line", 1)),
                         content=content,
+                        distance=estimated_distance,
                         provenance="graph",
                         graph_path=path,
                         node_labels=[node_label],
@@ -301,6 +560,7 @@ class GraphSearcher:
                     )
 
         results = list(by_hash.values())
+        results = self._deduplicate_overlapping(results)
         results.sort(key=self._sort_key)
 
         vector_hits = sum(1 for r in results if r.provenance == "vector")

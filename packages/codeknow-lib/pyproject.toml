@@ -30,6 +30,7 @@ dependencies = [
     "langchain-core",
     "langchain-openai",
     "chromadb",
+    "rank_bm25",
     "redis[hiredis]>=7.1.0",
 ]
 
