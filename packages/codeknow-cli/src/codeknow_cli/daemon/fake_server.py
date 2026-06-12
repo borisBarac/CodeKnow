@@ -38,6 +38,22 @@ class StubAPIHandler(BaseHTTPRequestHandler):
                     "errors": [],
                 },
             )
+        elif self.path.startswith("/v1/build/"):
+            slug = self.path[len("/v1/build/") :]
+            self._send_json(
+                200,
+                {
+                    "status": "succeeded",
+                    "slug": slug,
+                    "progress": 100,
+                    "stage": None,
+                    "message": None,
+                    "commit_hash": "abc123",
+                    "node_count": 10,
+                    "edge_count": 20,
+                    "community_count": 2,
+                },
+            )
         else:
             self._send_json(404, {"error": "not found"})
 
@@ -46,12 +62,10 @@ class StubAPIHandler(BaseHTTPRequestHandler):
             self._send_json(
                 202,
                 {
-                    "status": "done",
+                    "status": "queued",
                     "slug": "stub-slug",
-                    "commit_hash": None,
-                    "node_count": None,
-                    "edge_count": None,
-                    "community_count": None,
+                    "status_url": "/v1/build/stub-slug",
+                    "progress": 0,
                 },
             )
         elif self.path == "/v1/search":

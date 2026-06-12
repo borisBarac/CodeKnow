@@ -60,13 +60,27 @@ def cli(ctx: click.Context) -> None:
 def add(ctx: click.Context, ssh_url: str) -> None:
     """Add a GitHub repo to the index (by SSH URL)."""
     client: Client = ctx.obj["client"]
-    result = client.add_to_index(ssh_url)
+
+    def _on_progress(stage: str, percent: int, message: str) -> None:
+        label = stage or "building"
+        parts = f"[{label}] {percent}%"
+        if message:
+            parts = f"{parts} — {message}"
+        click.echo(f"\r\033[K{parts}", nl=False)
+
+    result = client.add_to_index(ssh_url, progress_callback=_on_progress)
+    click.echo()
     click.echo(f"Status: {result.status}")
     if result.slug:
         click.echo(f"Slug:   {result.slug}")
+    if result.commit_hash:
+        click.echo(f"Commit: {result.commit_hash}")
     if result.node_count is not None:
         click.echo(f"Nodes:  {result.node_count}")
+    if result.edge_count is not None:
         click.echo(f"Edges:  {result.edge_count}")
+    if result.community_count is not None:
+        click.echo(f"Communities: {result.community_count}")
 
 
 @cli.command()

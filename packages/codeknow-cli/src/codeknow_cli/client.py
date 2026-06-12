@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -35,10 +36,10 @@ from codeknow_cli.exceptions import (
     ValidationError,
 )
 
-_DelResp = _del_mod.DeleteRepoV1ReposDeleteResponseDeleteRepoV1ReposDelete
-
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+_DelResp = _del_mod.DeleteRepoV1ReposDeleteResponseDeleteRepoV1ReposDelete
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -198,7 +199,11 @@ class Client:
         msg = f"Unexpected response from API (status {resp.status_code})"
         raise ApiError(msg)
 
-    def add_to_index(self, ssh_url: str) -> BuildStatusResult:
+    def add_to_index(
+        self,
+        ssh_url: str,
+        progress_callback: Callable[[str, int, str], None] | None = None,
+    ) -> BuildStatusResult:
         poll_interval = 3.0
         try:
             submit_resp = httpx.post(
@@ -257,6 +262,22 @@ class Client:
                     error = data.get("error", "Unknown error")
                     msg = f"Build failed: {error}"
                     raise ApiError(msg)
+
+            if poll_resp.status_code == 202:
+                if progress_callback is not None:
+                    progress_callback(
+                        data.get("stage", ""),
+                        data.get("progress", 0),
+                        data.get("message", ""),
+                    )
+                retry_after = poll_resp.headers.get("Retry-After")
+                if retry_after:
+                    with contextlib.suppress(ValueError):
+                        poll_interval = float(retry_after)
+                continue
+
+            msg = f"Unexpected API status {poll_resp.status_code}: {poll_resp.text}"
+            raise ApiError(msg)
 
     @staticmethod
     def _extract_detail(content: bytes) -> str:

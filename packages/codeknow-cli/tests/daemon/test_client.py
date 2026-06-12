@@ -263,6 +263,101 @@ def test_add_raises_on_transport_error(mock_post: MagicMock) -> None:
         c.add_to_index("git@github.com:org/repo.git")
 
 
+@patch("codeknow_cli.client.httpx.get")
+@patch("codeknow_cli.client.httpx.post")
+def test_add_progress_callback_invoked(
+    mock_post: MagicMock,
+    mock_get: MagicMock,
+) -> None:
+    c = _unit_client()
+    mock_post.return_value = _mock_post_response(
+        202,
+        {
+            "status": "queued",
+            "slug": "org-repo",
+            "status_url": "/v1/build/org-repo",
+            "progress": 0,
+        },
+    )
+    progress_responses = [
+        _mock_post_response(
+            202,
+            {
+                "status": "running",
+                "slug": "org-repo",
+                "progress": 25,
+                "stage": "cloning",
+                "message": "Downloading repository",
+            },
+        ),
+        _mock_post_response(
+            202,
+            {
+                "status": "running",
+                "slug": "org-repo",
+                "progress": 60,
+                "stage": "building",
+                "message": "Building graph",
+            },
+        ),
+        _mock_post_response(
+            200,
+            {
+                "status": "succeeded",
+                "slug": "org-repo",
+                "progress": 100,
+                "commit_hash": "def456",
+                "node_count": 42,
+                "edge_count": 99,
+                "community_count": 7,
+            },
+        ),
+    ]
+    mock_get.side_effect = progress_responses
+
+    calls: list[tuple[str, int, str]] = []
+
+    def capture(stage: str, percent: int, message: str) -> None:
+        calls.append((stage, percent, message))
+
+    with patch("codeknow_cli.client.time.sleep"):
+        result = c.add_to_index(
+            "git@github.com:org/repo.git", progress_callback=capture
+        )
+
+    assert len(calls) == 2
+    assert calls[0] == ("cloning", 25, "Downloading repository")
+    assert calls[1] == ("building", 60, "Building graph")
+    assert result.status == "succeeded"
+    assert result.commit_hash == "def456"
+    assert result.community_count == 7
+
+
+@patch("codeknow_cli.client.httpx.get")
+@patch("codeknow_cli.client.httpx.post")
+def test_add_poll_raises_on_500(
+    mock_post: MagicMock,
+    mock_get: MagicMock,
+) -> None:
+    c = _unit_client()
+    mock_post.return_value = _mock_post_response(
+        202,
+        {
+            "status": "queued",
+            "slug": "org-repo",
+            "status_url": "/v1/build/org-repo",
+            "progress": 0,
+        },
+    )
+    mock_get.return_value = _mock_post_response(500, {"detail": "internal error"})
+
+    with (
+        pytest.raises(ApiError, match="Unexpected API status 500"),
+        patch("codeknow_cli.client.time.sleep"),
+    ):
+        c.add_to_index("git@github.com:org/repo.git")
+
+
 # --- remove_from_index error-path tests ---
 
 
