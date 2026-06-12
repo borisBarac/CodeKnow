@@ -363,7 +363,7 @@ class Client:
             return DeleteResult(
                 status=raw.get("status", "deleted"),
                 slug=raw.get("slug", slug),
-                chunks_deleted=raw.get("chunks_deleted", 0),
+                chunks_deleted=int(raw.get("chunks_deleted", 0)),
             )
 
         self._raise_validation_or_error(del_resp, "Validation error deleting repo")

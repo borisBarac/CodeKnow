@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 def dev_check() -> None:
-    """Run all static checks: ruff lint, ruff format, mypy."""
+    """Run all static checks: ruff lint, ruff format, pyrefly."""
     parser = argparse.ArgumentParser(description="Run all static checks.")
     parser.add_argument("--fix", action="store_true", help="Apply fixable violations.")
     parser.add_argument(
@@ -39,7 +39,7 @@ def dev_check() -> None:
             "ruff format",
             [sys.executable, "-m", "ruff", "format", "."],
         ),
-        ("mypy", [sys.executable, "-m", "mypy", "packages"]),
+        ("pyrefly", [sys.executable, "-m", "pyrefly", "check"]),
     ]
 
     failed: list[str] = []

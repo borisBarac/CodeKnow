@@ -170,6 +170,7 @@ _SKIP_DIRS = {
     "lib64",
     ".pytest_cache",
     ".mypy_cache",
+    ".pyrefly_cache",
     ".ruff_cache",
     ".tox",
     ".eggs",

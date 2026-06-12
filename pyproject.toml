@@ -43,7 +43,7 @@ codeknow-cli = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "mypy>=2.0.0",
+    "pyrefly",
     "pytest>=9.0.3",
     "ruff>=0.11.0",
     "types-networkx>=3.6.1.20260508",
@@ -107,35 +107,44 @@ testpaths = ["packages/codeknow-lib/tests"]
 pythonpath = ["e2e"]
 markers = ["llm_judge: requires JUDGE_LLM_API_KEY or OPENROUTER_API_KEY"]
 
-[tool.mypy]
-python_version = "3.10"
-exclude = ["^packages/.*/tests/", "^e2e/", "^packages/codeknow-cli/generated/"]
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
+[tool.pyrefly]
+python-version = "3.10"
+project-includes = ["packages/codeknow-lib", "packages/codeknow-api", "packages/codeknow-cli"]
+project-excludes = [
+    "packages/*/tests/**",
+    "packages/codeknow-cli/generated/**",
+]
+search-path = [
+    "packages/codeknow-lib/src",
+    "packages/codeknow-api/src",
+    "packages/codeknow-cli/src",
+    "packages/codeknow-cli/generated",
+]
+ignore-missing-imports = ["redis", "redis.*", "daemonocle", "daemonocle.*", "openapi_python_client", "openapi_python_client.*"]
 
-[[tool.mypy.overrides]]
-module = ["tests.*", "*.tests.*", "e2e.*", "e2e", "e2e.*.*"]
-disallow_untyped_defs = false
-disallow_untyped_calls = false
-disallow_incomplete_defs = false
-check_untyped_defs = false
-allow_untyped_defs = true
-allow_untyped_calls = true
-ignore_errors = true
+[tool.pyrefly.errors]
+implicit-any = true
+implicit-any-type-argument = false
+implicit-any-empty-container = false
 
-[[tool.mypy.overrides]]
-module = ["redis", "redis.*"]
-ignore_missing_imports = true
+[[tool.pyrefly.sub-config]]
+matches = "packages/codeknow-lib/src/codeknow/cache/redis.py"
+[tool.pyrefly.sub-config.errors]
+bad-argument-type = false
+bad-assignment = false
+not-async = false
 
-[[tool.mypy.overrides]]
-module = ["daemonocle", "daemonocle.*"]
-ignore_missing_imports = true
+[[tool.pyrefly.sub-config]]
+matches = "packages/codeknow-lib/src/codeknow/graph/analyze.py"
+[tool.pyrefly.sub-config.errors]
+bad-argument-type = false
 
-[[tool.mypy.overrides]]
-module = ["codeknow.cache.redis"]
-disable_error_code = ["arg-type", "assignment", "misc"]
+[[tool.pyrefly.sub-config]]
+matches = "packages/codeknow-lib/src/codeknow/vector/search.py"
+[tool.pyrefly.sub-config.errors]
+bad-argument-type = false
 
-[[tool.mypy.overrides]]
-module = ["openapi_python_client", "openapi_python_client.*"]
-ignore_missing_imports = true
+[[tool.pyrefly.sub-config]]
+matches = "packages/codeknow-cli/src/codeknow_cli/client.py"
+[tool.pyrefly.sub-config.errors]
+bad-return = false

@@ -1,5 +1,4 @@
 # ruff: noqa: T201
-# mypy: disable-error-code="no-untyped-def"
 """E2E test for the LLM judge.
 
 Tests the judge itself — not the search pipeline. Constructs synthetic
