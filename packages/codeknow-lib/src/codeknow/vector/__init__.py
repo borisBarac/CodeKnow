@@ -34,7 +34,6 @@ with contextlib.suppress(ImportError):
         GraphSearcher,
         HybridSearchResponse,
         HybridSearchResult,
-        hybrid_search,
     )
 
 __all__ = [
@@ -50,5 +49,4 @@ __all__ = [
     "embed_chunk_map",
     "embed_chunks",
     "embed_texts",
-    "hybrid_search",
 ]

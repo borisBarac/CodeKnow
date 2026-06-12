@@ -2,8 +2,7 @@ import logging
 from pathlib import Path
 
 import pytest
-from codeknow.extract.ast import extract_ast
-from codeknow.extract.detect import detect
+from codeknow.extract import Extractor
 from codeknow.graph.build import build
 from codeknow.graph.cluster import cluster, cohesion_score
 
@@ -14,15 +13,16 @@ logger = logging.getLogger(__name__)
 def _run_pipeline():
     root = CODE_TEST_SMALL
     logger.info("Running pipeline on %s", root)
-    discovery = detect(root)
+    extractor = Extractor()
+    discovery = extractor.discover(root)
     logger.info(
-        "detect(): %d code files, %d total",
+        "discover(): %d code files, %d total",
         len(discovery["files"].get("code", [])),
         discovery.get("total_files", 0),
     )
-    extraction = extract_ast(discovery["files"])
+    extraction = extractor.extract_from_discovery(discovery)
     logger.info(
-        "extract_ast(): %d nodes, %d edges",
+        "extract_from_discovery(): %d nodes, %d edges",
         len(extraction["nodes"]),
         len(extraction["edges"]),
     )
@@ -38,7 +38,7 @@ def pipeline():
     return _run_pipeline()
 
 
-def test_detect_finds_code_files(pipeline):
+def test_discover_finds_code_files(pipeline):
     _, _, discovery, _ = pipeline
     code_files = discovery["files"].get("code", [])
     logger.info("code files: %d", len(code_files))

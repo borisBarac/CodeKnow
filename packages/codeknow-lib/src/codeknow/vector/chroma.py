@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from ._utils import read_chunk_content
+from .embeddings import _read_chunk_content
 from .store import SearchResult
 
 if TYPE_CHECKING:
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
 
     from codeknow.schemas import Chunk, ChunkMap
+
 
 try:
     import chromadb
@@ -152,7 +153,7 @@ class ChromaStore:
                 if chunk.hash in seen:
                     continue
                 seen.add(chunk.hash)
-                content = read_chunk_content(chunk)
+                content = _read_chunk_content(chunk)
                 if not content.strip():
                     logger.warning(
                         "Skipping chunk %s: empty content (file=%s)",

@@ -155,6 +155,15 @@ class PipelineFacade:
             self.graph_dir, query, top_k=top_k, slugs=slugs
         )
 
+    def cleanup(self) -> list[DeleteResult]:
+        """Delete all slugs: graph dirs, temp dirs, ChromaDB collections, repo_map."""
+        results: list[DeleteResult] = []
+        if self.graph_dir.is_dir():
+            for child in sorted(self.graph_dir.iterdir()):
+                if child.is_dir():
+                    results.append(self.delete(child.name))
+        return results
+
     def list_repos(
         self,
         *,

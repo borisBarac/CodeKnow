@@ -1,7 +1,7 @@
 """E2E test for hybrid search (vector + graph traversal).
 
 Runs the full pipeline on code-test-small, saves artifacts, embeds chunks
-into ChromaDB, then calls hybrid_search() and validates the response.
+into ChromaDB, then calls GraphSearcher.search() and validates the response.
 
 Requires running Ollama + ChromaDB (checked at import time).
 """
@@ -20,8 +20,7 @@ from typing import Any
 import chromadb
 import pytest
 from check_services import check_chroma, check_ollama
-from codeknow.extract.ast import extract_ast
-from codeknow.extract.detect import detect
+from codeknow.extract import Extractor
 from codeknow.graph.build import build
 from codeknow.graph.cluster import cluster
 from codeknow.pipeline.chunk_stage import map_chunks
@@ -33,7 +32,7 @@ from codeknow.pipeline.types import PipelineResult
 from codeknow.schemas import HybridSearchResponse
 from codeknow.vector.chroma import ChromaConfig, ChromaStore
 from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
-from codeknow.vector.search import hybrid_search
+from codeknow.vector.search import GraphSearcher
 from dotenv import load_dotenv
 from judge import LLMJudge, from_hybrid_response
 
@@ -48,8 +47,9 @@ check_ollama()
 check_chroma()
 
 # ── 2. Run pipeline ───────────────────────────────────────────────────
-_discovery = detect(CODE_TEST_SMALL)
-_extraction = extract_ast(_discovery["files"])
+_extractor = Extractor()
+_discovery = _extractor.discover(CODE_TEST_SMALL)
+_extraction = _extractor.extract_from_discovery(_discovery)
 _G = build([_extraction])
 _communities = cluster(_G)
 _G_enriched, _chunk_map = map_chunks(_G, _discovery["files"])
@@ -104,12 +104,14 @@ atexit.register(_cleanup)
 
 # ── Helpers ────────────────────────────────────────────────────────────
 def _search(query: str, **kwargs: Any) -> HybridSearchResponse:
-    return hybrid_search(
-        query,
-        graph_dir=_OUTPUT_DIR,
+    store = kwargs.pop("store", None)
+    searcher = GraphSearcher(
+        _OUTPUT_DIR,
         collection_name=_COLLECTION,
+        store=store,
         **kwargs,
     )
+    return searcher.search(query)
 
 
 # ── Tests ──────────────────────────────────────────────────────────────

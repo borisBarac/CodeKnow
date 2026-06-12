@@ -21,17 +21,31 @@ Configuration is read from a ``.env`` file in the working directory:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ._utils import read_chunk_content
-
 if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
 
     from codeknow.schemas import Chunk, ChunkMap
+
+
+def _read_chunk_content(chunk: Chunk) -> str:
+    p = Path(chunk.file)
+    try:
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines(
+            keepends=True
+        )
+    except OSError:
+        return ""
+
+    start = max(chunk.start_line - 1, 0)
+    end = min(chunk.end_line, len(lines))
+    return "".join(lines[start:end])
+
 
 try:
     from langchain_openai import OpenAIEmbeddings
@@ -108,7 +122,7 @@ def embed_chunks(
     if not chunks:
         return {}
 
-    texts = [read_chunk_content(c) for c in chunks]
+    texts = [_read_chunk_content(c) for c in chunks]
     vectors = embeddings.embed_documents(texts)
 
     return {

@@ -1,4 +1,4 @@
-"""Tests for weighted BFS in _bfs_seeds (hybrid search graph expansion).
+"""Tests for weighted BFS in GraphSearcher._bfs_seeds (hybrid search graph expansion).
 
 RED/Green TDD:
 - Tests 1-4: regression (pass now, must keep passing after refactor)
@@ -7,7 +7,7 @@ RED/Green TDD:
 
 import networkx as nx
 import pytest
-from codeknow.vector.search import _bfs_seeds
+from codeknow.vector.search import GraphSearcher
 
 
 def _graph(nodes, edges):
@@ -26,6 +26,14 @@ def _graph(nodes, edges):
     return G
 
 
+def _make_searcher(graph: nx.Graph) -> GraphSearcher:
+    searcher = GraphSearcher.__new__(GraphSearcher)
+    searcher._graph = graph
+    searcher._reverse_index = {}
+    searcher._traversal_depth = 2
+    return searcher
+
+
 # ── Regression tests ──────────────────────────────────────────────────
 
 
@@ -34,7 +42,7 @@ def test_zero_weight_edges_not_traversed():
         [("seed", "Seed"), ("a", "NodeA"), ("b", "NodeB")],
         [("seed", "a", "unknown_structural"), ("seed", "b", "untyped_edge")],
     )
-    result = _bfs_seeds(G, ["seed"], depth=2)
+    result = _make_searcher(G)._bfs_seeds(["seed"], depth=2)
     assert result == {}
 
 
@@ -43,9 +51,9 @@ def test_paths_include_labels_and_arrows():
         [("seed", "AuthService"), ("a", "TokenValidator")],
         [("seed", "a", "calls")],
     )
-    result = _bfs_seeds(G, ["seed"], depth=2)
+    result = _make_searcher(G)._bfs_seeds(["seed"], depth=2)
     path, weight = result["a"]
-    assert path == ["AuthService", "→calls→", "TokenValidator"]
+    assert path == ["AuthService", "\u2192calls\u2192", "TokenValidator"]
     assert weight == 0.7
 
 
@@ -54,7 +62,7 @@ def test_depth_limit_respected():
         [("seed", "Seed"), ("a", "A"), ("b", "B"), ("c", "C")],
         [("seed", "a", "calls"), ("a", "b", "calls"), ("b", "c", "calls")],
     )
-    result = _bfs_seeds(G, ["seed"], depth=1)
+    result = _make_searcher(G)._bfs_seeds(["seed"], depth=1)
     assert "a" in result
     assert "b" not in result
     assert "c" not in result
@@ -72,7 +80,7 @@ def test_seed_cap_large_graph():
     for i in range(5000):
         G.add_node(f"f{i}", label=f"F{i}")
     assert G.number_of_nodes() > 5000
-    result = _bfs_seeds(G, seeds, depth=1)
+    result = _make_searcher(G)._bfs_seeds(seeds, depth=1)
     assert len(result) == 50
 
 
@@ -84,7 +92,7 @@ def test_high_weight_explored_first():
         [("seed", "Seed"), ("a", "NodeA"), ("b", "NodeB")],
         [("seed", "a", "calls"), ("seed", "b", "semantically_similar_to")],
     )
-    result = _bfs_seeds(G, ["seed"], depth=2)
+    result = _make_searcher(G)._bfs_seeds(["seed"], depth=2)
     assert list(result.keys()) == ["b", "a"]
 
 
@@ -106,7 +114,7 @@ def test_cumulative_weight_prioritizes_semantic_paths():
             ("b", "e", "calls"),
         ],
     )
-    result = _bfs_seeds(G, ["seed"], depth=2)
+    result = _make_searcher(G)._bfs_seeds(["seed"], depth=2)
     assert list(result.keys()) == ["a", "d", "b", "e", "c"]
 
 
@@ -115,7 +123,7 @@ def test_unknown_relation_skipped():
         [("seed", "Seed"), ("a", "NodeA")],
         [("seed", "a", "brand_new_relation")],
     )
-    result = _bfs_seeds(G, ["seed"], depth=2)
+    result = _make_searcher(G)._bfs_seeds(["seed"], depth=2)
     assert result == {}
 
 
@@ -125,7 +133,7 @@ def test_max_graph_results_budget():
     for i in range(60):
         G.add_node(f"n{i}", label=f"N{i}")
         G.add_edge("seed", f"n{i}", relation="calls")
-    result = _bfs_seeds(G, ["seed"], depth=1, max_results=50)
+    result = _make_searcher(G)._bfs_seeds(["seed"], depth=1, max_results=50)
     assert len(result) == 50
 
 
@@ -179,7 +187,7 @@ def test_complex_multi_seed_mixed_relations():
             ("r", "s", "calls"),
         ],
     )
-    result = _bfs_seeds(G, ["seed1", "seed2", "seed3"], depth=3)
+    result = _make_searcher(G)._bfs_seeds(["seed1", "seed2", "seed3"], depth=3)
 
     expected_order = [
         "a",
@@ -215,11 +223,11 @@ def test_complex_multi_seed_mixed_relations():
     path_j, weight_j = result["j"]
     assert path_j == [
         "S1",
-        "→semantically_similar_to→",
+        "\u2192semantically_similar_to\u2192",
         "A",
-        "→calls→",
+        "\u2192calls\u2192",
         "D",
-        "→calls→",
+        "\u2192calls\u2192",
         "J",
     ]
     assert weight_j == pytest.approx(2.4)

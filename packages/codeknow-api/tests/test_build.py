@@ -189,9 +189,7 @@ class TestJobEviction:
         _evict_completed_jobs(jobs)
         assert len(jobs) == 2
 
-    def test_eviction_on_build_status_endpoint(
-        self, client: TestClient
-    ) -> None:
+    def test_eviction_on_build_status_endpoint(self, client: TestClient) -> None:
         old = datetime.now(tz=timezone.utc) - timedelta(days=7)
         client.app.state.build_jobs["stale-repo"] = BuildJob(
             slug="stale-repo",

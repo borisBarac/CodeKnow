@@ -16,13 +16,15 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from codeknow.vector.weights import RELATION_WEIGHTS as _RELATION_WEIGHTS
+from codeknow.vector.search import GraphSearcher
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 
 from .schemas import JudgeHit, JudgeInput, JudgeOutput
+
+_RELATION_WEIGHTS = GraphSearcher.RELATION_WEIGHTS
 
 if TYPE_CHECKING:
     from codeknow.schemas import HybridSearchResponse, HybridSearchResult

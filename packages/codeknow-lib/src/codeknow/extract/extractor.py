@@ -101,11 +101,7 @@ class Extractor:
             root = Path()
         root = root.resolve()
 
-        total = len(paths)
-        _PROGRESS_INTERVAL = 100
-        for i, path in enumerate(paths):
-            if total >= _PROGRESS_INTERVAL and i % _PROGRESS_INTERVAL == 0 and i > 0:
-                pass
+        for path in paths:
             extractor = self._DISPATCH.get(path.suffix)
             if extractor is None:
                 continue
@@ -117,8 +113,6 @@ class Extractor:
             if "error" not in result:
                 save_cached(path, result, self._cache_dir or root)
             per_file.append(result)
-        if total >= _PROGRESS_INTERVAL:
-            pass
 
         all_nodes: list[dict] = []
         all_edges: list[dict] = []

@@ -147,19 +147,3 @@ class TestGraphSearcherSearch:
         vector_idx = provenances.index("vector")
         graph_idx = provenances.index("graph")
         assert vector_idx < graph_idx
-
-
-class TestHybridSearchBackwardCompat:
-    def test_hybrid_search_still_works(self, graph_dir: Path) -> None:
-        from codeknow.vector.search import hybrid_search
-
-        store = _mock_store(search_results=[_sr()])
-        result = hybrid_search(
-            "authentication",
-            graph_dir=graph_dir,
-            collection_name="test",
-            store=store,
-            embeddings=MagicMock(),
-        )
-        assert isinstance(result, HybridSearchResponse)
-        assert result.query == "authentication"

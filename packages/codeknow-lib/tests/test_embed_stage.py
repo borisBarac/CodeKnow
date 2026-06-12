@@ -258,7 +258,7 @@ class TestChromaStoreExtraMetadata:
                 return_value=mock_collection,
             ),
             patch(
-                "codeknow.vector.chroma.read_chunk_content",
+                "codeknow.vector.chroma._read_chunk_content",
                 return_value="some code",
             ),
         ):

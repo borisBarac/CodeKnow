@@ -157,9 +157,7 @@ class TestCacheSearch:
         assert call_count == 1
 
     @pytest.mark.anyio
-    async def test_passthrough_when_disabled(
-        self, with_disabled_service: None
-    ) -> None:
+    async def test_passthrough_when_disabled(self, with_disabled_service: None) -> None:
         call_count = 0
 
         @cache.cache_search()
@@ -235,8 +233,6 @@ class TestInvalidateForSlug:
         assert await with_fake_service.exists(key) == 1
 
     @pytest.mark.anyio
-    async def test_noop_when_disabled(
-        self, with_disabled_service: None
-    ) -> None:
+    async def test_noop_when_disabled(self, with_disabled_service: None) -> None:
         service = cache._get_default_service()
         await service.invalidate_for_slug("anything")

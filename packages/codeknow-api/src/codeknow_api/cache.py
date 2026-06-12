@@ -84,9 +84,7 @@ class RedisService:
         try:
             cursor = 0
             while True:
-                cursor, keys = await redis.scan(
-                    cursor, match="ck:search:*", count=100
-                )
+                cursor, keys = await redis.scan(cursor, match="ck:search:*", count=100)
                 if keys:
                     for key in keys:
                         val = await redis.get(key)

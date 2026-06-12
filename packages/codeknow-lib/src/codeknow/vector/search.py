@@ -3,7 +3,7 @@ from __future__ import annotations
 import heapq
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from codeknow.chunking.index import build_reverse_index
 from codeknow.pipeline.io import load_graph
@@ -17,118 +17,7 @@ if TYPE_CHECKING:
     import networkx as nx
     from langchain_core.embeddings import Embeddings
 
-from codeknow.vector.weights import DEFAULT_RELATION_WEIGHT, RELATION_WEIGHTS
-
 logger = logging.getLogger(__name__)
-
-_MAX_GRAPH_RESULTS = 50
-
-
-def _bfs_seeds(
-    graph: nx.Graph,
-    seed_nodes: list[str],
-    depth: int,
-    max_results: int = _MAX_GRAPH_RESULTS,
-) -> dict[str, tuple[list[str], float]]:
-    seeds: list[str] = seed_nodes
-    if graph.number_of_nodes() > 5000:
-        seeds = seed_nodes[:50]
-
-    discovered: dict[str, tuple[list[str], float]] = {}
-    visited: set[str] = set()
-    counter = 0
-    heap: list[tuple[float, int, str, list[str]]] = []
-
-    for seed in seeds:
-        label = graph.nodes[seed].get("label", seed) if seed in graph.nodes else seed
-        heapq.heappush(heap, (0.0, counter, seed, [label]))
-        counter += 1
-
-    while heap:
-        neg_cum, _, node_id, path = heapq.heappop(heap)
-
-        if node_id in visited:
-            continue
-        visited.add(node_id)
-
-        if node_id not in seeds:
-            discovered[node_id] = (path, -neg_cum)
-            if len(discovered) >= max_results:
-                return discovered
-
-        if len(path) // 2 >= depth:
-            continue
-
-        for neighbor in graph.neighbors(node_id):
-            edge_data = graph.edges[node_id, neighbor]
-            relation = edge_data.get("relation", "")
-            weight = RELATION_WEIGHTS.get(relation, DEFAULT_RELATION_WEIGHT)
-            if weight <= 0.0:
-                continue
-
-            new_cum = -neg_cum + weight
-            new_path = [
-                *path,
-                f"→{relation}→",
-                graph.nodes[neighbor].get("label", neighbor),
-            ]
-            heapq.heappush(heap, (-new_cum, counter, neighbor, new_path))
-            counter += 1
-
-    return discovered
-
-
-def _fetch_chunks_from_store(
-    store: ChromaStore,
-    chunk_hashes: list[str],
-) -> dict[str, tuple[str, dict[str, Any]]]:
-    if not chunk_hashes:
-        return {}
-
-    results = store.get_by_ids(chunk_hashes)
-    fetched: dict[str, tuple[str, dict[str, Any]]] = {}
-    found_hashes: set[str] = set()
-
-    for sr in results:
-        if sr.document is not None and sr.metadata is not None:
-            fetched[sr.hash] = (sr.document, sr.metadata)
-            found_hashes.add(sr.hash)
-
-    missing = set(chunk_hashes) - found_hashes
-    if missing:
-        logger.warning("Chunks not found in ChromaDB (stale index): %s", missing)
-
-    return fetched
-
-
-def sort_key(r: HybridSearchResult) -> tuple:
-    provenance_order = {"vector": 0, "graph": 1}
-    return (
-        provenance_order.get(r.provenance, 2),
-        r.distance if r.distance is not None else float("inf"),
-        -(r.cumulative_weight or 0.0),
-        len(r.graph_path or []),
-    )
-
-
-def _discover_graph_dirs(
-    graph_base_dir: Path,
-    slugs: list[str] | None = None,
-) -> list[tuple[str, Path]]:
-    if slugs is not None:
-        return [
-            (s, graph_base_dir / s)
-            for s in slugs
-            if (graph_base_dir / s / "metadata.json").exists()
-        ]
-
-    dirs: list[tuple[str, Path]] = []
-    if not graph_base_dir.is_dir():
-        return dirs
-    for child in sorted(graph_base_dir.iterdir()):
-        if child.is_dir() and (child / "metadata.json").exists():
-            dirs.append((child.name, child))
-    return dirs
 
 
 class GraphSearcher:
@@ -138,6 +27,22 @@ class GraphSearcher:
     state.  Callers use ``search()`` for single-graph queries and
     ``multi_search()`` for multi-graph queries.
     """
+
+    _MAX_GRAPH_RESULTS: ClassVar[int] = 50
+
+    RELATION_WEIGHTS: ClassVar[dict[str, float]] = {
+        "imports": 0.3,
+        "imports_from": 0.3,
+        "contains": 0.15,
+        "method": 0.3,
+        "calls": 0.7,
+        "uses": 0.7,
+        "inherits": 0.8,
+        "rationale_for": 0.9,
+        "semantically_similar_to": 1.0,
+    }
+
+    DEFAULT_RELATION_WEIGHT: ClassVar[float] = 0.0
 
     def __init__(
         self,
@@ -192,6 +97,124 @@ class GraphSearcher:
             self._store = ChromaStore(config=c_config, embeddings=embeddings)
         return self._store
 
+    def _bfs_seeds(
+        self,
+        seed_nodes: list[str],
+        depth: int,
+        max_results: int | None = None,
+    ) -> dict[str, tuple[list[str], float]]:
+        if max_results is None:
+            max_results = self._MAX_GRAPH_RESULTS
+
+        graph = self._graph
+        if graph is None:
+            msg = "Graph not loaded"
+            raise ValueError(msg)
+
+        seeds: list[str] = seed_nodes
+        if graph.number_of_nodes() > 5000:
+            seeds = seed_nodes[:50]
+
+        discovered: dict[str, tuple[list[str], float]] = {}
+        visited: set[str] = set()
+        counter = 0
+        heap: list[tuple[float, int, str, list[str]]] = []
+
+        for seed in seeds:
+            label = (
+                graph.nodes[seed].get("label", seed) if seed in graph.nodes else seed
+            )
+            heapq.heappush(heap, (0.0, counter, seed, [label]))
+            counter += 1
+
+        while heap:
+            neg_cum, _, node_id, path = heapq.heappop(heap)
+
+            if node_id in visited:
+                continue
+            visited.add(node_id)
+
+            if node_id not in seeds:
+                discovered[node_id] = (path, -neg_cum)
+                if len(discovered) >= max_results:
+                    return discovered
+
+            if len(path) // 2 >= depth:
+                continue
+
+            for neighbor in graph.neighbors(node_id):
+                edge_data = graph.edges[node_id, neighbor]
+                relation = edge_data.get("relation", "")
+                weight = self.RELATION_WEIGHTS.get(
+                    relation, self.DEFAULT_RELATION_WEIGHT
+                )
+                if weight <= 0.0:
+                    continue
+
+                new_cum = -neg_cum + weight
+                new_path = [
+                    *path,
+                    f"\u2192{relation}\u2192",
+                    graph.nodes[neighbor].get("label", neighbor),
+                ]
+                heapq.heappush(heap, (-new_cum, counter, neighbor, new_path))
+                counter += 1
+
+        return discovered
+
+    @staticmethod
+    def _fetch_chunks_from_store(
+        store: ChromaStore,
+        chunk_hashes: list[str],
+    ) -> dict[str, tuple[str, dict[str, Any]]]:
+        if not chunk_hashes:
+            return {}
+
+        results = store.get_by_ids(chunk_hashes)
+        fetched: dict[str, tuple[str, dict[str, Any]]] = {}
+        found_hashes: set[str] = set()
+
+        for sr in results:
+            if sr.document is not None and sr.metadata is not None:
+                fetched[sr.hash] = (sr.document, sr.metadata)
+                found_hashes.add(sr.hash)
+
+        missing = set(chunk_hashes) - found_hashes
+        if missing:
+            logger.warning("Chunks not found in ChromaDB (stale index): %s", missing)
+
+        return fetched
+
+    @staticmethod
+    def _sort_key(r: HybridSearchResult) -> tuple:
+        provenance_order = {"vector": 0, "graph": 1}
+        return (
+            provenance_order.get(r.provenance, 2),
+            r.distance if r.distance is not None else float("inf"),
+            -(r.cumulative_weight or 0.0),
+            len(r.graph_path or []),
+        )
+
+    @staticmethod
+    def _discover_graph_dirs(
+        graph_base_dir: Path,
+        slugs: list[str] | None = None,
+    ) -> list[tuple[str, Path]]:
+        if slugs is not None:
+            return [
+                (s, graph_base_dir / s)
+                for s in slugs
+                if (graph_base_dir / s / "metadata.json").exists()
+            ]
+
+        dirs: list[tuple[str, Path]] = []
+        if not graph_base_dir.is_dir():
+            return dirs
+        for child in sorted(graph_base_dir.iterdir()):
+            if child.is_dir() and (child / "metadata.json").exists():
+                dirs.append((child.name, child))
+        return dirs
+
     def search(self, query: str, top_k: int = 10) -> HybridSearchResponse:
         store = self._get_store()
         vector_results = store.search(query, n_results=top_k)
@@ -237,7 +260,7 @@ class GraphSearcher:
                 results=list(by_hash.values()),
             )
 
-        discovered = _bfs_seeds(self._graph, seed_nodes, self._traversal_depth)
+        discovered = self._bfs_seeds(seed_nodes, self._traversal_depth)
 
         node_chunk_map: dict[str, tuple[list[str], list[str], str, float]] = {}
         all_new_hashes: set[str] = set()
@@ -258,7 +281,7 @@ class GraphSearcher:
             all_new_hashes.update(new_hashes)
 
         if all_new_hashes:
-            fetched = _fetch_chunks_from_store(store, list(all_new_hashes))
+            fetched = self._fetch_chunks_from_store(store, list(all_new_hashes))
 
             for new_hashes, path, node_label, cum_weight in node_chunk_map.values():
                 for chunk_hash in new_hashes:
@@ -278,7 +301,7 @@ class GraphSearcher:
                     )
 
         results = list(by_hash.values())
-        results.sort(key=sort_key)
+        results.sort(key=self._sort_key)
 
         vector_hits = sum(1 for r in results if r.provenance == "vector")
         graph_expanded = sum(1 for r in results if r.provenance == "graph")
@@ -313,7 +336,7 @@ class GraphSearcher:
         if not base_dir.is_dir():
             logger.warning("base_dir does not exist: %s", base_dir)
 
-        graph_dirs = _discover_graph_dirs(base_dir, slugs)
+        graph_dirs = cls._discover_graph_dirs(base_dir, slugs)
 
         if not graph_dirs:
             return HybridSearchResponse(
@@ -360,7 +383,7 @@ class GraphSearcher:
             total_vector += resp.vector_hits
             total_graph += resp.graph_expanded
 
-        all_results.sort(key=sort_key)
+        all_results.sort(key=cls._sort_key)
         all_results = all_results[:top_k]
 
         return HybridSearchResponse(
@@ -369,29 +392,3 @@ class GraphSearcher:
             graph_expanded=total_graph,
             results=all_results,
         )
-
-
-def hybrid_search(
-    query: str,
-    *,
-    graph_dir: Path,
-    collection_name: str,
-    n_results: int = 10,
-    traversal_depth: int = 2,
-    graph_filename: str = "graph.json",
-    embed_config: EmbeddingConfig | None = None,
-    chroma_config: ChromaConfig | None = None,
-    embeddings: Embeddings | None = None,
-    store: ChromaStore | None = None,
-) -> HybridSearchResponse:
-    searcher = GraphSearcher(
-        graph_dir,
-        collection_name=collection_name,
-        embed_config=embed_config,
-        chroma_config=chroma_config,
-        graph_filename=graph_filename,
-        traversal_depth=traversal_depth,
-        embeddings=embeddings,
-        store=store,
-    )
-    return searcher.search(query, top_k=n_results)
