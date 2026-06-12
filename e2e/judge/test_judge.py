@@ -339,6 +339,17 @@ def test_judge_semantic_saturation():
             _hit("s5", snippet="if (!session) throw new TRPCError(...)"),
         ],
         graph_hits=[],
+        agent_analysis=(
+            "Authentication uses NextAuth.js with a custom authOptions config. "
+            "The NextAuth handler is mounted at /api/auth/[...nextauth].ts. "
+            "Server-side, getSession() in context.ts extracts the session "
+            "from the request headers. tRPC procedures call getSession(req) "
+            "and throw a TRPCError if the session is missing, enforcing auth "
+            "guards on protected endpoints. The authOptions define providers "
+            "(GitHub, Google) and a session callback that persists the user. "
+            "Drizzle ORM stores user accounts in the accounts table via the "
+            "NextAuth Drizzle adapter."
+        ),
     )
     output = judge.judge(judge_input)
     _print_report(output, "semantic saturation — 5 strong semantic, 0 graph")
@@ -398,6 +409,15 @@ def test_judge_high_value_graph_expansion():
                 cumulative_weight=0.9,
             ),
         ],
+        agent_analysis=(
+            "The SSE subscription flow works as follows: the channelRouter defines "
+            "an onPost subscription procedure. On the client, the hooks.ts file uses "
+            "trpc.channel.onPost.useSubscription() to subscribe to updates. On the "
+            "server, the SSEEmitter class manages the streaming connection, pushing "
+            "events via its stream() method. When a new post is added, onPostAdded() "
+            "in post.ts triggers a publish through the SSEEmitter, which broadcasts "
+            "the new post to all subscribed clients in real-time via SSE."
+        ),
     )
     output = judge.judge(judge_input)
     _print_report(output, "high-value graph expansion (1.0 + 0.9 weights)")
