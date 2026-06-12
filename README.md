@@ -58,6 +58,38 @@ codeknow search "how does auth work"
 codeknow daemon stop
 ```
 
+## How search works
+
+CodeKnow uses **hybrid search** — vector similarity expanded by a knowledge graph — to find relevant code across one or more indexed repositories.
+
+### Indexing
+
+When you run `codeknow add`, the pipeline processes the repo through seven stages:
+
+1. **Resolve** — clone or locate the repository locally
+2. **Detect** — discover source files using tree-sitter
+3. **Extract AST** — parse files into an abstract syntax tree
+4. **Build graph** — construct a knowledge graph where nodes are code entities (functions, classes, modules) and edges represent relationships (`imports`, `calls`, `inherits`, `uses`, etc.)
+5. **Map chunks** — split source files into overlapping text chunks and link each graph node to its overlapping chunks
+6. **Cluster** — detect communities of tightly-connected nodes
+7. **Embed** — generate vector embeddings for each chunk and store them in ChromaDB
+
+Each indexed repo gets its own graph (`~/.codeknow/graph/<slug>/`) and its own ChromaDB collection.
+
+### Searching
+
+1. **Vector search** — the query is embedded and matched against chunk embeddings in ChromaDB, returning the closest code snippets
+2. **Graph expansion** — matched chunks are mapped back to graph nodes via a reverse index. A weighted BFS traversal expands from these seed nodes, following edges like `calls` (0.7), `inherits` (0.8), and `semantically_similar_to` (1.0) — stronger relations carry more weight
+3. **Hybrid merge** — additional chunks discovered through graph traversal are fetched from ChromaDB and merged with the original vector results, then sorted by provenance (vector hits first) and relevance
+
+### Multi-repo search
+
+Multiple repos can be indexed and searched simultaneously. `multi_search` queries each repo's graph and vector store in parallel, then merges and ranks results across all repos. Use `--slug` to scope a search to specific repos:
+
+```bash
+codeknow search "database connection" --slug owner-repo --slug other-repo
+```
+
 ## Commands
 
 | Command | Description |
