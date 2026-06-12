@@ -11,8 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from codeknow.cache import load_cached, save_cached
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -679,7 +677,7 @@ def _extract_python_rationale(path: Path, result: dict) -> None:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
-def extract_python(path: Path) -> dict:
+def _extract_python(path: Path) -> dict:
     """Extract classes, functions, and imports from a .py file via tree-sitter AST."""
     result = _extract_generic(path, _PYTHON_CONFIG)
     if "error" not in result:
@@ -687,7 +685,7 @@ def extract_python(path: Path) -> dict:
     return result
 
 
-def extract_js(path: Path) -> dict:
+def _extract_js(path: Path) -> dict:
     """Extract classes, functions, arrow functions, and imports
     from a .js/.ts/.tsx file.
     """
@@ -863,154 +861,13 @@ def _check_tree_sitter_version() -> None:
 
 
 def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
-    """Extract AST nodes and edges from a list of code files.
+    """Backward-compatible wrapper delegating to :class:`Extractor`."""
+    from codeknow.extract.extractor import Extractor
 
-    Two-pass process:
-    1. Per-file structural extraction (classes, functions, imports)
-    2. Cross-file import resolution: turns file-level imports into
-       class-level INFERRED edges (DigestAuth --uses--> Response)
-
-    Args:
-        paths: files to extract from
-        cache_root: explicit root for graph-out/cache/ (overrides the
-            inferred common path prefix). Pass Path('.') when running on a
-            subdirectory so the cache stays at ./graph-out/cache/.
-
-    """
-    _check_tree_sitter_version()
-    per_file: list[dict] = []
-
-    # Infer a common root for cache keys (use first diverging
-    # segment, not sum of all matches)
-    try:
-        if not paths:
-            root = Path()
-        elif len(paths) == 1:
-            root = paths[0].parent
-        else:
-            min_parts = min(len(p.parts) for p in paths)
-            common_len = 0
-            for i in range(min_parts):
-                if len({p.parts[i] for p in paths}) == 1:
-                    common_len += 1
-                else:
-                    break
-            root = Path(*paths[0].parts[:common_len]) if common_len else Path()
-    except Exception:
-        root = Path()
-    root = root.resolve()
-
-    _DISPATCH: dict[str, Any] = {
-        ".py": extract_python,
-        ".js": extract_js,
-        ".jsx": extract_js,
-        ".mjs": extract_js,
-        ".ejs": extract_js,
-        ".ts": extract_js,
-        ".tsx": extract_js,
-    }
-
-    total = len(paths)
-    _PROGRESS_INTERVAL = 100
-    for i, path in enumerate(paths):
-        if total >= _PROGRESS_INTERVAL and i % _PROGRESS_INTERVAL == 0 and i > 0:
-            pass
-        extractor = _DISPATCH.get(path.suffix)
-        if extractor is None:
-            continue
-        cached = load_cached(path, cache_root or root)
-        if cached is not None:
-            per_file.append(cached)
-            continue
-        result = extractor(path)
-        if "error" not in result:
-            save_cached(path, result, cache_root or root)
-        per_file.append(result)
-    if total >= _PROGRESS_INTERVAL:
-        pass
-
-    all_nodes: list[dict] = []
-    all_edges: list[dict] = []
-    for result in per_file:
-        all_nodes.extend(result.get("nodes", []))
-        all_edges.extend(result.get("edges", []))
-
-    # Remap file node IDs from absolute-path-derived to project-relative so
-    # graph.json edge endpoints are stable across machines (#502)
-    id_remap: dict[str, str] = {}
-    for path in paths:
-        old_id = _make_id(str(path))
-        try:
-            new_id = _make_id(str(path.relative_to(root)))
-        except ValueError:
-            continue
-        if old_id != new_id:
-            id_remap[old_id] = new_id
-    if id_remap:
-        for n in all_nodes:
-            if n.get("id") in id_remap:
-                n["id"] = id_remap[n["id"]]
-        for e in all_edges:
-            if e.get("source") in id_remap:
-                e["source"] = id_remap[e["source"]]
-            if e.get("target") in id_remap:
-                e["target"] = id_remap[e["target"]]
-
-    # Add cross-file class-level edges (Python only - uses Python parser internally)
-    py_paths = [p for p in paths if p.suffix == ".py"]
-    if py_paths:
-        py_results = [
-            r for r, p in zip(per_file, paths, strict=False) if p.suffix == ".py"
-        ]
-        try:
-            cross_file_edges = _resolve_cross_file_imports(py_results, py_paths)
-            all_edges.extend(cross_file_edges)
-        except Exception as exc:
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "Cross-file import resolution failed, skipping: %s", exc
-            )
-
-    # Cross-file call resolution for all languages
-    # Each extractor saved unresolved calls in raw_calls. Now that we have all
-    # nodes from all files, resolve any callee that exists in another file.
-    global_label_to_nid: dict[str, str] = {}
-    for n in all_nodes:
-        raw = n.get("label", "")
-        normalised = raw.strip("()").lstrip(".")
-        if normalised:
-            global_label_to_nid[normalised.lower()] = n["id"]
-
-    existing_pairs = {(e["source"], e["target"]) for e in all_edges}
-    for result in per_file:
-        for rc in result.get("raw_calls", []):
-            callee = rc.get("callee", "")
-            if not callee:
-                continue
-            tgt = global_label_to_nid.get(callee.lower())
-            caller = rc["caller_nid"]
-            if tgt and tgt != caller and (caller, tgt) not in existing_pairs:
-                existing_pairs.add((caller, tgt))
-                all_edges.append(
-                    {
-                        "source": caller,
-                        "target": tgt,
-                        "relation": "calls",
-                        "confidence": "INFERRED",
-                        "confidence_score": 0.8,
-                        "source_file": rc.get("source_file", ""),
-                        "source_location": rc.get("source_location"),
-                        "weight": 1.0,
-                    }
-                )
-
-    return {
-        "nodes": all_nodes,
-        "edges": all_edges,
-        "input_tokens": 0,
-        "output_tokens": 0,
-    }
+    ext = Extractor(cache_dir=cache_root)
+    return ext.extract_from_discovery(
+        {"files": {"code": [str(p) for p in paths]}}
+    )
 
 
 def collect_files(
@@ -1063,6 +920,8 @@ def collect_files(
 def extract_ast(files: dict[str, list[str]], **kwargs: Any) -> dict[str, Any]:
     """Pipeline wrapper: extract AST nodes from all code files.
 
+    Delegates to :class:`Extractor`.
+
     Args:
         files: ``{file_type: [paths]}`` from ``detect()``.
 
@@ -1070,7 +929,6 @@ def extract_ast(files: dict[str, list[str]], **kwargs: Any) -> dict[str, Any]:
         Extraction dict with ``nodes``, ``edges``, ``input_tokens``, ``output_tokens``.
 
     """
-    code_paths = [Path(p) for p in files.get("code", [])]
-    if not code_paths:
-        return {"nodes": [], "edges": [], "input_tokens": 0, "output_tokens": 0}
-    return extract(code_paths)
+    from codeknow.extract.extractor import Extractor
+
+    return Extractor().extract_from_discovery({"files": files})

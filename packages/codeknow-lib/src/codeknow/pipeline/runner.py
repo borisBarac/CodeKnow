@@ -52,16 +52,17 @@ def run_pipeline(
     Each ``*_fn`` argument overrides the default implementation.
     Stubs are used for stages not yet implemented.
     """
-    from codeknow.extract.ast import extract_ast
-    from codeknow.extract.detect import detect
+    from codeknow.extract.extractor import Extractor
     from codeknow.graph.build import build
     from codeknow.graph.cluster import cluster
     from codeknow.pipeline.chunk_stage import map_chunks as _default_map_chunks
     from codeknow.pipeline.embed_stage import embed as _default_embed
 
+    _extractor = Extractor()
+
     _resolve = resolve_fn or resolve
-    _detect = detect_fn or detect
-    _extract_ast = extract_ast_fn or extract_ast
+    _detect = detect_fn or _extractor.discover
+    _extract_ast = extract_ast_fn or _extractor.extract_from_discovery
     _build = build_graph_fn or build
     _map_chunks = map_chunks_fn or _default_map_chunks
     _cluster = cluster_fn or cluster
@@ -78,7 +79,7 @@ def run_pipeline(
         progress_callback("detect", 28, "Discovering files...")
 
     extractions: list[dict] = []
-    ast_result = _extract_ast(discovery.get("files", {}))
+    ast_result = _extract_ast(discovery)
     extractions.append(
         ast_result if isinstance(ast_result, dict) else _to_dict(ast_result)
     )

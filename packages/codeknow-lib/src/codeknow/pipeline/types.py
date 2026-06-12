@@ -37,7 +37,7 @@ class DetectFn(Protocol):
 
 class ExtractAstFn(Protocol):
     def __call__(
-        self, files: dict[str, list[str]], **kwargs: Any
+        self, discovery: dict[str, Any], **kwargs: Any
     ) -> ExtractionResult: ...
 
 
@@ -79,7 +79,7 @@ STAGE_IO: dict[str, dict[str, str]] = {
         "output": "FileDiscovery",
     },
     "extract_ast": {
-        "input": "FileDiscovery.files",
+        "input": "FileDiscovery (full discovery dict)",
         "output": (
             "ExtractionResult (structural entities via"
             " tree-sitter, confidence=EXTRACTED)"

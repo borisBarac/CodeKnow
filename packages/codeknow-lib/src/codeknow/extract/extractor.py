@@ -1,20 +1,38 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
-from codeknow.extract.ast import _check_tree_sitter_version, extract
+from codeknow.cache import load_cached, save_cached
+from codeknow.extract.ast import (
+    _check_tree_sitter_version,
+    _extract_js,
+    _extract_python,
+    _make_id,
+    _resolve_cross_file_imports,
+)
 from codeknow.extract.detect import detect
 
 
 class Extractor:
     """Single testable seam for the extraction pipeline.
 
-    Wraps file discovery (detect) + AST extraction (extract) into one
-    callable interface. Downstream callers (pipeline runner, e2e tests)
-    can use ``Extractor.extract(repo_path)`` instead of wiring detect +
-    extract_ast together.
+    Wraps file discovery (detect) + AST extraction into one callable
+    interface.  Downstream callers (pipeline runner, e2e tests) can use
+    ``Extractor.extract(repo_path)`` instead of wiring detect + extract_ast
+    together.
     """
+
+    _DISPATCH: ClassVar[dict[str, Any]] = {
+        ".py": _extract_python,
+        ".js": _extract_js,
+        ".jsx": _extract_js,
+        ".mjs": _extract_js,
+        ".ejs": _extract_js,
+        ".ts": _extract_js,
+        ".tsx": _extract_js,
+    }
 
     def __init__(self, *, cache_dir: Path | None = None) -> None:
         self._cache_dir = cache_dir
@@ -27,7 +45,21 @@ class Extractor:
         ``input_tokens``, ``output_tokens``.
         """
         discovery = self._discover_files(repo_path)
-        code_paths = [Path(p) for p in discovery["files"].get("code", [])]
+        return self.extract_from_discovery(discovery)
+
+    def extract_from_discovery(self, discovery: dict[str, Any]) -> dict[str, Any]:
+        """Extract AST from pre-discovered file lists.
+
+        Args:
+            discovery: dict with ``files.code`` list of paths (from
+                :meth:`discover` or :func:`detect`).
+
+        Returns:
+            Extraction dict with ``nodes``, ``edges``, ``input_tokens``,
+            ``output_tokens``.
+
+        """
+        code_paths = [Path(p) for p in discovery.get("files", {}).get("code", [])]
         if not code_paths:
             return {
                 "nodes": [],
@@ -35,7 +67,7 @@ class Extractor:
                 "input_tokens": 0,
                 "output_tokens": 0,
             }
-        return extract(code_paths, self._cache_dir)
+        return self._extract(code_paths)
 
     def discover(self, repo_path: Path) -> dict[str, Any]:
         """Return the file discovery dict without extracting."""
@@ -43,3 +75,122 @@ class Extractor:
 
     def _discover_files(self, repo_path: Path) -> dict[str, Any]:
         return detect(repo_path)
+
+    def _extract(self, paths: list[Path]) -> dict[str, Any]:
+        """Multi-file extraction orchestrator.
+
+        Per-file dispatch → cache → merge → ID remap → cross-file resolution.
+        """
+        per_file: list[dict] = []
+
+        try:
+            if not paths:
+                root = Path()
+            elif len(paths) == 1:
+                root = paths[0].parent
+            else:
+                min_parts = min(len(p.parts) for p in paths)
+                common_len = 0
+                for i in range(min_parts):
+                    if len({p.parts[i] for p in paths}) == 1:
+                        common_len += 1
+                    else:
+                        break
+                root = Path(*paths[0].parts[:common_len]) if common_len else Path()
+        except Exception:
+            root = Path()
+        root = root.resolve()
+
+        total = len(paths)
+        _PROGRESS_INTERVAL = 100
+        for i, path in enumerate(paths):
+            if total >= _PROGRESS_INTERVAL and i % _PROGRESS_INTERVAL == 0 and i > 0:
+                pass
+            extractor = self._DISPATCH.get(path.suffix)
+            if extractor is None:
+                continue
+            cached = load_cached(path, self._cache_dir or root)
+            if cached is not None:
+                per_file.append(cached)
+                continue
+            result = extractor(path)
+            if "error" not in result:
+                save_cached(path, result, self._cache_dir or root)
+            per_file.append(result)
+        if total >= _PROGRESS_INTERVAL:
+            pass
+
+        all_nodes: list[dict] = []
+        all_edges: list[dict] = []
+        for result in per_file:
+            all_nodes.extend(result.get("nodes", []))
+            all_edges.extend(result.get("edges", []))
+
+        id_remap: dict[str, str] = {}
+        for path in paths:
+            old_id = _make_id(str(path))
+            try:
+                new_id = _make_id(str(path.relative_to(root)))
+            except ValueError:
+                continue
+            if old_id != new_id:
+                id_remap[old_id] = new_id
+        if id_remap:
+            for n in all_nodes:
+                if n.get("id") in id_remap:
+                    n["id"] = id_remap[n["id"]]
+            for e in all_edges:
+                if e.get("source") in id_remap:
+                    e["source"] = id_remap[e["source"]]
+                if e.get("target") in id_remap:
+                    e["target"] = id_remap[e["target"]]
+
+        py_paths = [p for p in paths if p.suffix == ".py"]
+        if py_paths:
+            py_results = [
+                r for r, p in zip(per_file, paths, strict=False) if p.suffix == ".py"
+            ]
+            try:
+                cross_file_edges = _resolve_cross_file_imports(py_results, py_paths)
+                all_edges.extend(cross_file_edges)
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "Cross-file import resolution failed, skipping: %s", exc
+                )
+
+        global_label_to_nid: dict[str, str] = {}
+        for n in all_nodes:
+            raw = n.get("label", "")
+            normalised = raw.strip("()").lstrip(".")
+            if normalised:
+                global_label_to_nid[normalised.lower()] = n["id"]
+
+        existing_pairs = {(e["source"], e["target"]) for e in all_edges}
+        for result in per_file:
+            for rc in result.get("raw_calls", []):
+                callee = rc.get("callee", "")
+                if not callee:
+                    continue
+                tgt = global_label_to_nid.get(callee.lower())
+                caller = rc["caller_nid"]
+                if tgt and tgt != caller and (caller, tgt) not in existing_pairs:
+                    existing_pairs.add((caller, tgt))
+                    all_edges.append(
+                        {
+                            "source": caller,
+                            "target": tgt,
+                            "relation": "calls",
+                            "confidence": "INFERRED",
+                            "confidence_score": 0.8,
+                            "source_file": rc.get("source_file", ""),
+                            "source_location": rc.get("source_location"),
+                            "weight": 1.0,
+                        }
+                    )
+
+        return {
+            "nodes": all_nodes,
+            "edges": all_edges,
+            "input_tokens": 0,
+            "output_tokens": 0,
+        }
