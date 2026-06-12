@@ -149,7 +149,7 @@ def deduplicate_by_label(
     remap: dict[str, str] = {}  # old_id -> surviving_id
 
     for node in nodes:
-        key = _norm_label(node.get("label", node.get("id", "")))
+        key = _norm_label(str(node.get("label", node.get("id", ""))))
         if not key:
             continue
         existing = canonical.get(key)
@@ -203,7 +203,6 @@ def build_merge(
             existing_G = _jg.node_link_graph(data, edges="links")
         except TypeError:
             existing_G = _jg.node_link_graph(data)
-        # Reconstruct as a plain extraction dict so build() can merge it
         existing_nodes = [{"id": n, **existing_G.nodes[n]} for n in existing_G.nodes]
         existing_edges = [
             {"source": u, "target": v, **d} for u, v, d in existing_G.edges(data=True)
@@ -211,6 +210,7 @@ def build_merge(
         base = [{"nodes": existing_nodes, "edges": existing_edges}]
     else:
         base = []
+        existing_nodes: list[dict] = []
 
     all_chunks = base + list(new_chunks)
     G = build(all_chunks, directed=directed)
