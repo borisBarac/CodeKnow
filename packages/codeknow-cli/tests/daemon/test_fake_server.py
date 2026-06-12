@@ -42,7 +42,16 @@ def test_post_build_returns_202(base_url: str) -> None:
         json={"github_ssh_url": "git@github.com:owner/repo.git"},
     )
     assert resp.status_code == 202
-    assert resp.json()["status"] == "done"
+    assert resp.json()["status"] == "queued"
+
+
+def test_get_build_status_returns_succeeded(base_url: str) -> None:
+    resp = httpx.get(base_url + "/v1/build/stub-slug")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "succeeded"
+    assert data["slug"] == "stub-slug"
+    assert data["progress"] == 100
 
 
 def test_post_search_returns_200(base_url: str) -> None:

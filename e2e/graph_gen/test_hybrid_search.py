@@ -14,6 +14,7 @@ import os
 import shutil
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,18 @@ from judge import LLMJudge, from_hybrid_response
 logger = logging.getLogger(__name__)
 
 CODE_TEST_SMALL = Path(__file__).parent / "code-test-small"
+RESULT_MD = Path(__file__).parent / "test_hybrid_search_report.md"
+
+
+def _write_md_report(text: str) -> None:
+    RESULT_MD.write_text(RESULT_MD.read_text() + text, encoding="utf-8")
+
+
+RESULT_MD.write_text(
+    f"# Hybrid Search E2E Results\n\n"
+    f"Generated: {datetime.now(tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n",
+    encoding="utf-8",
+)
 
 # ── 1. Health-check services ──────────────────────────────────────────
 check_ollama()
@@ -105,13 +118,14 @@ atexit.register(_cleanup)
 # ── Helpers ────────────────────────────────────────────────────────────
 def _search(query: str, **kwargs: Any) -> HybridSearchResponse:
     store = kwargs.pop("store", None)
+    n_results = kwargs.pop("n_results", 10)
     searcher = GraphSearcher(
         _OUTPUT_DIR,
         collection_name=_COLLECTION,
-        store=store,
+        store=store or _STORE,
         **kwargs,
     )
-    return searcher.search(query)
+    return searcher.search(query, top_k=n_results)
 
 
 # ── Tests ──────────────────────────────────────────────────────────────
@@ -314,6 +328,13 @@ def _print_retrieval_report(
         )
     print(sep)
 
+    md = f"## Retrieval Metrics: {label}\n\n"
+    md += "| K | P | R | F1 |\n| --- | --- | --- | --- |\n"
+    for at_k, m in metrics.items():
+        md += f"| {at_k} | {m['precision']:.2f} | {m['recall']:.2f} | {m['f1']:.2f} |\n"
+    md += "\n"
+    _write_md_report(md)
+
 
 def _synthesize_analysis(resp: HybridSearchResponse) -> str:
     """Generate a brief analysis from search results for groundedness evaluation."""
@@ -398,6 +419,25 @@ def _print_judge_report(output, label):
     print(f"  merged:   {len(eu.merged_hit_ids)} hits")
     print(sep)
 
+    md = f"## Judge Report: {label}\n\n"
+    md += (
+        f"**Score:** {output.final_score:.1f}/100  "
+        f"|  **Confidence:** {output.confidence}  "
+        f"|  **Winner:** {output.winner}\n\n"
+    )
+    md += "| Subscore | Value |\n| --- | --- |\n"
+    for field, val in output.subscores.model_dump().items():
+        display = f"{val}" if val is not None else "N/A"
+        md += f"| {field} | {display} |\n"
+    md += "\n**Strengths:**\n"
+    for s in output.strengths:
+        md += f"- {s}\n"
+    md += "\n**Weaknesses:**\n"
+    for w in output.weaknesses:
+        md += f"- {w}\n"
+    md += f"\n> {output.rationale}\n\n"
+    _write_md_report(md)
+
 
 # ── 8. Deterministic Retrieval Quality Tests ───────────────────────────
 
@@ -454,6 +494,13 @@ def test_retrieval_metrics_summary():
     print(f"  Avg R@10 = {avg_r10:.3f}  (threshold: 0.60)")
     print(f"  Avg F1@10= {avg_f1:.3f}  (threshold: 0.50)")
     print(f"{'=' * 70}")
+
+    md = "## Aggregate Retrieval Quality\n\n"
+    md += "| Metric | Value | Threshold |\n| --- | --- | --- |\n"
+    md += f"| Avg P@5 | {avg_p5:.3f} | 0.50 |\n"
+    md += f"| Avg R@10 | {avg_r10:.3f} | 0.60 |\n"
+    md += f"| Avg F1@10 | {avg_f1:.3f} | 0.50 |\n\n"
+    _write_md_report(md)
 
     assert avg_p5 >= 0.50, f"Mean P@5={avg_p5:.3f} < 0.50"
     assert avg_r10 >= 0.60, f"Mean R@10={avg_r10:.3f} < 0.60"

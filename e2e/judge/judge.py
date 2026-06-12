@@ -275,6 +275,8 @@ class LLMJudge:
             base_url=self._config.base_url,
             api_key=SecretStr(self._config.resolved_api_key()),
             temperature=self._config.temperature,
+            request_timeout=60,
+            max_retries=2,
         ).with_structured_output(JudgeOutput)
 
     def judge(self, judge_input: JudgeInput) -> JudgeOutput:
