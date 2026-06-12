@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import Annotated, Any
 
 from codeknow.pipeline.facade import PipelineFacade
+from codeknow.schemas import ListReposResponse  # noqa: TC002
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
@@ -24,9 +24,6 @@ from codeknow_api.models import (
     SearchRequest,
     SearchResponse,
 )
-
-if TYPE_CHECKING:
-    from codeknow.schemas import ListReposResponse
 
 _CODEKNOW_HOME = Path.home() / ".codeknow"
 GRAPH_DIR = Path(os.getenv("CODEKNOW_GRAPH_DIR", str(_CODEKNOW_HOME / "graph")))
@@ -65,6 +62,8 @@ def create_app() -> FastAPI:
     redis_service = RedisService.from_env()
     app.state.redis_service = redis_service  # type: ignore[assignment]
 
+    facade = PipelineFacade(graph_dir=GRAPH_DIR, temp_dir=TEMP_DIR)
+
     @app.on_event("shutdown")
     async def _shutdown() -> None:
         await redis_service.close()
@@ -102,14 +101,7 @@ def create_app() -> FastAPI:
 
     @app.post("/v1/build")
     async def build(body: BuildRequest) -> JSONResponse:
-        from codeknow.pipeline import PipelineConfig, run_pipeline
-
-        slug = PipelineConfig(repo_url=body.github_ssh_url).slug
-        config = PipelineConfig(
-            repo_url=body.github_ssh_url,
-            input_dir=TEMP_DIR,
-            output_dir=GRAPH_DIR / slug,
-        )
+        slug = facade.resolve_slug(body.github_ssh_url)
 
         lock = app.state.build_locks.setdefault(slug, asyncio.Lock())
         if lock.locked():
@@ -118,32 +110,6 @@ def create_app() -> FastAPI:
             )
 
         await lock.acquire()
-
-        if (GRAPH_DIR / slug).exists():
-            shutil.rmtree(GRAPH_DIR / slug, ignore_errors=True)
-            shutil.rmtree(TEMP_DIR / slug, ignore_errors=True)
-            try:
-                from codeknow.vector.chroma import ChromaConfig, ChromaStore
-                from codeknow.vector.embeddings import (
-                    EmbeddingConfig,
-                    create_embeddings,
-                )
-
-                embeddings = create_embeddings(EmbeddingConfig())
-                collection_name = config.chroma_collection or f"codeknow_{slug}"
-                store = ChromaStore(
-                    config=ChromaConfig(
-                        host=config.chroma_host,
-                        port=config.chroma_port,
-                        collection_name=collection_name,
-                    ),
-                    embeddings=embeddings,
-                )
-                store.delete_by_slug(slug)
-            except Exception:
-                logger.warning(
-                    "ChromaDB cleanup failed for slug '%s'", slug, exc_info=True
-                )
 
         _evict_completed_jobs(app.state.build_jobs)
         app.state.build_jobs[slug] = BuildJob(slug=slug)
@@ -165,17 +131,19 @@ def create_app() -> FastAPI:
 
             try:
                 result = await asyncio.to_thread(
-                    run_pipeline, config, progress_callback=on_progress
+                    facade.build,
+                    body.github_ssh_url,
+                    clean_first=True,
+                    progress_callback=on_progress,
                 )
                 job.status = "succeeded"
                 job.progress = 100
                 job.commit_hash = result.commit_hash
-                job.node_count = result.stats.get("nodes")
-                job.edge_count = result.stats.get("edges")
-                job.community_count = result.stats.get("communities")
+                job.node_count = result.node_count
+                job.edge_count = result.edge_count
+                job.community_count = result.community_count
                 job.completed_at = datetime.now(tz=timezone.utc)
                 await redis_service.invalidate_for_slug(slug)
-                shutil.rmtree(TEMP_DIR / slug, ignore_errors=True)
             except Exception as exc:
                 job.status = "failed"
                 job.error = str(exc)
@@ -225,7 +193,7 @@ def create_app() -> FastAPI:
         repos = body.repos
 
         if repos is not None:
-            missing = [s for s in repos if not _facade.has_slug(s)]
+            missing = [s for s in repos if not facade.has_slug(s)]
             if missing:
                 raise HTTPException(
                     status_code=400,
@@ -246,7 +214,7 @@ def create_app() -> FastAPI:
 
         try:
             result = await asyncio.to_thread(
-                _facade.search,
+                facade.search,
                 body.query,
                 top_k=body.top_k,
                 slugs=repos,
@@ -265,17 +233,15 @@ def create_app() -> FastAPI:
 
         url = body.url
         if url is None:
-            url = _facade.resolve_url_for_slug(slug)
+            url = facade.resolve_url_for_slug(slug)
 
-        if not _facade.has_slug(slug):
+        if not facade.has_slug(slug):
             if url is None:
                 raise HTTPException(status_code=404, detail=f"Repo not found: {slug}")
-            from codeknow.git_download import get_path
-
-            if get_path(url) is None:
+            if facade.get_repo_path(url) is None:
                 raise HTTPException(status_code=404, detail=f"Repo not found: {slug}")
 
-        result = await asyncio.to_thread(_facade.delete, slug)
+        result = await asyncio.to_thread(facade.delete, slug)
 
         return {
             "status": "deleted",
@@ -289,53 +255,18 @@ def create_app() -> FastAPI:
         page_size: Annotated[int, Query(ge=1, le=200)] = 50,
         health_check: Annotated[bool, Query()] = False,
     ) -> ListReposResponse:
-        from codeknow.pipeline import load_metadata
+        build_status_map: dict[str, dict[str, Any]] = {}
+        for slug, job in app.state.build_jobs.items():
+            build_status_map[slug] = {
+                "status": job.status,
+                "progress": job.progress,
+            }
 
-        repos: list[dict[str, Any]] = []
-        errors: list[dict[str, str]] = []
-
-        if GRAPH_DIR.is_dir():
-            for child in sorted(GRAPH_DIR.iterdir()):
-                if not child.is_dir():
-                    continue
-                slug = child.name
-                try:
-                    meta = load_metadata(child)
-                    if meta is None:
-                        continue
-                except Exception as exc:
-                    errors.append({"slug": slug, "error": str(exc)})
-                    continue
-
-                build_job = app.state.build_jobs.get(slug)
-                if build_job is not None:
-                    meta["build_status"] = build_job.status
-                    meta["build_progress"] = build_job.progress
-
-                if health_check:
-                    try:
-                        from codeknow.pipeline.io import load_graph
-
-                        load_graph(child / "graph.json")
-                        meta["health"] = "ok"
-                    except FileNotFoundError:
-                        meta["health"] = "missing_graph"
-                    except Exception as exc:
-                        meta["health"] = f"error: {exc}"
-
-                repos.append(meta)
-
-        start = (page - 1) * page_size
-        end = start + page_size
-        paged = repos[start:end]
-
-        return ListReposResponse(
-            repos=[RepoMetadata(**r) for r in paged],
-            total=len(repos),
+        return facade.list_repos(
             page=page,
             page_size=page_size,
             health_check=health_check,
-            build_status=build_status,
+            build_status=build_status_map,
         )
 
     return app

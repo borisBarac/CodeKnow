@@ -80,7 +80,19 @@ class PipelineFacade:
         input_dir = Path(os.getenv("CODEKNOW_INPUT_DIR", str(self._home / "repos")))
         return get_url(input_dir / slug)
 
-    def build(self, ssh_url: str, *, clean_first: bool = False) -> BuildResult:
+    def get_repo_path(self, url: str) -> Path | None:
+        """Return the local clone path for *url*, or ``None`` if not downloaded."""
+        from codeknow.git_download import get_path
+
+        return get_path(url)
+
+    def build(
+        self,
+        ssh_url: str,
+        *,
+        clean_first: bool = False,
+        progress_callback: Any = None,
+    ) -> BuildResult:
         from codeknow.pipeline import PipelineConfig, run_pipeline
 
         slug = PipelineConfig(repo_url=ssh_url).slug
@@ -94,7 +106,11 @@ class PipelineFacade:
             output_dir=self.graph_dir / slug,
         )
 
-        result = run_pipeline(config)
+        kwargs: dict[str, Any] = {}
+        if progress_callback is not None:
+            kwargs["progress_callback"] = progress_callback
+
+        result = run_pipeline(config, **kwargs)
         shutil.rmtree(self.temp_dir / slug, ignore_errors=True)
 
         return BuildResult(
