@@ -6,8 +6,8 @@ from typing import ClassVar
 
 _STUB_REPO = {
     "github_ssh_url": "git@github.com:stub/repo.git",
-    "slug": "stub-slug",
-    "commit_hash": "abc123",
+    "slug": "stub-repo",
+    "commit_hash": "a" * 40,
     "built_at": "2025-01-01T00:00:00Z",
     "node_count": 10,
     "edge_count": 20,
@@ -48,10 +48,10 @@ class StubAPIHandler(BaseHTTPRequestHandler):
                     "progress": 100,
                     "stage": None,
                     "message": None,
-                    "commit_hash": "abc123",
-                    "node_count": 10,
-                    "edge_count": 20,
-                    "community_count": 2,
+                    "commit_hash": self.STUB_REPO["commit_hash"],
+                    "node_count": self.STUB_REPO["node_count"],
+                    "edge_count": self.STUB_REPO["edge_count"],
+                    "community_count": self.STUB_REPO["community_count"],
                 },
             )
         else:
@@ -63,16 +63,17 @@ class StubAPIHandler(BaseHTTPRequestHandler):
                 202,
                 {
                     "status": "queued",
-                    "slug": "stub-slug",
-                    "status_url": "/v1/build/stub-slug",
+                    "slug": self.STUB_REPO["slug"],
+                    "status_url": f"/v1/build/{self.STUB_REPO['slug']}",
                     "progress": 0,
                 },
             )
         elif self.path == "/v1/search":
+            body = self._read_json_body()
             self._send_json(
                 200,
                 {
-                    "query": "test",
+                    "query": body.get("query", ""),
                     "vector_hits": 0,
                     "graph_expanded": 0,
                     "results": [],
@@ -92,14 +93,14 @@ class StubAPIHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/repos":
             body = self._read_json_body()
             slug = body.get("slug", "")
-            if slug and slug != "stub-slug":
-                self._send_json(404, {"detail": f"Repo with slug '{slug}' not found"})
+            if slug and slug != self.STUB_REPO["slug"]:
+                self._send_json(404, {"detail": f"Repo not found: {slug}"})
             else:
                 self._send_json(
                     200,
                     {
                         "status": "deleted",
-                        "slug": slug or "stub-slug",
+                        "slug": slug or self.STUB_REPO["slug"],
                         "chunks_deleted": 0,
                     },
                 )

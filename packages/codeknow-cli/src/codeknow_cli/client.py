@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn, ParamSpec, TypeVar
@@ -203,8 +204,12 @@ class Client:
         self,
         ssh_url: str,
         progress_callback: Callable[[str, int, str], None] | None = None,
+        poll_interval: float = 3.0,
     ) -> BuildStatusResult:
-        poll_interval = 3.0
+        env_poll = os.environ.get("CODEKNOW_POLL_INTERVAL")
+        if env_poll is not None:
+            with contextlib.suppress(ValueError):
+                poll_interval = float(env_poll)
         try:
             submit_resp = httpx.post(
                 f"{self.base_url}/v1/build",

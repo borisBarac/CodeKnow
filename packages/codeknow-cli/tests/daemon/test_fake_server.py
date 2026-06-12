@@ -32,7 +32,7 @@ def test_get_repos_returns_stub_repo(base_url: str) -> None:
     resp = httpx.get(base_url + "/v1/repos")
     data = resp.json()
     assert len(data["repos"]) == 1
-    assert data["repos"][0]["slug"] == "stub-slug"
+    assert data["repos"][0]["slug"] == "stub-repo"
     assert data["total"] == 1
 
 

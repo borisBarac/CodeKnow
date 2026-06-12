@@ -82,10 +82,10 @@ def test_client_uses_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_remove_from_index_success(client: Client) -> None:
     result = client.start_daemon(timeout=5)
     _started_pids.add(result.pid)
-    resp = client.remove_from_index("stub-slug")
+    resp = client.remove_from_index("stub-repo")
     assert isinstance(resp, DeleteResult)
     assert resp.status == "deleted"
-    assert resp.slug == "stub-slug"
+    assert resp.slug == "stub-repo"
     assert resp.chunks_deleted == 0
 
 

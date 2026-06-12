@@ -19,7 +19,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
-from codeknow_cli.client import Client, ClientError, DeleteResult, SearchResult
+from codeknow_cli.client import Client, DeleteResult, SearchResult
+from codeknow_cli.exceptions import RepoNotFoundError
 from codeknow_cli.main import cli
 
 if TYPE_CHECKING:
@@ -37,10 +38,18 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _atexit_cleanup() -> None:
-    for pid in _STARTED_PIDS:
+def _kill_process_group(pid: int) -> None:
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.kill(pid, signal.SIGKILL)
+
+
+def _atexit_cleanup() -> None:
+    for pid in list(_STARTED_PIDS):
+        _kill_process_group(pid)
+    _STARTED_PIDS.clear()
 
 
 def _save_env(keys: Sequence[str]) -> None:
@@ -79,6 +88,7 @@ def _daemon_lifecycle(tmp_path_factory: pytest.TempPathFactory) -> None:
             "CODEKNOW_STUB": "1",
             "CODEKNOW_HOST": _CLIENT.host,
             "CODEKNOW_API_PORT": str(_CLIENT.port),
+            "CODEKNOW_POLL_INTERVAL": "0.1",
         }
     )
 
@@ -87,6 +97,7 @@ def _daemon_lifecycle(tmp_path_factory: pytest.TempPathFactory) -> None:
     if _CLIENT is not None:
         with contextlib.suppress(TimeoutError, RuntimeError):
             _CLIENT.stop_daemon(timeout=5)
+        _kill_process_group(result.pid)
         _STARTED_PIDS.discard(result.pid)
     _restore_env()
 
@@ -108,8 +119,8 @@ def test_daemon_starts_and_is_running() -> None:
 
 def test_add_to_index_returns_stub_response() -> None:
     assert _CLIENT is not None
-    result = _CLIENT.add_to_index("git@github.com:stub/repo.git")
-    assert result.status == "done"
+    result = _CLIENT.add_to_index("git@github.com:stub/repo.git", poll_interval=0.1)
+    assert result.status == "succeeded"
     assert result.slug == "stub-repo"
     assert result.node_count == 10
     assert result.edge_count == 20
@@ -143,7 +154,7 @@ def test_remove_from_index_returns_stub_response() -> None:
 
 def test_remove_nonexistent_slug_raises() -> None:
     assert _CLIENT is not None
-    with pytest.raises(ClientError, match="not found"):
+    with pytest.raises(RepoNotFoundError, match="not found"):
         _CLIENT.remove_from_index("nonexistent")
 
 
@@ -159,7 +170,7 @@ def test_cli_add_command() -> None:
         env=_CLI_ENV,
     )
     assert result.exit_code == 0, result.output
-    assert "Status: done" in result.output
+    assert "Status: succeeded" in result.output
     assert "stub-repo" in result.output
 
 
