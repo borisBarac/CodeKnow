@@ -1,0 +1,48 @@
+exclude = ["raw", "plan", ".venv", "packages/codeknow-cli/generated"]
+
+[lint]
+select = ["ALL"]
+ignore = [
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D107",
+    "D205",
+    "D400",
+    "D401",
+    "D417",
+    "COM812",
+    "ANN401",
+    "PLC0415",
+    "BLE001",
+    "C901",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLR2004",
+    "N803",
+    "N806",
+    "PERF401",
+    "RUF001",
+    "RUF002",
+    "D203",
+    "D213",
+    "B023",
+    "B005",
+    "B904",
+    "SIM102",
+    "SIM115",
+    "S110",
+    "PLW2901",
+    "ERA001",
+    "ARG001",
+    "ARG002",
+    "ASYNC240",
+    "FBT001",
+    "FBT002",
+]
+
+[lint.per-file-ignores]
+"**/tests/**" = ["ANN001", "ANN201", "ANN202", "INP001", "N802", "S101", "SLF001"]
+"e2e/**" = ["ANN001", "ANN201", "ANN202", "INP001", "N802", "S101", "SLF001"]

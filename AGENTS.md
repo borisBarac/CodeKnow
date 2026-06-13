@@ -14,6 +14,7 @@
   - `dev-check` — runs all static checks in sequence: ruff check (with fix + unsafe-fixes), ruff format, pyrefly.
   - `pipeline` — runs the codeknow pipeline on a GitHub repo. Accepts `--repo-url`, `--input-dir`, `-o/--output-dir`, `-g/--graph-file`, `--chunk-map-file`.
   - `clean` — removes cached repos, graph output, and temp files. Flags: `-y` (skip confirmation).
+  - `gen-client` — generate a Python HTTP client from the API OpenAPI spec (requires `--output-dir`).
 - `codeknow` — user-facing CLI. Subcommands: `add`, `remove`, `search`, `info`, `daemon`, `clean`.
   - `clean` — stops the daemon, then removes cached repos, graph output, and temp files. Flags: `-y` (skip confirmation).
 

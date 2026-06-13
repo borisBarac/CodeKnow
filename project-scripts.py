@@ -1,10 +1,9 @@
-"""CLI entry-points registered via ``[project.scripts]`` in codeknow-cli."""
+"""Project helper scripts invoked via ``uv run project-scripts.py <command>``."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -15,23 +14,29 @@ from pathlib import Path
 def dev_check() -> None:
     """Run all static checks: ruff lint, ruff format, pyrefly."""
     parser = argparse.ArgumentParser(description="Run all static checks.")
-    parser.add_argument("--fix", action="store_true", help="Apply fixable violations.")
+    parser.add_argument(
+        "--fix",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Apply fixable lint violations (default: on; use --no-fix to disable).",
+    )
     parser.add_argument(
         "--unsafe-fixes",
-        action="store_true",
-        help="Include fixes that may change runtime behaviour (66 hidden fixes).",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Include fixes that may change runtime behaviour "
+            "(default: on; use --no-unsafe-fixes to disable)."
+        ),
     )
-    parser.parse_args()
+    args = parser.parse_args()
 
-    ruff_check_cmd = [
-        sys.executable,
-        "-m",
-        "ruff",
-        "check",
-        "--fix",
-        "--unsafe-fixes",
-        ".",
-    ]
+    ruff_check_cmd = [sys.executable, "-m", "ruff", "check"]
+    if args.fix:
+        ruff_check_cmd.append("--fix")
+    if args.unsafe_fixes:
+        ruff_check_cmd.append("--unsafe-fixes")
+    ruff_check_cmd.append(".")
 
     steps = [
         ("ruff check", ruff_check_cmd),
@@ -50,8 +55,6 @@ def dev_check() -> None:
 
     if failed:
         sys.exit(1)
-    else:
-        pass
 
 
 def run_pipeline_cli() -> None:
@@ -151,14 +154,9 @@ def gen_client() -> None:
     print(f"Client generated at {output_dir}")  # noqa: T201
 
 
-def _env_path(key: str, default: Path) -> Path:
-    raw = os.environ.get(key)
-    return Path(raw) if raw else default
-
-
 def clean() -> None:
     """Remove cached repos, graph output, and temp files."""
-    from codeknow.pipeline.config import _CODEKNOW_HOME
+    from codeknow.pipeline.config import _CODEKNOW_HOME, _env_path
 
     parser = argparse.ArgumentParser(
         description="Remove cached repos, graph output, and temp files.",

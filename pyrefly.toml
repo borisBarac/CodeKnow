@@ -1,0 +1,40 @@
+python-version = "3.10"
+project-includes = ["packages/codeknow-lib", "packages/codeknow-api", "packages/codeknow-cli"]
+project-excludes = [
+    "packages/*/tests/**",
+    "packages/codeknow-cli/generated/**",
+]
+search-path = [
+    "packages/codeknow-lib/src",
+    "packages/codeknow-api/src",
+    "packages/codeknow-cli/src",
+    "packages/codeknow-cli/generated",
+]
+ignore-missing-imports = ["redis", "redis.*", "daemonocle", "daemonocle.*", "openapi_python_client", "openapi_python_client.*"]
+
+[errors]
+implicit-any = true
+implicit-any-type-argument = false
+implicit-any-empty-container = false
+
+[[sub-config]]
+matches = "packages/codeknow-lib/src/codeknow/cache/redis.py"
+[sub-config.errors]
+bad-argument-type = false
+bad-assignment = false
+not-async = false
+
+[[sub-config]]
+matches = "packages/codeknow-lib/src/codeknow/graph/analyze.py"
+[sub-config.errors]
+bad-argument-type = false
+
+[[sub-config]]
+matches = "packages/codeknow-lib/src/codeknow/vector/search.py"
+[sub-config.errors]
+bad-argument-type = false
+
+[[sub-config]]
+matches = "packages/codeknow-cli/src/codeknow_cli/client.py"
+[sub-config.errors]
+bad-return = false
