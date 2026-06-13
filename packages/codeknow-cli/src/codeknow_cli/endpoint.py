@@ -7,15 +7,13 @@ import shutil
 import sys
 from dataclasses import dataclass
 
+from codeknow_cli.config import load_config
 from codeknow_cli.exceptions import ConfigError
 
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 8080
+DEFAULT_API_URL = "http://localhost:8080"
 DEFAULT_PID_FILE = "/tmp/codeknow-daemon.pid"  # noqa: S108
-
-_ENV_HOST = "CODEKNOW_HOST"
-_ENV_PORT = "CODEKNOW_API_PORT"
-_ENV_API_URL = "CODEKNOW_API_URL"
 
 
 @dataclass
@@ -29,34 +27,42 @@ class EndpointConfig:
     worker_command: list[str] | None = None
 
 
-def resolve_endpoint(
-    host: str | None = None,
-    port: int | None = None,
-    pid_file: str | None = None,
-) -> EndpointConfig:
-    api_url = os.environ.get(_ENV_API_URL)
-    if api_url is not None:
+def resolve_endpoint() -> EndpointConfig:
+    cfg = load_config()
+    if cfg.mode == "docker":
         return EndpointConfig(
-            base_url=api_url.rstrip("/"),
+            base_url=DEFAULT_API_URL,
+            is_remote=True,
+            host=DEFAULT_HOST,
+            port=DEFAULT_PORT,
+            bind_host="",
+            pid_file=DEFAULT_PID_FILE,
+        )
+    if cfg.mode == "remote":
+        if not cfg.remote_url:
+            msg = "remote_url is not set. Run: codeknow server mode remote"
+            raise ConfigError(msg)
+        return EndpointConfig(
+            base_url=cfg.remote_url.rstrip("/"),
             is_remote=True,
             host="",
             port=0,
             bind_host="",
             pid_file=DEFAULT_PID_FILE,
         )
+    return _resolve_daemon(cfg.host, cfg.port, DEFAULT_PID_FILE)
 
-    resolved_host = host or os.environ.get(_ENV_HOST) or DEFAULT_HOST
-    resolved_port = port or int(os.environ.get(_ENV_PORT) or str(DEFAULT_PORT))
-    bind_host = "127.0.0.1" if resolved_host == "localhost" else resolved_host
-    resolved_pid_file = pid_file or DEFAULT_PID_FILE
 
-    if os.getenv("FAKE_SERVER", "").lower() in ("1", "true"):
+def _resolve_daemon(host: str, port: int, pid_file: str) -> EndpointConfig:
+    bind_host = "127.0.0.1" if host == "localhost" else host
+
+    if os.getenv("FAKE_SERVER", "").lower() in ("1", "true", "yes", "on"):
         worker_command = [
             sys.executable,
             "-c",
             (
                 "from codeknow_cli.daemon.fake_server import run_server;"
-                f" run_server(host={bind_host!r}, port={resolved_port})"
+                f" run_server(host={bind_host!r}, port={port})"
             ),
         ]
     else:
@@ -69,15 +75,15 @@ def resolve_endpoint(
             "--host",
             bind_host,
             "--port",
-            str(resolved_port),
+            str(port),
         ]
 
     return EndpointConfig(
-        base_url=f"http://{bind_host}:{resolved_port}",
+        base_url=f"http://{bind_host}:{port}",
         is_remote=False,
-        host=resolved_host,
-        port=resolved_port,
+        host=host,
+        port=port,
         bind_host=bind_host,
-        pid_file=resolved_pid_file,
+        pid_file=pid_file,
         worker_command=worker_command,
     )

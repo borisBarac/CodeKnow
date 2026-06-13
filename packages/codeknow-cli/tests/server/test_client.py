@@ -24,6 +24,7 @@ from codeknow_cli.client import (
     DeleteResult,
     SearchResult,
 )
+from codeknow_cli.config import UserConfig
 from codeknow_cli.exceptions import (
     ApiError,
     DaemonNotRunningError,
@@ -43,10 +44,14 @@ if TYPE_CHECKING:
 def client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Generator[Client, None, None]:
-    monkeypatch.setenv("FAKE_SERVER", "1")
     port = _free_port()
     pid_file = str(tmp_path / "test-daemon.pid")
-    c = Client(host="127.0.0.1", port=port, pid_file=pid_file)
+    monkeypatch.setattr("codeknow_cli.endpoint.DEFAULT_PID_FILE", pid_file)
+    monkeypatch.setattr(
+        "codeknow_cli.endpoint.load_config",
+        MagicMock(return_value=UserConfig(mode="daemon", host="127.0.0.1", port=port)),
+    )
+    c = Client()
     yield c
     with contextlib.suppress(DaemonNotRunningError, Exception):
         c.stop_daemon(timeout=2)
@@ -68,15 +73,6 @@ def test_stop_daemon_clears_running_state(client: Client) -> None:
 
 def test_check_daemon_false_when_not_running(client: Client) -> None:
     assert not client.check_daemon()
-
-
-def test_client_uses_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CODEKNOW_HOST", "myhost")
-    monkeypatch.setenv("CODEKNOW_API_PORT", "4321")
-    c = Client()
-    assert c.host == "myhost"
-    assert c.port == 4321
-    assert c.base_url == "http://myhost:4321"
 
 
 def test_remove_from_index_success(client: Client) -> None:
@@ -105,14 +101,8 @@ def _make_delete_response(data: dict) -> ApiResponse:
 
 
 @patch("codeknow_cli.client.delete_repo_v1_repos_delete")
-def test_remove_sends_slug_in_body(
-    mock_delete: MagicMock,
-) -> None:
-    c = Client(
-        host="127.0.0.1",
-        port=19999,
-        pid_file="/var/tmp/test-remove.pid",  # noqa: S108
-    )
+def test_remove_sends_slug_in_body(mock_delete: MagicMock) -> None:
+    c = Client()
     mock_delete.sync_detailed.return_value = _make_delete_response(
         {"status": "deleted", "slug": "my-repo", "chunks_deleted": 5},
     )
@@ -129,11 +119,7 @@ def test_remove_sends_slug_in_body(
 
 @patch("codeknow_cli.client.delete_repo_v1_repos_delete")
 def test_remove_raises_when_slug_not_found(mock_delete: MagicMock) -> None:
-    c = Client(
-        host="127.0.0.1",
-        port=19999,
-        pid_file="/var/tmp/test-remove-notfound.pid",  # noqa: S108
-    )
+    c = Client()
     mock_delete.sync_detailed.side_effect = api_errors.UnexpectedStatus(
         404, b"not found"
     )
@@ -142,15 +128,8 @@ def test_remove_raises_when_slug_not_found(mock_delete: MagicMock) -> None:
         c.remove_from_index("missing")
 
 
-# --- add_to_index tests ---
-
-
 def _unit_client() -> Client:
-    return Client(
-        host="127.0.0.1",
-        port=19998,
-        pid_file="/var/tmp/test-unit-client.pid",  # noqa: S108
-    )
+    return Client()
 
 
 def _mock_post_response(status_code: int, json_data: dict | None = None) -> MagicMock:
@@ -358,22 +337,14 @@ def test_add_poll_raises_on_500(
         c.add_to_index("git@github.com:org/repo.git")
 
 
-# --- remove_from_index error-path tests ---
-
-
 @patch("codeknow_cli.client.delete_repo_v1_repos_delete")
-def test_remove_raises_on_404_from_delete(
-    mock_delete: MagicMock,
-) -> None:
+def test_remove_raises_on_404_from_delete(mock_delete: MagicMock) -> None:
     c = _unit_client()
     mock_delete.sync_detailed.side_effect = api_errors.UnexpectedStatus(
         404, b"not found"
     )
     with pytest.raises(RepoNotFoundError, match="Repo with slug 'x' not found"):
         c.remove_from_index("x")
-
-
-# --- search tests ---
 
 
 def _make_search_response(data: dict) -> ApiResponse:

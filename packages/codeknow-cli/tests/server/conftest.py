@@ -6,6 +6,8 @@ import os
 import signal
 import socket
 
+import pytest
+
 _started_pids: set[int] = set()
 
 
@@ -22,3 +24,8 @@ def _atexit_cleanup() -> None:
 
 
 atexit.register(_atexit_cleanup)
+
+
+@pytest.fixture(autouse=True)
+def _enable_fake_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FAKE_SERVER", "1")

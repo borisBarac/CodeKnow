@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
 from click.testing import CliRunner
 from code_know_api_client.models.list_repos_response import ListReposResponse
 from code_know_api_client.models.repo_metadata import RepoMetadata
 from codeknow_cli.client import Client, DeleteResult, SearchResult
+from codeknow_cli.config import UserConfig
 from codeknow_cli.exceptions import ApiError, ClientError
 from codeknow_cli.main import cli
 
@@ -18,45 +17,89 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
-def test_cli_help_shows_daemon(runner: CliRunner) -> None:
+@pytest.fixture(autouse=True)
+def _server_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default: pretend the API server is reachable for decorated commands.
+
+    Down-path tests override ``Client.check_server`` to return False.
+    """
+    monkeypatch.setattr(Client, "check_server", lambda *_args, **_kwargs: True)
+
+
+def test_cli_help_shows_server(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
-    assert "daemon" in result.output
+    assert "server" in result.output
+    assert "daemon" not in result.output
 
 
-def test_daemon_help_shows_subcommands(runner: CliRunner) -> None:
-    result = runner.invoke(cli, ["daemon", "--help"])
+def test_server_help_shows_subcommands(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["server", "--help"])
     assert result.exit_code == 0
-    for cmd in ("start", "stop", "restart", "status"):
+    for cmd in ("mode", "start", "stop", "status"):
         assert cmd in result.output
 
 
-def test_daemon_status_not_running(runner: CliRunner) -> None:
-    from codeknow_cli.endpoint import DEFAULT_PID_FILE
-
-    pid_path = Path(DEFAULT_PID_FILE)
-    backup = pid_path.read_bytes() if pid_path.exists() else None
-    pid_path.unlink(missing_ok=True)
-    try:
-        result = runner.invoke(cli, ["daemon", "status"])
-    finally:
-        if backup is not None:
-            pid_path.write_bytes(backup)
-    assert "not running" in result.output.lower()
+def test_server_mode_shows_current(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "codeknow_cli.main.load_config",
+        MagicMock(return_value=UserConfig(mode="daemon")),
+    )
+    result = runner.invoke(cli, ["server", "mode"])
+    assert result.exit_code == 0
+    assert "Mode: daemon" in result.output
 
 
-def test_context_has_client() -> None:
-    captured: dict[str, Client] = {}
+def test_server_mode_sets_valid(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mock_save = MagicMock()
+    monkeypatch.setattr("codeknow_cli.main.save_config", mock_save)
+    result = runner.invoke(cli, ["server", "mode", "remote"])
+    assert result.exit_code == 0
+    assert "Mode set to: remote" in result.output
+    mock_save.assert_called_once()
+    saved_cfg = mock_save.call_args[0][0]
+    assert isinstance(saved_cfg, UserConfig)
+    assert saved_cfg.mode == "remote"
 
-    @cli.command("__test_ctx")
-    @click.pass_context
-    def _grab_ctx(ctx: click.Context) -> None:
-        captured["client"] = ctx.obj["client"]
 
-    runner = CliRunner()
-    runner.invoke(cli, ["__test_ctx"], catch_exceptions=False)
-    assert isinstance(captured["client"], Client)
-    assert captured["client"].base_url == "http://127.0.0.1:8080"
+def test_server_mode_rejects_invalid(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["server", "mode", "bogus"])
+    assert result.exit_code != 0
+    assert "invalid mode" in result.output
+
+
+def test_server_start_dispatches(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = MagicMock()
+    monkeypatch.setattr("codeknow_cli.main.get_backend", MagicMock(return_value=fake))
+    result = runner.invoke(cli, ["server", "start"])
+    assert result.exit_code == 0
+    fake.start.assert_called_once()
+
+
+def test_server_stop_dispatches(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = MagicMock()
+    monkeypatch.setattr("codeknow_cli.main.get_backend", MagicMock(return_value=fake))
+    result = runner.invoke(cli, ["server", "stop"])
+    assert result.exit_code == 0
+    fake.stop.assert_called_once()
+
+
+def test_server_status_dispatches(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = MagicMock()
+    monkeypatch.setattr("codeknow_cli.main.get_backend", MagicMock(return_value=fake))
+    result = runner.invoke(cli, ["server", "status"])
+    assert result.exit_code == 0
+    fake.status.assert_called_once()
 
 
 def test_add_command_shows_help(runner: CliRunner) -> None:
@@ -106,6 +149,32 @@ def test_remove_command_propagates_error(
     assert "Repo with slug 'x' not found" in str(result.exception)
 
 
+@patch.object(Client, "check_server", return_value=False)
+def test_add_when_server_down_exits_1(mock_check: MagicMock, runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["add", "git@github.com:org/repo.git"])
+    assert result.exit_code == 1
+    assert "Server is not running" in result.output
+    assert "codeknow server start" in result.output
+
+
+@patch.object(Client, "check_server", return_value=False)
+def test_remove_when_server_down_exits_1(
+    mock_check: MagicMock, runner: CliRunner
+) -> None:
+    result = runner.invoke(cli, ["remove", "my-repo"])
+    assert result.exit_code == 1
+    assert "Server is not running" in result.output
+
+
+@patch.object(Client, "check_server", return_value=False)
+def test_search_when_server_down_exits_1(
+    mock_check: MagicMock, runner: CliRunner
+) -> None:
+    result = runner.invoke(cli, ["search", "anything"])
+    assert result.exit_code == 1
+    assert "Server is not running" in result.output
+
+
 def test_main_catches_client_error_and_exits() -> None:
     with patch("codeknow_cli.main.cli", side_effect=ClientError("boom")):
         from codeknow_cli.main import main
@@ -113,9 +182,6 @@ def test_main_catches_client_error_and_exits() -> None:
         with pytest.raises(SystemExit) as exc_info:
             main()
         assert exc_info.value.code == 1
-
-
-# --- search command tests ---
 
 
 def test_search_command_shows_help(runner: CliRunner) -> None:
@@ -150,9 +216,6 @@ def test_search_command_with_slugs(mock_search: MagicMock, runner: CliRunner) ->
     mock_search.assert_called_once_with("my query", slugs=["a", "b"])
 
 
-# --- info command tests ---
-
-
 def test_info_command_shows_in_help(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
@@ -162,21 +225,68 @@ def test_info_command_shows_in_help(runner: CliRunner) -> None:
 def test_info_command_shows_help(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["info", "--help"])
     assert result.exit_code == 0
-    assert "daemon status" in result.output.lower() or "Show daemon" in result.output
+    assert "API endpoint status" in result.output or "repo slugs" in result.output
 
 
-@patch.object(Client, "check_daemon", return_value=False)
-def test_info_when_daemon_not_running(mock_check: MagicMock, runner: CliRunner) -> None:
+@patch.object(Client, "list_repos")
+def test_info_remote_mode_shows_api_and_repos(
+    mock_list: MagicMock, runner: CliRunner
+) -> None:
+    repos = [
+        RepoMetadata(
+            github_ssh_url="git@github.com:org/a.git",
+            slug="repo-a",
+            commit_hash="abc123",
+            built_at="2025-01-01T00:00:00Z",
+            node_count=10,
+            edge_count=20,
+            community_count=2,
+        ),
+    ]
+    mock_list.return_value = ListReposResponse(
+        repos=repos, total=1, page=1, page_size=50
+    )
+    result = runner.invoke(cli, ["info"])
+    assert result.exit_code == 0
+    assert "API:" in result.output
+    assert "repo-a" in result.output
+
+
+@patch.object(Client, "list_repos", side_effect=ApiError("unreachable"))
+def test_info_remote_mode_api_error(mock_list: MagicMock, runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["info"])
+    assert result.exit_code == 0
+    assert "unavailable" in result.output.lower()
+
+
+def _daemon_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "codeknow_cli.endpoint.load_config",
+        MagicMock(return_value=UserConfig(mode="daemon")),
+    )
+
+
+@patch.object(Client, "check_server", return_value=False)
+def test_info_when_daemon_not_running(
+    mock_check: MagicMock,
+    runner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _daemon_mode(monkeypatch)
     result = runner.invoke(cli, ["info"])
     assert result.exit_code == 0
     assert "Daemon: not running" in result.output
 
 
 @patch.object(Client, "list_repos")
-@patch.object(Client, "check_daemon", return_value=True)
+@patch.object(Client, "check_server", return_value=True)
 def test_info_when_daemon_running_with_repos(
-    mock_check: MagicMock, mock_list: MagicMock, runner: CliRunner
+    mock_check: MagicMock,
+    mock_list: MagicMock,
+    runner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _daemon_mode(monkeypatch)
     repos = [
         RepoMetadata(
             github_ssh_url="git@github.com:org/a.git",
@@ -208,10 +318,14 @@ def test_info_when_daemon_running_with_repos(
 
 
 @patch.object(Client, "list_repos")
-@patch.object(Client, "check_daemon", return_value=True)
+@patch.object(Client, "check_server", return_value=True)
 def test_info_when_daemon_running_no_repos(
-    mock_check: MagicMock, mock_list: MagicMock, runner: CliRunner
+    mock_check: MagicMock,
+    mock_list: MagicMock,
+    runner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _daemon_mode(monkeypatch)
     mock_list.return_value = ListReposResponse(repos=[], total=0, page=1, page_size=50)
     result = runner.invoke(cli, ["info"])
     assert result.exit_code == 0
@@ -220,10 +334,14 @@ def test_info_when_daemon_running_no_repos(
 
 
 @patch.object(Client, "list_repos", side_effect=ApiError("unreachable"))
-@patch.object(Client, "check_daemon", return_value=True)
+@patch.object(Client, "check_server", return_value=True)
 def test_info_when_daemon_running_but_api_fails(
-    mock_check: MagicMock, mock_list: MagicMock, runner: CliRunner
+    mock_check: MagicMock,
+    mock_list: MagicMock,
+    runner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _daemon_mode(monkeypatch)
     result = runner.invoke(cli, ["info"])
     assert result.exit_code == 0
     assert "Daemon: running" in result.output

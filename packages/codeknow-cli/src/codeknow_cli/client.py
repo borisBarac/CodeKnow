@@ -100,29 +100,20 @@ class BuildStatusResult:
 
 
 class Client:
-    def __init__(
-        self,
-        host: str | None = None,
-        port: int | None = None,
-        pid_file: str | None = None,
-    ) -> None:
-        cfg = resolve_endpoint(host, port, pid_file)
-
+    def __init__(self) -> None:
+        cfg = resolve_endpoint()
         self.base_url = cfg.base_url
         self.host = cfg.host
         self.port = cfg.port
         self._bind_host = cfg.bind_host
         self._pid_file = cfg.pid_file
         self._remote = cfg.is_remote
-
         self._daemon_pid: int | None = None
         self._manager: DaemonManager | None = None
         if cfg.worker_command is not None:
             self._manager = DaemonManager(
-                pid_file=cfg.pid_file,
-                worker_command=cfg.worker_command,
+                pid_file=cfg.pid_file, worker_command=cfg.worker_command
             )
-
         self._api_client = GeneratedClient(
             base_url=self.base_url,
             raise_on_unexpected_status=True,
@@ -163,6 +154,19 @@ class Client:
             return False
         return self._require_manager().is_running()
 
+    def check_server(self, timeout: float = 2.0) -> bool:
+        """Return True if the API server is reachable (any HTTP response).
+
+        A connection failure (TransportError) means the server is not
+        running; any HTTP response — including a 503 from an unhealthy
+        but reachable server — counts as running.
+        """
+        try:
+            httpx.get(f"{self.base_url}/health", timeout=timeout)
+        except httpx.TransportError:
+            return False
+        return True
+
     def get_daemon_pid(self) -> int | None:
         if self._remote:
             return None
@@ -178,7 +182,7 @@ class Client:
                 msg = f"Cannot connect to the API at {self.base_url}"
             else:
                 msg = (
-                    "Cannot connect to the daemon. Start it with: codeknow daemon start"
+                    "Cannot connect to the daemon. Start it with: codeknow server start"
                 )
             raise DaemonNotRunningError(msg) from exc
 
@@ -221,7 +225,7 @@ class Client:
                 msg = f"Cannot connect to the API at {self.base_url}"
             else:
                 msg = (
-                    "Cannot connect to the daemon. Start it with: codeknow daemon start"
+                    "Cannot connect to the daemon. Start it with: codeknow server start"
                 )
             raise DaemonNotRunningError(msg) from exc
 

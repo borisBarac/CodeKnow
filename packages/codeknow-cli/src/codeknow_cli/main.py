@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import shutil
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 from code_know_api_client.types import Unset
-from daemonocle.cli import DaemonCLI
 
 from codeknow_cli import __version__
 from codeknow_cli.client import Client
-from codeknow_cli.daemon import run_server
-from codeknow_cli.endpoint import DEFAULT_PID_FILE
+from codeknow_cli.config import VALID_MODES, load_config, save_config
 from codeknow_cli.exceptions import (
     ApiError,
     CodeknowError,
@@ -27,6 +27,10 @@ from codeknow_cli.exceptions import (
     ValidationError,
 )
 from codeknow_cli.formatters import format_search_results
+from codeknow_cli.server import get_backend
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _env_path(key: str, default: Path) -> Path:
@@ -45,21 +49,34 @@ def _dir_size(path: Path) -> str:
     return f"{total / (1024 * 1024 * 1024):.1f} GB"
 
 
+def requires_server(fn: Callable[..., object]) -> Callable[..., object]:
+    """Pre-flight check: refuse to run if the API server is not reachable."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: object, **kwargs: object) -> object:
+        if not Client().check_server():
+            click.echo(
+                "Server is not running. Start it with: codeknow server start",
+                err=True,
+            )
+            raise SystemExit(1)
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="codeknow")
-@click.pass_context
-def cli(ctx: click.Context) -> None:
+def cli() -> None:
     """Codeknow — code knowledge graph toolkit."""
-    ctx.ensure_object(dict)
-    ctx.obj["client"] = Client()
 
 
 @cli.command()
 @click.argument("ssh_url")
-@click.pass_context
-def add(ctx: click.Context, ssh_url: str) -> None:
+@requires_server
+def add(ssh_url: str) -> None:
     """Add a GitHub repo to the index (by SSH URL)."""
-    client: Client = ctx.obj["client"]
+    client = Client()
 
     def _on_progress(stage: str, percent: int, message: str) -> None:
         label = stage or "building"
@@ -85,10 +102,10 @@ def add(ctx: click.Context, ssh_url: str) -> None:
 
 @cli.command()
 @click.argument("slug")
-@click.pass_context
-def remove(ctx: click.Context, slug: str) -> None:
+@requires_server
+def remove(slug: str) -> None:
     """Remove a repo from the index (by slug)."""
-    client: Client = ctx.obj["client"]
+    client = Client()
     result = client.remove_from_index(slug)
     click.echo(f"Status: {result.status}")
     if result.slug:
@@ -101,25 +118,24 @@ def remove(ctx: click.Context, slug: str) -> None:
 @click.option(
     "--slug", "slugs", multiple=True, help="Filter to specific repo slugs (repeatable)."
 )
-@click.pass_context
-def search(ctx: click.Context, query: str, slugs: tuple[str, ...]) -> None:
+@requires_server
+def search(query: str, slugs: tuple[str, ...]) -> None:
     """Search the code index."""
-    client: Client = ctx.obj["client"]
+    client = Client()
     slug_list = list(slugs) if slugs else None
     result = client.search(query, slugs=slug_list)
     format_search_results(query, result)
 
 
 @cli.command()
-@click.pass_context
-def info(ctx: click.Context) -> None:
-    """Show daemon status and available repo slugs."""
-    client: Client = ctx.obj["client"]
+def info() -> None:
+    """Show API endpoint status and available repo slugs."""
+    client = Client()
 
     if client.is_remote:
         click.echo(f"API: {client.base_url} (remote)")
     else:
-        running = client.check_daemon()
+        running = client.check_server()
         if not running:
             click.echo("Daemon: not running")
             return
@@ -151,12 +167,11 @@ def info(ctx: click.Context) -> None:
 
 @cli.command()
 @click.option("-y", "--yes", is_flag=True, help="Skip confirmation prompt.")
-@click.pass_context
-def clean(ctx: click.Context, yes: bool) -> None:
+def clean(yes: bool) -> None:
     """Remove cached repos, graph output, and temp files."""
     from codeknow.pipeline.config import _CODEKNOW_HOME
 
-    client: Client = ctx.obj["client"]
+    client = Client()
 
     if not client.is_remote and client.check_daemon():
         click.echo("Stopping daemon...")
@@ -187,13 +202,44 @@ def clean(ctx: click.Context, yes: bool) -> None:
         click.echo(f"Removed {label}: {path} ({size})")
 
 
-@cli.command(
-    cls=DaemonCLI,
-    daemon_params={"pid_file": DEFAULT_PID_FILE},
-)
-def daemon() -> None:
-    """Manage the codeknow background service."""
-    run_server()
+@cli.group()
+def server() -> None:
+    """Manage the codeknow server."""
+
+
+@server.command()
+@click.argument("mode_value", required=False)
+def mode(mode_value: str | None) -> None:
+    """Show or set the server mode (docker|remote|daemon)."""
+    if mode_value is None:
+        cfg = load_config()
+        click.echo(f"Mode: {cfg.mode}")
+        return
+    if mode_value not in VALID_MODES:
+        msg = f"invalid mode '{mode_value}'. Must be one of: docker, remote, daemon"
+        raise click.BadParameter(msg)
+    cfg = load_config()
+    cfg.mode = mode_value
+    save_config(cfg)
+    click.echo(f"Mode set to: {mode_value}")
+
+
+@server.command()
+def start() -> None:
+    """Start the server for the current mode."""
+    get_backend().start()
+
+
+@server.command()
+def stop() -> None:
+    """Stop the server for the current mode."""
+    get_backend().stop()
+
+
+@server.command()
+def status() -> None:
+    """Show server status for the current mode."""
+    get_backend().status()
 
 
 def main() -> None:
