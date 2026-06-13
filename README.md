@@ -2,45 +2,10 @@
 
 Index GitHub repos into a searchable code knowledge graph. Ships a CLI, a FastAPI server, and a background daemon.
 
-## Requirements
+## Setup
 
-- Python 3.10+
-- [uv](https://docs.astral.sh/uv/)
-
-## Install
-
-### From source (development)
-
-```bash
-git clone <repo-url> CodeKnow
-cd CodeKnow
-uv sync
-```
-
-Run commands via `uv run`:
-
-```bash
-uv run codeknow --help
-uv run codeknow-api --help
-```
-
-### As a global tool
-
-```bash
-cd CodeKnow
-uv tool install .
-```
-
-Installs two standalone executables on your PATH:
-
-- `codeknow` — the CLI
-- `codeknow-api` — the API server
-
-Uninstall with:
-
-```bash
-uv tool uninstall codeknow
-```
+- [Set up for development](docs/SetUp.md)
+- [Install as a tool/dependency](docs/install.md)
 
 ## Quick start
 
@@ -138,11 +103,3 @@ packages/
 | `CODEKNOW_HOST` | `localhost` | CLI → API host |
 | `CODEKNOW_API_PORT` | `8080` | API server port |
 | `CODEKNOW_API_HOST` | `127.0.0.1` | API server bind host |
-
-## Development
-
-```bash
-uv run pytest                        # run tests
-uv run project-scripts.py dev-check  # ruff + mypy
-uv run project-scripts.py pipeline   # run the pipeline on a repo
-```

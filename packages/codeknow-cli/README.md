@@ -34,7 +34,7 @@ codeknow daemon stop     # Stop the background service
 codeknow daemon status   # Check if the daemon is running
 ```
 
-The daemon runs `codeknow-api` on `localhost:9999` by default.
+The daemon runs `codeknow-api` on `localhost:8080` by default.
 
 ### Add a repo
 

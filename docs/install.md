@@ -61,6 +61,19 @@ codeknow search "how does auth work"
 codeknow daemon stop
 ```
 
+## Remote mode
+
+The CLI also works against a `codeknow-api` instance running elsewhere — useful for shared or cloud-hosted servers. Set one environment variable:
+
+```bash
+export CODEKNOW_API_URL=https://api.example.com
+codeknow add git@github.com:owner/repo.git
+```
+
+When `CODEKNOW_API_URL` is set, no local daemon is spawned: `daemon start/stop` become no-ops, and the CLI talks directly to the remote server. Unset it to return to local daemon mode.
+
+See [usage.md](usage.md) for the full command reference, daemon flags, and environment variables.
+
 ## Troubleshooting
 
 ### `uv: command not found`
