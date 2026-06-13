@@ -217,7 +217,7 @@ chroma-data/
 .env.e2e.local
 
 # Graphify output
-e2e/graph_gen/code-test-small/graph-out/
+**/graph-out/
 
 # Workspace package build artifacts
 packages/*/*.egg-info/

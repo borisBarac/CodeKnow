@@ -1,51 +1,75 @@
 # Hybrid Search E2E Results
 
-Generated: 2026-06-12 22:17:04 UTC
+Generated: 2026-06-13 20:48:37 UTC
 
-## Judge Report: AGENT-GREP BASELINE — how does user authentication work
+## Retrieval Metrics: database connection and queries
 
-**Score:** 76.0/100  |  **Confidence:** medium  |  **Winner:** semantic_only
+| K | P | R | F1 |
+| --- | --- | --- | --- |
+| @5 | 1.00 | 0.67 | 0.80 |
+| @10 | 0.70 | 1.00 | 0.82 |
 
-| Subscore | Value |
-| --- | --- |
-| semantic_relevance | 95 |
-| kg_expansion_value | N/A |
-| coverage | 60 |
-| groundedness | 70 |
-| noise_control | 65 |
+## Retrieval Metrics: user authentication
 
-**Strengths:**
-- Semantic hits tightly cover the core auth configuration (NextAuth init), tRPC middleware guard, session injection into context, and client-side UI integration.
-- The evidence presents a complete end-to-end picture: server config -> session creation -> authorization check -> UI consumption.
+| K | P | R | F1 |
+| --- | --- | --- | --- |
+| @5 | 1.00 | 1.00 | 1.00 |
+| @10 | 0.80 | 1.00 | 0.89 |
 
-**Weaknesses:**
-- Coverage is slightly shallow: the NextAuth provider configuration (e.g., GitHub, email) and authOptions details are not included, only the initialization line.
-- Three hits from the same channel layout file (import, signOut call, signIn call) cause mild noise and redundancy.
-- The agent analysis is largely a repetition of the why_retrieved notes rather than a deeper synthesis of how the pieces connect.
+## Retrieval Metrics: trpc router setup
 
-> Semantic relevance is excellent: all ten hits directly address the query, covering the core config file, context middleware, protected procedure, layout provider, and UI consumption. The graph expansion is empty (semantic saturation), so kg_expansion_value is set to null and the winner defaults to 'semantic_only' — this is not a penalty, as the semantic hits already capture the authentication flow comprehensively. Coverage is strong but slightly penalized because the provider configuration and any database adapter/persistence logic are missing from the evidence. Groundedness is moderate: the agent analysis is factually consistent with the snippets but adds no insight beyond what the retrieval notes already say, and the mention of 'providers' exceeds the direct evidence shown. Noise is acceptable but three hits from the same layout file (import, signOut, signIn) contribute minimal additive value and increase repetition.
+| K | P | R | F1 |
+| --- | --- | --- | --- |
+| @5 | 0.80 | 0.33 | 0.47 |
+| @10 | 0.90 | 0.67 | 0.77 |
 
-## Judge Report: HYBRID SEARCH — how does user authentication work
+## Retrieval Metrics: create channel dialog
 
-**Score:** 84.1/100  |  **Confidence:** high  |  **Winner:** semantic_only
+| K | P | R | F1 |
+| --- | --- | --- | --- |
+| @5 | 0.00 | 0.00 | 0.00 |
+| @10 | 0.20 | 0.67 | 0.31 |
 
-| Subscore | Value |
-| --- | --- |
-| semantic_relevance | 92 |
-| kg_expansion_value | N/A |
-| coverage | 92 |
-| groundedness | 100 |
-| noise_control | 85 |
+## Retrieval Metrics: database schema and migrations
 
-**Strengths:**
-- Semantic search returned highly relevant results covering auth configuration, providers, middleware, and context integration.
-- Evidence provides a comprehensive view of how authentication is set up in the codebase.
-- No irrelevant or off-topic context was introduced.
-- Agent analysis is factual and directly references retrieved snippets.
+| K | P | R | F1 |
+| --- | --- | --- | --- |
+| @5 | 0.20 | 1.00 | 0.33 |
+| @10 | 0.30 | 1.00 | 0.46 |
 
-**Weaknesses:**
-- Multiple snippets from the same file (auth.tsx) create slight redundancy, though each shows a different aspect.
-- No graph expansion, but semantic saturation made it unnecessary.
+## Retrieval Metrics: post creation flow
 
-> Semantic hits are highly relevant, covering auth configuration (auth.tsx), middleware (trpc.ts), context (context.ts), routing (route.ts), and client setup (layout.tsx). Since graph expansion returned no additional hits, semantic saturation occurred—the vector index already covered the relevant neighborhood. This is not a failure of the KG but confirms semantic search was thorough. The merged evidence is complete enough to explain how user authentication works; the agent analysis is clean and grounded. The winner is semantic_only due to the strong initial retrieval and absence of incremental graph value.
+| K | P | R | F1 |
+| --- | --- | --- | --- |
+| @5 | 0.80 | 1.00 | 0.89 |
+| @10 | 0.50 | 1.00 | 0.67 |
+
+## Retrieval Metrics: adding a message
+
+| K | P | R | F1 |
+| --- | --- | --- | --- |
+| @5 | 0.80 | 0.33 | 0.47 |
+| @10 | 0.40 | 0.33 | 0.36 |
+
+## Retrieval Metrics: typing indicator
+
+| K | P | R | F1 |
+| --- | --- | --- | --- |
+| @5 | 0.60 | 1.00 | 0.75 |
+| @10 | 0.30 | 1.00 | 0.46 |
+
+## Retrieval Metrics: auth guard
+
+| K | P | R | F1 |
+| --- | --- | --- | --- |
+| @5 | 1.00 | 0.67 | 0.80 |
+| @10 | 0.60 | 1.00 | 0.75 |
+
+## Aggregate Retrieval Quality
+
+| Metric | Value | Threshold |
+| --- | --- | --- |
+| Avg P@5 | 0.689 | 0.50 |
+| Avg R@10 | 0.852 | 0.60 |
+| Avg F1@10 | 0.610 | 0.50 |
 

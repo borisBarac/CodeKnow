@@ -15,6 +15,38 @@ from codeknow.extract.ast import (
 from codeknow.extract.detect import detect
 
 
+def _reanchor_paths(cached: dict, current_path: str) -> None:
+    """Rewrite stale ``source_file`` fields in a cached extraction result.
+
+    Called on cache hits so that nodes, edges, and raw_calls point at the
+    current file path rather than the path baked in at original extraction
+    time.
+    """
+    for n in cached.get("nodes", []):
+        if n.get("source_file"):
+            n["source_file"] = current_path
+    for e in cached.get("edges", []):
+        if e.get("source_file"):
+            e["source_file"] = current_path
+    for rc in cached.get("raw_calls", []):
+        if rc.get("source_file"):
+            rc["source_file"] = current_path
+
+
+def _stale_file_nid(cached: dict) -> str | None:
+    """Return the file node ID derived from a cached result's stale source_file.
+
+    The file node is the only node whose ID is location-dependent
+    (``_make_id(str(path))``).  Before re-anchoring, we capture the stale
+    file_nid so it can be remapped to the current path's file_nid.
+    """
+    for n in cached.get("nodes", []):
+        src = n.get("source_file", "")
+        if src:
+            return _make_id(src)
+    return None
+
+
 class Extractor:
     """Single testable seam for the extraction pipeline.
 
@@ -82,6 +114,7 @@ class Extractor:
         Per-file dispatch → cache → merge → ID remap → cross-file resolution.
         """
         per_file: list[dict] = []
+        stale_id_remap: dict[str, str] = {}
 
         try:
             if not paths:
@@ -107,6 +140,11 @@ class Extractor:
                 continue
             cached = load_cached(path, self._cache_dir or root)
             if cached is not None:
+                stale_nid = _stale_file_nid(cached)
+                current_nid = _make_id(str(path))
+                _reanchor_paths(cached, str(path))
+                if stale_nid is not None and stale_nid != current_nid:
+                    stale_id_remap[stale_nid] = current_nid
                 per_file.append(cached)
                 continue
             result = extractor(path)
@@ -119,6 +157,16 @@ class Extractor:
         for result in per_file:
             all_nodes.extend(result.get("nodes", []))
             all_edges.extend(result.get("edges", []))
+
+        if stale_id_remap:
+            for n in all_nodes:
+                if n.get("id") in stale_id_remap:
+                    n["id"] = stale_id_remap[n["id"]]
+            for e in all_edges:
+                if e.get("source") in stale_id_remap:
+                    e["source"] = stale_id_remap[e["source"]]
+                if e.get("target") in stale_id_remap:
+                    e["target"] = stale_id_remap[e["target"]]
 
         id_remap: dict[str, str] = {}
         for path in paths:

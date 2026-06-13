@@ -1,4 +1,7 @@
+import atexit
 import logging
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -9,11 +12,14 @@ from codeknow.graph.cluster import cluster, cohesion_score
 CODE_TEST_SMALL = Path(__file__).parent / "code-test-small"
 logger = logging.getLogger(__name__)
 
+_GRAPH_GEN_CACHE_DIR = Path(tempfile.mkdtemp(prefix="e2e_graph_cache_"))
+atexit.register(lambda: shutil.rmtree(_GRAPH_GEN_CACHE_DIR, ignore_errors=True))
+
 
 def _run_pipeline():
     root = CODE_TEST_SMALL
     logger.info("Running pipeline on %s", root)
-    extractor = Extractor()
+    extractor = Extractor(cache_dir=_GRAPH_GEN_CACHE_DIR)
     discovery = extractor.discover(root)
     logger.info(
         "discover(): %d code files, %d total",

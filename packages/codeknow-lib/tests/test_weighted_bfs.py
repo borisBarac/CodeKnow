@@ -52,7 +52,7 @@ def test_paths_include_labels_and_arrows():
         [("seed", "a", "calls")],
     )
     result = _make_searcher(G)._bfs_seeds(["seed"], depth=2)
-    path, weight = result["a"]
+    path, weight = result["a"][:2]
     assert path == ["AuthService", "\u2192calls\u2192", "TokenValidator"]
     assert weight == 0.7
 
@@ -213,14 +213,14 @@ def test_complex_multi_seed_mixed_relations():
     ]
     assert list(result.keys()) == expected_order
 
-    _, weight_a = result["a"]
+    weight_a = result["a"][1]
     assert weight_a == 1.0
-    _, weight_k = result["k"]
+    weight_k = result["k"][1]
     assert weight_k == 2.7
-    _, weight_e = result["e"]
+    weight_e = result["e"][1]
     assert weight_e == pytest.approx(1.8)
 
-    path_j, weight_j = result["j"]
+    path_j, weight_j = result["j"][:2]
     assert path_j == [
         "S1",
         "\u2192semantically_similar_to\u2192",
@@ -231,3 +231,35 @@ def test_complex_multi_seed_mixed_relations():
         "J",
     ]
     assert weight_j == pytest.approx(2.4)
+
+
+# ── Origin-seed tracking ──────────────────────────────────────────────
+
+
+def test_origin_seed_tracked():
+    """Each discovered node records the seed that originated its traversal.
+
+    This is what lets the graph-expansion stage inherit the correct
+    per-seed distance instead of falling back to a flat constant.
+    """
+    G = _graph(
+        [
+            ("seed1", "S1"),
+            ("seed2", "S2"),
+            ("a", "A"),
+            ("b", "B"),
+            ("c", "C"),
+        ],
+        [
+            ("seed1", "a", "calls"),
+            ("a", "b", "calls"),
+            ("seed2", "c", "inherits"),
+        ],
+    )
+    result = _make_searcher(G)._bfs_seeds(["seed1", "seed2"], depth=3)
+
+    # b is only reachable via seed1 -> a -> b
+    assert result["a"][2] == "seed1"
+    assert result["b"][2] == "seed1"
+    # c is only reachable via seed2
+    assert result["c"][2] == "seed2"

@@ -60,7 +60,8 @@ check_ollama()
 check_chroma()
 
 # ── 2. Run pipeline ───────────────────────────────────────────────────
-_extractor = Extractor()
+_CACHE_DIR = Path(tempfile.mkdtemp(prefix="e2e_hybrid_cache_"))
+_extractor = Extractor(cache_dir=_CACHE_DIR)
 _discovery = _extractor.discover(CODE_TEST_SMALL)
 _extraction = _extractor.extract_from_discovery(_discovery)
 _G = build([_extraction])
@@ -110,6 +111,8 @@ def _cleanup():
         logger.warning("Could not delete collection: %s", _COLLECTION)
     shutil.rmtree(_OUTPUT_DIR, ignore_errors=True)
     logger.info("Removed temp dir: %s", _OUTPUT_DIR)
+    shutil.rmtree(_CACHE_DIR, ignore_errors=True)
+    logger.info("Removed cache dir: %s", _CACHE_DIR)
 
 
 atexit.register(_cleanup)
@@ -161,6 +164,7 @@ def test_hybrid_search_results_have_required_fields():
 def test_hybrid_search_results_sorted_by_relevance():
     resp = _search("create channel dialog", n_results=10)
     from codeknow.vector.search import GraphSearcher
+
     scores = [GraphSearcher._compute_relevance_score(r) for r in resp.results]
     assert scores == sorted(scores, reverse=True), (
         f"Results not sorted by relevance: {scores}"

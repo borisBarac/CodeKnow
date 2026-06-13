@@ -146,7 +146,7 @@ class GraphSearcher:
         max_results: int | None = None,
         effective_weights: dict[str, float] | None = None,
         dominant_communities: set[int] | None = None,
-    ) -> dict[str, tuple[list[str], float]]:
+    ) -> dict[str, tuple[list[str], float, str]]:
         if max_results is None:
             max_results = self._MAX_GRAPH_RESULTS
 
@@ -161,27 +161,27 @@ class GraphSearcher:
 
         weights = effective_weights or self.RELATION_WEIGHTS
 
-        discovered: dict[str, tuple[list[str], float]] = {}
+        discovered: dict[str, tuple[list[str], float, str]] = {}
         visited: set[str] = set()
         counter = 0
-        heap: list[tuple[float, int, str, list[str]]] = []
+        heap: list[tuple[float, int, str, list[str], str]] = []
 
         for seed in seeds:
             label = (
                 graph.nodes[seed].get("label", seed) if seed in graph.nodes else seed
             )
-            heapq.heappush(heap, (0.0, counter, seed, [label]))
+            heapq.heappush(heap, (0.0, counter, seed, [label], seed))
             counter += 1
 
         while heap:
-            neg_cum, _, node_id, path = heapq.heappop(heap)
+            neg_cum, _, node_id, path, origin_seed = heapq.heappop(heap)
 
             if node_id in visited:
                 continue
             visited.add(node_id)
 
             if node_id not in seeds:
-                discovered[node_id] = (path, -neg_cum)
+                discovered[node_id] = (path, -neg_cum, origin_seed)
                 if len(discovered) >= max_results:
                     return discovered
 
@@ -215,7 +215,9 @@ class GraphSearcher:
                     f"\u2192{relation}\u2192",
                     graph.nodes[neighbor].get("label", neighbor),
                 ]
-                heapq.heappush(heap, (-new_cum, counter, neighbor, new_path))
+                heapq.heappush(
+                    heap, (-new_cum, counter, neighbor, new_path, origin_seed)
+                )
                 counter += 1
 
         return discovered
@@ -349,6 +351,8 @@ class GraphSearcher:
             return []
 
         tokenized_corpus = [_simple_tokenize(doc) for doc in documents]
+        if not tokenized_corpus:
+            return []
         bm25 = BM25Okapi(tokenized_corpus)
         tokenized_query = _simple_tokenize(query)
         scores = bm25.get_scores(tokenized_query)
@@ -502,14 +506,14 @@ class GraphSearcher:
                 if node_id not in node_seed_map:
                     node_seed_map[node_id] = h
 
-        max_cum_weight = max((cw for _, (_, cw) in discovered.items()), default=1.0)
+        max_cum_weight = max((cw for _, (_, cw, _) in discovered.items()), default=1.0)
         if max_cum_weight <= 0:
             max_cum_weight = 1.0
 
-        node_chunk_map: dict[str, tuple[list[str], list[str], str, float]] = {}
+        node_chunk_map: dict[str, tuple[list[str], list[str], str, float, str]] = {}
         all_new_hashes: set[str] = set()
 
-        for node_id, (path, cum_weight) in discovered.items():
+        for node_id, (path, cum_weight, origin_seed) in discovered.items():
             node_data = self._graph.nodes[node_id]
             node_chunks = node_data.get("chunks", [])
             if not node_chunks:
@@ -521,19 +525,26 @@ class GraphSearcher:
                 continue
 
             node_label = node_data.get("label", node_id)
-            node_chunk_map[node_id] = (new_hashes, path, node_label, cum_weight)
+            node_chunk_map[node_id] = (
+                new_hashes,
+                path,
+                node_label,
+                cum_weight,
+                origin_seed,
+            )
             all_new_hashes.update(new_hashes)
 
         if all_new_hashes:
             fetched = self._fetch_chunks_from_store(store, list(all_new_hashes))
 
-            for node_id, (
+            for (
                 new_hashes,
                 path,
                 node_label,
                 cum_weight,
-            ) in node_chunk_map.items():
-                seed_hash = node_seed_map.get(node_id)
+                origin_seed,
+            ) in node_chunk_map.values():
+                seed_hash = node_seed_map.get(origin_seed)
                 seed_dist = seed_distances.get(seed_hash, 0.8) if seed_hash else 0.8
 
                 for chunk_hash in new_hashes:
@@ -542,9 +553,9 @@ class GraphSearcher:
                     content, meta = fetched[chunk_hash]
 
                     weight_ratio = min(0.8, cum_weight / max_cum_weight)
-                    estimated_distance = seed_dist * (1.0 - weight_ratio)
-                    est = seed_dist * (1.0 - weight_ratio)
-                    estimated_distance = max(0.1, min(seed_dist * 0.8, est))
+                    estimated_distance = max(
+                        0.1, min(seed_dist * 0.8, seed_dist * (1.0 - weight_ratio))
+                    )
 
                     by_hash[chunk_hash] = HybridSearchResult(
                         chunk_hash=chunk_hash,

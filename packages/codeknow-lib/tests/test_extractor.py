@@ -148,6 +148,86 @@ class TestExtractorCaching:
         assert len(r1["nodes"]) == len(r2["nodes"])
         assert len(r1["edges"]) == len(r2["edges"])
 
+    def test_cache_hit_reanchors_source_file(self, tmp_path: Path) -> None:
+        """Cached extraction with stale paths must be re-anchored to the
+        current file path.
+
+        1. Extract in dir A (populating cache at a/graph-out/cache/).
+        2. Copy dir A (including cache) to dir B.
+        3. Extract from B — every file hits stale cache from A.
+        4. Assert source_file references B, not A.
+        """
+        import shutil
+
+        dir_a = tmp_path / "a"
+        dir_a.mkdir()
+        (dir_a / "main.py").write_text("class Foo:\n    pass\n")
+
+        Extractor(cache_dir=dir_a).extract(dir_a)
+        shutil.copytree(dir_a, tmp_path / "b")
+        dir_b = tmp_path / "b"
+
+        result_b = Extractor(cache_dir=dir_b).extract(dir_b)
+
+        for node in result_b["nodes"]:
+            src = node.get("source_file", "")
+            if src:
+                assert str(dir_b) in src, (
+                    f"source_file {src!r} should reference dir_b, not dir_a"
+                )
+                assert str(dir_a) not in src
+
+    def test_cache_hit_remaps_stale_file_node_id(self, tmp_path: Path) -> None:
+        """Cached file node IDs (location-dependent) must be remapped so
+        cross-file edges connect after a stale cache hit.
+
+        Uses two files with a cross-file import to exercise the stale ID
+        remap for both source and target of edges.
+        """
+        import shutil
+
+        dir_a = tmp_path / "a"
+        dir_a.mkdir()
+        for name, content in (
+            ("a.py", "from b import Bar\n\nclass Foo:\n    x = Bar()\n"),
+            ("b.py", "class Bar:\n    pass\n"),
+        ):
+            (dir_a / name).write_text(content)
+
+        result_a = Extractor(cache_dir=dir_a).extract(dir_a)
+
+        shutil.copytree(dir_a, tmp_path / "b")
+        dir_b = tmp_path / "b"
+
+        result_b = Extractor(cache_dir=dir_b).extract(dir_b)
+
+        file_ids_a = {n["id"] for n in result_a["nodes"] if n["label"].endswith(".py")}
+        file_ids_b = {n["id"] for n in result_b["nodes"] if n["label"].endswith(".py")}
+        assert file_ids_a == file_ids_b, (
+            "File node IDs should be relative-path-based and identical "
+            f"across dirs. A={file_ids_a}, B={file_ids_b}"
+        )
+
+    def test_cache_hit_preserves_raw_calls(self, tmp_path: Path) -> None:
+        """raw_calls must survive the cache roundtrip so inferred calls
+        edges are generated on cache hits.
+        """
+        (tmp_path / "main.py").write_text(
+            "class Foo:\n    def bar(self):\n        external_func()\n"
+        )
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+
+        ext = Extractor(cache_dir=cache_dir)
+        ext.extract(tmp_path)
+
+        from codeknow.cache import load_cached
+
+        cached = load_cached(tmp_path / "main.py", cache_dir)
+        assert cached is not None
+        assert "raw_calls" in cached
+        assert len(cached["raw_calls"]) > 0
+
 
 class TestExtractorWordCount:
     def test_total_words_increments_for_documents(self, tmp_path: Path) -> None:

@@ -92,6 +92,7 @@ class ExtractionResult(BaseModel):
     nodes: list[dict] = Field(default_factory=list)
     edges: list[dict] = Field(default_factory=list)
     hyperedges: list[dict] = Field(default_factory=list)
+    raw_calls: list[dict] = Field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
 
