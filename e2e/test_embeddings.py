@@ -4,7 +4,7 @@ Verifies the full lifecycle: generate embeddings from real code text,
 store them in ChromaDB, search by text and by vector, and delete.
 
 No pytest fixtures — all setup runs at module import time:
-  1. Health-check Ollama & ChromaDB via check_services.py
+  1. Health-check Docker Model Runner & ChromaDB via check_services.py
   2. Create Embeddings + ChromaStore
   3. Write real Python source files to a temp dir
   4. Build Chunk objects and store embeddings
@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 import chromadb
-from check_services import check_chroma, check_ollama
+from check_services import check_chroma, check_docker_model_runner
 from codeknow.schemas import Chunk
 from codeknow.vector import (
     ChromaConfig,
@@ -66,7 +66,7 @@ def _file(r) -> str:
 
 
 # ── 1. Health-check services ─────────────────────────────────────────
-check_ollama()
+check_docker_model_runner()
 check_chroma()
 
 # ── 2. Create clients ────────────────────────────────────────────────

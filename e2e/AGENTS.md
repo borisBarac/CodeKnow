@@ -36,9 +36,9 @@ defaults). `e2e/conftest.py` auto-loads this file at collection time via
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `EMBEDDING_PROVIDER` | `ollama` | Embedding backend (enables Ollama check) |
-| `EMBEDDING_MODEL` | `qwen3-embedding:4b` | Embedding model name |
-| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama API base URL |
+| `EMBEDDING_PROVIDER` | `docker` | Embedding backend (enables DMR check) |
+| `EMBEDDING_MODEL` | `ai/qwen3-embedding` | Embedding model name |
+| `DOCKER_MODEL_RUNNER_URL` | `http://localhost:12434/engines/v1` | DMR API base URL |
 | `CHROMA_HOST` / `CHROMA_PORT` | `localhost` / `8018` | ChromaDB address |
 | `JUDGE_LLM_MODEL` | `deepseek/deepseek-v4-pro` | LLM judge model |
 | `JUDGE_LLM_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible judge API base |
@@ -50,6 +50,7 @@ defaults). `e2e/conftest.py` auto-loads this file at collection time via
 Before tests run, `check_services.py` verifies that required services are
 reachable:
 
+- **Docker Model Runner** (when `EMBEDDING_PROVIDER=docker`) — pings `DOCKER_MODEL_RUNNER_URL/engines/v1/models`
 - **Ollama** (when `EMBEDDING_PROVIDER=ollama`) — pings `OLLAMA_BASE_URL/api/tags`
 - **ChromaDB** — pings `CHROMA_HOST:CHROMA_PORT/api/v2/heartbeat`
 
@@ -59,21 +60,21 @@ instructions on how to start it.
 ### Starting services
 
 ```bash
-# Ollama
-ollama serve
-
-# ChromaDB
+# ChromaDB + Redis + embedding model (all via Docker Compose)
 in infra folder: 'docker compose up'
+
+# Docker Model Runner (ensure enabled with TCP access)
+docker desktop enable model-runner --tcp 12434
 ```
 
 ## Test Suites
 
 | Path | What it tests | Services required |
 | --- | --- | --- |
-| `test_embeddings.py` | Embedding generation + ChromaDB lifecycle: store, search by text/vector, ranking, delete. | Ollama + ChromaDB |
-| `graph_gen/test_graph_gen.py` | Pipeline on `graph_gen/code-test-small/`: discover → extract → build → cluster. | Ollama + ChromaDB |
-| `graph_gen/test_hybrid_search.py` | Hybrid search (vector + graph traversal): smoke tests, deterministic retrieval-metric gates (P@5, R@10, F1@10 against ground truth), and an LLM-judge quality gate. | Ollama + ChromaDB (+ LLM key for judge) |
-| `graph_gen/test_hybrid_vs_agent_grep.py` | Hybrid search vs an agent-grep (ripgrep) baseline, both LLM-judged. Reuses setup from `test_hybrid_search.py`. | Ollama + ChromaDB + LLM key |
+| `test_embeddings.py` | Embedding generation + ChromaDB lifecycle: store, search by text/vector, ranking, delete. | DMR + ChromaDB |
+| `graph_gen/test_graph_gen.py` | Pipeline on `graph_gen/code-test-small/`: discover → extract → build → cluster. | DMR + ChromaDB |
+| `graph_gen/test_hybrid_search.py` | Hybrid search (vector + graph traversal): smoke tests, deterministic retrieval-metric gates (P@5, R@10, F1@10 against ground truth), and an LLM-judge quality gate. | DMR + ChromaDB (+ LLM key for judge) |
+| `graph_gen/test_hybrid_vs_agent_grep.py` | Hybrid search vs an agent-grep (ripgrep) baseline, both LLM-judged. Reuses setup from `test_hybrid_search.py`. | DMR + ChromaDB + LLM key |
 | `judge/judge.py`, `judge/schemas.py` | Shared LLM judge library (LangChain structured output) used by the graph_gen suites. | — |
 | `judge/test_judge.py` | Tests the judge itself with synthetic `JudgeInput` data. | LLM key |
 | `api_cli_integration/test_cli_api_integration.py` | CLI commands through the real FastAPI server with `CODEKNOW_STUB=1` (`StubMiddleware` returns canned JSON). | **None** (fully stubbed, no network) |

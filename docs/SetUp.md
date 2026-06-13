@@ -35,6 +35,16 @@ uv run project-scripts.py dev-check  # ruff + pyrefly
 uv run project-scripts.py pipeline   # run the pipeline on a repo
 ```
 
+## Infrastructure
+
+Running the pipeline and the e2e suite needs three backing services up: **ChromaDB**, **Redis**, and **Docker Model Runner** (embeddings). Bring them up with:
+
+```bash
+docker compose -f infra/docker-compose.yml up -d
+```
+
+See [infra-setup.md](infra-setup.md) for details, the embedding-model setup script, and troubleshooting.
+
 ## Troubleshooting
 
 ### `uv: command not found`

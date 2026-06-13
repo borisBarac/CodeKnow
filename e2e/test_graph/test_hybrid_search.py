@@ -3,7 +3,7 @@
 Runs the full pipeline on code-test-small, saves artifacts, embeds chunks
 into ChromaDB, then calls GraphSearcher.search() and validates the response.
 
-Requires running Ollama + ChromaDB (checked at import time).
+Requires running Docker Model Runner + ChromaDB (checked at import time).
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from typing import Any
 
 import chromadb
 import pytest
-from check_services import check_chroma, check_ollama
+from check_services import check_chroma, check_docker_model_runner
 from codeknow.extract import Extractor
 from codeknow.graph.build import build
 from codeknow.graph.cluster import cluster
@@ -56,7 +56,7 @@ RESULT_MD.write_text(
 )
 
 # ── 1. Health-check services ──────────────────────────────────────────
-check_ollama()
+check_docker_model_runner()
 check_chroma()
 
 # ── 2. Run pipeline ───────────────────────────────────────────────────

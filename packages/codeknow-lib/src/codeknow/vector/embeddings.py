@@ -4,19 +4,22 @@ Provides a provider-agnostic factory that returns any LangChain ``Embeddings``
 instance, plus helpers that convert the project's ``Chunk`` / ``ChunkMap``
 types into ``{hash: embedding}`` dicts ready for a vector store.
 
-Both supported providers use the OpenAI-compatible API via
+All supported providers use the OpenAI-compatible API via
 ``langchain_openai.OpenAIEmbeddings``:
 
+- **docker** — local inference via Docker Model Runner (DMR exposes an
+  ``/engines/v1`` OpenAI-compatible endpoint)
 - **ollama** — local inference (Ollama exposes an ``/v1`` OpenAI-compatible
   endpoint)
 - **openrouter** — cloud inference (OpenRouter exposes an OpenAI-compatible API)
 
 Configuration is read from a ``.env`` file in the working directory:
 
-- ``EMBEDDING_PROVIDER`` — ``"ollama"`` (default) or ``"openrouter"``
-- ``EMBEDDING_MODEL`` — model name (default ``"qwen3-embedding:4b"``)
-- ``OLLAMA_BASE_URL``, ``OPENROUTER_BASE_URL``, ``OPENROUTER_API_KEY``
-  — provider-specific connection details.
+- ``EMBEDDING_PROVIDER`` — ``"docker"`` (default), ``"ollama"``, or
+  ``"openrouter"``
+- ``EMBEDDING_MODEL`` — model name (default ``"ai/qwen3-embedding:4B"``)
+- ``DOCKER_MODEL_RUNNER_URL``, ``OLLAMA_BASE_URL``, ``OPENROUTER_BASE_URL``,
+  ``OPENROUTER_API_KEY`` — provider-specific connection details.
 """
 
 from __future__ import annotations
@@ -62,12 +65,15 @@ class EmbeddingConfig(BaseSettings):
         env_file=".env", extra="ignore", populate_by_name=True
     )
 
-    provider: Literal["ollama", "openrouter"] = Field(
-        default="ollama", alias="EMBEDDING_PROVIDER"
+    provider: Literal["docker", "ollama", "openrouter"] = Field(
+        default="docker", alias="EMBEDDING_PROVIDER"
     )
-    model: str = Field(default="qwen3-embedding:4b", alias="EMBEDDING_MODEL")
+    model: str = Field(default="ai/qwen3-embedding:4B", alias="EMBEDDING_MODEL")
     base_url: str | None = None
     api_key: str | None = None
+    docker_base_url: str = Field(
+        default="http://localhost:12434/engines/v1", alias="DOCKER_MODEL_RUNNER_URL"
+    )
     ollama_base_url: str = Field(
         default="http://localhost:11434/v2", alias="OLLAMA_BASE_URL"
     )
@@ -79,6 +85,8 @@ class EmbeddingConfig(BaseSettings):
     def resolved_base_url(self) -> str:
         if self.base_url:
             return self.base_url
+        if self.provider == "docker":
+            return self.docker_base_url
         if self.provider == "ollama":
             return self.ollama_base_url
         return self.openrouter_base_url
@@ -86,6 +94,8 @@ class EmbeddingConfig(BaseSettings):
     def resolved_api_key(self) -> str:
         if self.api_key:
             return self.api_key
+        if self.provider == "docker":
+            return "not-needed"
         if self.provider == "ollama":
             return "ollama"
         if self.openrouter_api_key:
@@ -103,7 +113,7 @@ def create_embeddings(config: EmbeddingConfig) -> Embeddings:
         "api_key": config.resolved_api_key(),
         "base_url": config.resolved_base_url(),
     }
-    if config.provider == "ollama":
+    if config.provider in ("docker", "ollama"):
         kwargs["check_embedding_ctx_length"] = False
     return OpenAIEmbeddings(**kwargs)
 

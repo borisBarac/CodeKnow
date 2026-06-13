@@ -1,4 +1,4 @@
-"""Health-checks for external services (Ollama, ChromaDB).
+"""Health-checks for external services (Docker Model Runner, Ollama, ChromaDB).
 
 These functions raise :exc:`ConnectionError` on failure so callers can decide
 whether to exit, retry, or degrade gracefully.
@@ -13,8 +13,56 @@ from urllib.error import HTTPError, URLError
 DEFAULT_CHROMA_HOST = "localhost"
 DEFAULT_CHROMA_PORT = 8018
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+DEFAULT_DMR_BASE_URL = "http://localhost:12434"
 
 _TIMEOUT = 3
+
+
+def check_docker_model_runner(base_url: str | None = None) -> None:
+    """Verify Docker Model Runner (DMR) is reachable.
+
+    Parameters
+    ----------
+    base_url:
+        Root URL of the DMR host (e.g. ``http://localhost:12434``).
+        If omitted, falls back to the ``DOCKER_MODEL_RUNNER_URL`` environment
+        variable (any ``/engines/v1`` suffix is stripped), then
+        ``http://localhost:12434``.
+
+    Raises
+    ------
+    ConnectionError
+        If DMR returned a non-2xx status or is unreachable.
+
+    """
+    if base_url is None:
+        raw = os.environ.get("DOCKER_MODEL_RUNNER_URL", DEFAULT_DMR_BASE_URL)
+        base_url = raw.rstrip("/").removesuffix("/engines/v1")
+    url = f"{base_url.rstrip('/')}/engines/v1/models"
+    resp_status: int | None = None
+    try:
+        req = urllib.request.Request(url, method="GET")  # noqa: S310
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:  # noqa: S310
+            resp_status = resp.status
+    except HTTPError as exc:
+        msg = (
+            f"Docker Model Runner returned HTTP {exc.code} at {url}. "
+            "Ensure DMR is enabled:  docker desktop enable model-runner"
+        )
+        raise ConnectionError(msg) from exc
+    except (URLError, OSError) as exc:
+        msg = (
+            f"Cannot reach Docker Model Runner at {url}: {exc}. "
+            "Ensure DMR is enabled:  docker desktop enable model-runner"
+        )
+        raise ConnectionError(msg) from exc
+
+    if resp_status is not None and resp_status >= 400:
+        msg = (
+            f"Docker Model Runner returned HTTP {resp_status} at {url}. "
+            "Ensure DMR is enabled:  docker desktop enable model-runner"
+        )
+        raise ConnectionError(msg)
 
 
 def check_ollama(base_url: str | None = None) -> None:

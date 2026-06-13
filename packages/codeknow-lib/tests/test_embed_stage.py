@@ -117,13 +117,13 @@ class TestEmbedStage:
 
         assert out.embed_stats is not None
         assert out.embed_stats["chunks_embedded"] == 5
-        assert out.embed_stats["provider"] == "ollama"
-        assert out.embed_stats["model"] == "qwen3-embedding:4b"
+        assert out.embed_stats["provider"] == "docker"
+        assert out.embed_stats["model"] == "ai/qwen3-embedding:4B"
         mock_store.store_chunk_map.assert_called_once()
         mock_create_emb.assert_called_once()
         emb_config = mock_create_emb.call_args[0][0]
-        assert emb_config.provider == "ollama"
-        assert emb_config.model == "qwen3-embedding:4b"
+        assert emb_config.provider == "docker"
+        assert emb_config.model == "ai/qwen3-embedding:4B"
 
     def test_embed_skipped_when_no_embed(self):
         config = _make_config(no_embed=True)

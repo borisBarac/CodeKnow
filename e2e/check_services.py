@@ -38,6 +38,15 @@ def check_ollama(base_url: str | None = None) -> None:
         _die(str(exc))
 
 
+def check_docker_model_runner(base_url: str | None = None) -> None:
+    from codeknow.service_checks import check_docker_model_runner as _check
+
+    try:
+        _check(base_url)
+    except ConnectionError as exc:
+        _die(str(exc))
+
+
 def check_chroma(host: str | None = None, port: int | None = None) -> None:
     from codeknow.service_checks import check_chroma as _check
 
@@ -48,9 +57,13 @@ def check_chroma(host: str | None = None, port: int | None = None) -> None:
 
 
 if __name__ == "__main__":
-    provider = os.environ.get("EMBEDDING_PROVIDER", "ollama")
+    provider = os.environ.get("EMBEDDING_PROVIDER", "docker")
 
-    if provider == "ollama":
+    if provider == "docker":
+        print("Checking Docker Model Runner...")
+        check_docker_model_runner()
+        print("Docker Model Runner: OK")
+    elif provider == "ollama":
         print("Checking Ollama...")
         check_ollama()
         print("Ollama: OK")

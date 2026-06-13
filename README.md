@@ -6,12 +6,15 @@ Index GitHub repos into a searchable code knowledge graph. Ships a CLI, a FastAP
 
 - [Set up for development](docs/SetUp.md)
 - [Install as a tool/dependency](docs/install.md)
+- [Infrastructure setup (ChromaDB, Redis, embeddings)](docs/infra-setup.md)
 
 ## Quick start
 
+By default the CLI connects to the API exposed by the Docker stack (`localhost:8080`) — no daemon to manage:
+
 ```bash
-# 1. Start the background daemon
-codeknow daemon start
+# 1. Start the full stack (API + ChromaDB + Redis + embeddings) — see docs/infra-setup.md
+docker compose -f infra/docker-compose.yml up -d --build
 
 # 2. Index a repo
 codeknow add git@github.com:owner/repo.git
@@ -19,9 +22,11 @@ codeknow add git@github.com:owner/repo.git
 # 3. Search
 codeknow search "how does auth work"
 
-# 4. Stop the daemon
-codeknow daemon stop
+# 4. Stop the stack
+docker compose -f infra/docker-compose.yml down
 ```
+
+To have the CLI manage a local `codeknow-api` process instead, opt into daemon mode with `CODEKNOW_DAEMON=1`. See [docs/usage.md](docs/usage.md).
 
 ## How search works
 
@@ -59,14 +64,14 @@ codeknow search "database connection" --slug owner-repo --slug other-repo
 
 | Command | Description |
 |---|---|
-| `codeknow daemon start` | Start the background API service |
-| `codeknow daemon stop` | Stop the background API service |
-| `codeknow daemon status` | Check if the daemon is running |
 | `codeknow add <ssh-url>` | Index a GitHub repo |
 | `codeknow remove <slug>` | Remove an indexed repo |
 | `codeknow search <query>` | Search the knowledge graph |
-| `codeknow info` | Show daemon status and indexed repos |
+| `codeknow info` | Show API status and indexed repos |
 | `codeknow clean` | Remove cached repos, graph output, and temp files |
+| `codeknow daemon start/stop/status` | Manage a local API process (**opt-in**: `CODEKNOW_DAEMON=1`) |
+
+By default the CLI connects to the API exposed by the Docker stack at `localhost:8080`. The `daemon` subcommands appear only when `CODEKNOW_DAEMON=1` is set. See [docs/usage.md](docs/usage.md).
 
 Use `--slug` to scope search to specific repos (repeatable):
 
@@ -100,6 +105,8 @@ packages/
 
 | Variable | Default | Description |
 |---|---|---|
-| `CODEKNOW_HOST` | `localhost` | CLI → API host |
+| `CODEKNOW_API_URL` | *(unset)* | Explicit remote API URL; takes priority over everything else |
+| `CODEKNOW_DAEMON` | *(unset)* | Set to `1` to enable local daemon mode (CLI manages the API process) |
+| `CODEKNOW_HOST` | `localhost` | API server host (daemon mode) |
 | `CODEKNOW_API_PORT` | `8080` | API server port |
 | `CODEKNOW_API_HOST` | `127.0.0.1` | API server bind host |

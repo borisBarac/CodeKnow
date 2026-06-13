@@ -1,0 +1,58 @@
+# Version control / metadata
+.git
+.gitignore
+.gitattributes
+
+# Python caches & build artifacts
+**/__pycache__
+**/*.py[cod]
+**/*$py.class
+.ruff_cache
+.mypy_cache
+.pytest_cache
+.pytype
+.pybuilder
+.coverage
+.coverage.*
+htmlcov
+coverage.xml
+*.egg-info
+build
+dist
+.eggs
+
+# Local virtualenvs (deps are resolved from uv.lock inside the image)
+.venv
+venv
+env
+
+# Tests, e2e, docs — not needed to run the API
+e2e
+docs
+**/tests
+
+# Project tooling / trackers
+.dolt
+*.db
+.beads
+.beads-credential-key
+AGENTS.md
+**/CONTEXT.md
+
+# Persisted service data (managed via volumes in docker-compose)
+infra/chroma-data
+infra/api-data
+
+# Node / JS artifacts
+node_modules
+
+# OS / editor noise
+.DS_Store
+._*
+.idea
+.vscode
+
+# Local env overrides — must never be baked into an image
+.env
+.env.*
+*.log

@@ -10,7 +10,7 @@ Quick start::
     )
 
     # Reads EMBEDDING_PROVIDER and EMBEDDING_MODEL from .env
-    # (defaults: ollama / qwen3-embedding:4b)
+    # (defaults: docker / ai/qwen3-embedding:4B)
     embeddings = create_embeddings(EmbeddingConfig())
     store = ChromaStore(ChromaConfig(), embeddings)
     store.store_chunk_map(chunk_map)

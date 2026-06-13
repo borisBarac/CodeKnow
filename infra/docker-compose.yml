@@ -10,6 +10,8 @@ services:
     environment:
       - CONFIG_PATH=/chroma/config.yaml
     restart: unless-stopped
+    models:
+      - qwen3-embedding
 
   redis:
     image: redis:7-alpine
@@ -18,3 +20,49 @@ services:
       - "6379:6379"
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     restart: unless-stopped
+
+  api:
+    build:
+      # The build context is the repository root: codeknow-api is part of a
+      # uv workspace, so the root pyproject.toml, uv.lock and packages/ must
+      # all be available to the build.
+      context: ..
+      dockerfile: packages/codeknow-api/Dockerfile
+    image: codeknow-api
+    container_name: codeknow-api
+    ports:
+      - "8080:8080"
+    environment:
+      # Bind on all interfaces inside the container.
+      - CODEKNOW_API_HOST=0.0.0.0
+      - CODEKNOW_API_PORT=8080
+      # Reach the sibling services by their compose hostnames on the
+      # *internal* container ports (NOT the host-published ports).
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - CODEKNOW_REDIS_URL=redis://redis:6379
+      # Default embedding provider is Docker Model Runner (DMR), which runs
+      # on the host. Reach it via host.docker.internal (enabled in extra_hosts).
+      - EMBEDDING_PROVIDER=docker
+      - EMBEDDING_MODEL=ai/qwen3-embedding:4B
+      - DOCKER_MODEL_RUNNER_URL=http://host.docker.internal:12434/engines/v1
+      # Ollama (legacy): used only if you switch EMBEDDING_PROVIDER back to "ollama".
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - CODEKNOW_GRAPH_DIR=/data/graph
+      - CODEKNOW_TEMP_DIR=/data/temp
+    volumes:
+      - ./api-data:/data
+    depends_on:
+      - chromadb
+      - redis
+    extra_hosts:
+      # Enables host.docker.internal on Linux (no-op on Docker Desktop).
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+models:
+  qwen3-embedding:
+    model: ai/qwen3-embedding:4B
+    context_size: 2048
+    runtime_flags:
+      - "--embeddings"

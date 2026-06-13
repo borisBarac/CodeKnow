@@ -3,7 +3,11 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-from codeknow.service_checks import check_chroma, check_ollama
+from codeknow.service_checks import (
+    check_chroma,
+    check_docker_model_runner,
+    check_ollama,
+)
 
 
 class TestCheckOllama:
@@ -66,6 +70,55 @@ class TestCheckOllama:
         )
         with pytest.raises(ConnectionError, match="Ollama returned HTTP 500"):
             check_ollama("http://localhost:11434")
+
+
+class TestCheckDockerModelRunner:
+    @patch("urllib.request.urlopen")
+    def test_explicit_base_url_used(self, mock_urlopen):
+        mock_urlopen.return_value.__enter__.return_value.status = 200
+        check_docker_model_runner("http://custom:12434")
+        req = mock_urlopen.call_args[0][0]
+        assert req.full_url == "http://custom:12434/engines/v1/models"
+
+    @patch("urllib.request.urlopen")
+    def test_env_var_fallback(self, mock_urlopen, monkeypatch):
+        monkeypatch.setenv("DOCKER_MODEL_RUNNER_URL", "http://env-dmr:12434/engines/v1")
+        mock_urlopen.return_value.__enter__.return_value.status = 200
+        check_docker_model_runner()
+        req = mock_urlopen.call_args[0][0]
+        assert req.full_url == "http://env-dmr:12434/engines/v1/models"
+
+    @patch("urllib.request.urlopen")
+    def test_default_when_no_arg_or_env(self, mock_urlopen, monkeypatch):
+        monkeypatch.delenv("DOCKER_MODEL_RUNNER_URL", raising=False)
+        mock_urlopen.return_value.__enter__.return_value.status = 200
+        check_docker_model_runner()
+        req = mock_urlopen.call_args[0][0]
+        assert req.full_url == "http://localhost:12434/engines/v1/models"
+
+    @patch("urllib.request.urlopen")
+    def test_strips_engines_v1_suffix_from_env(self, mock_urlopen, monkeypatch):
+        monkeypatch.setenv("DOCKER_MODEL_RUNNER_URL", "http://env-dmr:12434/engines/v1")
+        mock_urlopen.return_value.__enter__.return_value.status = 200
+        check_docker_model_runner()
+        req = mock_urlopen.call_args[0][0]
+        assert req.full_url == "http://env-dmr:12434/engines/v1/models"
+
+    @patch("urllib.request.urlopen")
+    def test_http_500_raises_connection_error(self, mock_urlopen):
+        mock_urlopen.return_value.__enter__.return_value.status = 500
+        with pytest.raises(
+            ConnectionError, match="Docker Model Runner returned HTTP 500"
+        ):
+            check_docker_model_runner("http://localhost:12434")
+
+    @patch("urllib.request.urlopen")
+    def test_urlerror_raises_connection_error(self, mock_urlopen):
+        from urllib.error import URLError
+
+        mock_urlopen.side_effect = URLError("Connection refused")
+        with pytest.raises(ConnectionError, match="Cannot reach Docker Model Runner"):
+            check_docker_model_runner("http://localhost:12434")
 
 
 class TestCheckChroma:
