@@ -52,7 +52,7 @@ Stop it:
 docker compose -f infra/docker-compose.yml down
 ```
 
-> **Two ways to run the API.** This step runs `codeknow-api` *inside* a container as part of the stack (the CLI's default target). You can instead run it as a local process by opting into daemon mode with `CODEKNOW_DAEMON=1` — see [usage.md](usage.md). Both modes share the same ChromaDB / Redis / model services.
+> **Two ways to run the API.** This step runs `codeknow-api` *inside* a container as part of the stack (the CLI's default `docker` mode). You can instead run it as a local host process by switching the CLI to `daemon` mode with `codeknow server mode daemon` — see [usage.md](usage.md). Both modes share the same ChromaDB / Redis / model services.
 
 ---
 
@@ -98,30 +98,32 @@ rg --version
 
 ## Connect the app
 
-How you connect the CLI depends on whether the API runs in a container or as a local process.
+How you connect the CLI depends on whether the API runs in a container or as a local process. The CLI is **config-file driven** (not env-var driven) — it reads its `mode` from `~/.codeknow/config.jsonl`.
 
-### API in Docker (full-stack mode, default)
+### API in Docker (docker mode, default)
 
-If you started the whole stack in step 1, the API is already running on `localhost:8080` — which is exactly where the CLI points **by default**, so nothing to configure:
+If you started the whole stack in step 1, the API is already running on `localhost:8080` — which is exactly where the CLI points **by default** (`mode: docker`), so nothing to configure:
 
 ```bash
 codeknow info   # should report "API: http://localhost:8080 (remote)"
 ```
 
-No `CODEKNOW_API_URL` is needed; the CLI is in remote mode by default. (Set it only if the API isn't on `localhost:8080`.)
+No config edits are needed; `docker` is the default mode. (Switch to `remote` mode and set `remote_url` only if the API isn't on `localhost:8080`.)
 
 ### API as a local process (daemon mode)
 
-If you'd rather run the API as a host process that the CLI manages, opt into daemon mode and copy `.env.example` to `.env` (the defaults match the host ports above):
+If you'd rather run the API as a host process that the CLI manages, switch the CLI to daemon mode:
 
 ```bash
-export CODEKNOW_DAEMON=1   # expose and enable the `daemon` subcommand
+codeknow server mode daemon
 ```
 
+The `host` / `port` fields in `~/.codeknow/config.jsonl` control the bind address (defaults `localhost` / `8080`, which match the host ports above). The backing services (ChromaDB, Redis, embeddings) are reached via their own environment variables — see `.env.example` for the defaults:
+
 ```bash
-# Embeddings (Docker Model Runner)
+# Embeddings (Docker Model Runner) — defaults already match the infra/ setup
 EMBEDDING_PROVIDER=docker
-EMBEDDING_MODEL=ai/qwen3-embedding
+EMBEDDING_MODEL=ai/qwen3-embedding:4B
 # DOCKER_MODEL_RUNNER_URL=http://localhost:12434/engines/v1
 
 # ChromaDB
@@ -142,9 +144,10 @@ All three connection values are commented out because the defaults already match
 
 ```bash
 # 1. ChromaDB + Redis + API + embedding model (provisioned automatically)
-docker compose -f infra/docker-compose.yml up -d --build
+#    run from the repo root — equivalent to: docker compose -f infra/docker-compose.yml up -d --build
+codeknow server start
 
-# 2. The CLI targets localhost:8080 by default — just use it
+# 2. The CLI is in docker mode by default (targets localhost:8080) — just use it
 codeknow add git@github.com:owner/repo.git
 codeknow search "how does auth work"
 ```
@@ -156,9 +159,9 @@ codeknow search "how does auth work"
 docker compose -f infra/docker-compose.yml up -d chromadb redis
 bash infra/setup-embedding-model.sh
 
-# 2. Opt into daemon mode, run the API, and index a repo
-export CODEKNOW_DAEMON=1
-codeknow daemon start
+# 2. Switch to daemon mode, run the API, and index a repo
+codeknow server mode daemon
+codeknow server start
 codeknow add git@github.com:owner/repo.git
 ```
 

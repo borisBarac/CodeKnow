@@ -50,11 +50,12 @@ uv tool uninstall codeknow
 
 ## Quick start
 
-By default the CLI connects to the API exposed by the Docker Compose stack (`localhost:8080`) — no daemon to manage:
+By default the CLI is in `docker` mode and connects to the API exposed by the Docker Compose stack (`localhost:8080`) — nothing to configure:
 
 ```bash
 # 1. Start the full stack (API + ChromaDB + Redis + embeddings) — see infra-setup.md
-docker compose -f infra/docker-compose.yml up -d --build
+#    (run from the repo root; equivalent to: docker compose -f infra/docker-compose.yml up -d --build)
+codeknow server start
 
 # 2. Index a repo
 codeknow add git@github.com:owner/repo.git
@@ -63,28 +64,29 @@ codeknow add git@github.com:owner/repo.git
 codeknow search "how does auth work"
 
 # 4. Stop the stack
-docker compose -f infra/docker-compose.yml down
+codeknow server stop
 ```
 
-Prefer to have the CLI manage the API as a local background process? Opt into daemon mode:
+Prefer to have the CLI manage the API as a local background process? Switch modes:
 
 ```bash
-export CODEKNOW_DAEMON=1
-codeknow daemon start
+codeknow server mode daemon
+codeknow server start
 ```
 
 ## Remote mode
 
-The default already *is* remote — the CLI talks to an API it didn't start (the Docker stack on `localhost:8080`). To point it at a different host, set `CODEKNOW_API_URL`:
+To point the CLI at any other API (shared, remote, or cloud-hosted), switch to `remote` mode and set `remote_url`:
 
 ```bash
-export CODEKNOW_API_URL=https://api.example.com
+codeknow server mode remote
+# edit ~/.codeknow/config.jsonl and set "remote_url": "https://api.example.com"
 codeknow add git@github.com:owner/repo.git
 ```
 
-While `CODEKNOW_API_URL` is set, no local daemon is spawned. To run a local daemon instead, set `CODEKNOW_DAEMON=1`.
+While in `remote` mode, the CLI only talks to that API; it does not start or stop any local server. Switch back to `docker` or `daemon` any time with `codeknow server mode <mode>`.
 
-See [usage.md](usage.md) for the full command reference, endpoint-resolution precedence, daemon flags, and environment variables.
+See [usage.md](usage.md) for the full command reference, mode resolution, config-file format, and how to run `codeknow-api` directly.
 
 ## Troubleshooting
 

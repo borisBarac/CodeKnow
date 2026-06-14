@@ -10,11 +10,12 @@ Index GitHub repos into a searchable code knowledge graph. Ships a CLI, a FastAP
 
 ## Quick start
 
-By default the CLI connects to the API exposed by the Docker stack (`localhost:8080`) — no daemon to manage:
+The CLI connects to the API exposed by the Docker stack (`localhost:8080`) by default — no daemon to manage:
 
 ```bash
 # 1. Start the full stack (API + ChromaDB + Redis + embeddings) — see docs/infra-setup.md
-docker compose -f infra/docker-compose.yml up -d --build
+#    (run from the repo root; equivalent to: docker compose -f infra/docker-compose.yml up -d --build)
+codeknow server start
 
 # 2. Index a repo
 codeknow add git@github.com:owner/repo.git
@@ -23,10 +24,10 @@ codeknow add git@github.com:owner/repo.git
 codeknow search "how does auth work"
 
 # 4. Stop the stack
-docker compose -f infra/docker-compose.yml down
+codeknow server stop
 ```
 
-To have the CLI manage a local `codeknow-api` process instead, opt into daemon mode with `CODEKNOW_DAEMON=1`. See [docs/usage.md](docs/usage.md).
+To run the API as a local `codeknow-api` process the CLI manages, switch modes with `codeknow server mode daemon` (or `remote` to point at any other API). See [docs/usage.md](docs/usage.md).
 
 ## How search works
 
@@ -69,9 +70,9 @@ codeknow search "database connection" --slug owner-repo --slug other-repo
 | `codeknow search <query>` | Search the knowledge graph |
 | `codeknow info` | Show API status and indexed repos |
 | `codeknow clean` | Remove cached repos, graph output, and temp files |
-| `codeknow daemon start/stop/status` | Manage a local API process (**opt-in**: `CODEKNOW_DAEMON=1`) |
+| `codeknow server <subcommand>` | Manage the API server: `mode` (`docker` \| `remote` \| `daemon`), `start`, `stop`, `status` |
 
-By default the CLI connects to the API exposed by the Docker stack at `localhost:8080`. The `daemon` subcommands appear only when `CODEKNOW_DAEMON=1` is set. See [docs/usage.md](docs/usage.md).
+The CLI resolves its endpoint from the `mode` field in `~/.codeknow/config.jsonl`. The default mode is `docker`, which connects to the Docker stack at `localhost:8080`. Switch to `daemon` (CLI manages a local `codeknow-api` process) or `remote` (any other API URL) with `codeknow server mode <mode>`. See [docs/usage.md](docs/usage.md).
 
 Use `--slug` to scope search to specific repos (repeatable):
 
@@ -101,12 +102,16 @@ packages/
   codeknow-cli/     User-facing CLI client
 ```
 
-## Environment variables
+## Configuration
 
-| Variable | Default | Description |
-|---|---|---|
-| `CODEKNOW_API_URL` | *(unset)* | Explicit remote API URL; takes priority over everything else |
-| `CODEKNOW_DAEMON` | *(unset)* | Set to `1` to enable local daemon mode (CLI manages the API process) |
-| `CODEKNOW_HOST` | `localhost` | API server host (daemon mode) |
-| `CODEKNOW_API_PORT` | `8080` | API server port |
-| `CODEKNOW_API_HOST` | `127.0.0.1` | API server bind host |
+The CLI is **config-file driven**, not environment-variable driven. It reads a single-line JSON object from `~/.codeknow/config.jsonl`:
+
+```json
+{"mode":"docker","remote_url":"","host":"localhost","port":8080}
+```
+
+- `mode` — `docker` (default), `remote`, or `daemon`. Switch with `codeknow server mode <mode>`.
+- `remote_url` — used only in `remote` mode.
+- `host` / `port` — used only in `daemon` mode.
+
+See [docs/usage.md](docs/usage.md) for the full reference. (The `codeknow-api` server itself still reads `CODEKNOW_API_HOST` / `CODEKNOW_API_PORT` — see the table above.)
