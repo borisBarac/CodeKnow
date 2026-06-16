@@ -21,6 +21,7 @@ import logging
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 import chromadb
 from check_services import check_chroma, check_docker_model_runner
@@ -213,3 +214,82 @@ def test_delete_removes_chunk():
     after = STORE.count()
     logger.info("Count after delete: %d", after)
     assert after == before - 1
+
+
+def _make_synthetic_chunk(idx: int) -> Chunk:
+    content = (
+        f"def handler_{idx}(value):\n"
+        "    total = 0\n"
+        + "".join(f"    total += {i} * value\n" for i in range(50))
+        + "    return total\n"
+    )
+    path = TMP_DIR / f"synthetic_handler_{idx}.py"
+    path.write_text(content)
+    return Chunk(
+        file=str(path),
+        start_line=1,
+        end_line=content.count("\n") + 1,
+        hash=_sha(content),
+    )
+
+
+def test_store_chunks_splits_embedding_requests():
+    """Regression: store_chunks must split texts into small /embeddings requests.
+
+    With check_embedding_ctx_length=False (local providers), OpenAIEmbeddings
+    sends the full texts list in one POST unless chunk_size is set.  A large
+    store batch therefore produces an oversized request that local servers
+    reject with "Context size has been exceeded".
+
+    This test instruments the real embedding client to verify that the request
+    is actually split according to request_chunk_size.
+    """
+    request_chunk_size = 4
+    num_chunks = 12
+
+    emb_cfg = EmbeddingConfig(request_chunk_size=request_chunk_size)
+    embeddings = create_embeddings(emb_cfg)
+
+    # Force lazy client initialisation so we can wrap its create() method.
+    embeddings.embed_query("warmup")
+
+    collection = f"e2e_test_batch_{int(time.time())}"
+    store_config = ChromaConfig(collection_name=collection)
+    store = ChromaStore(config=store_config, embeddings=embeddings)
+
+    chunks = [_make_synthetic_chunk(i) for i in range(num_chunks)]
+
+    request_sizes: list[int] = []
+    original_create = embeddings.client.create
+
+    def recording_create(*args: Any, **kwargs: Any):
+        inp = kwargs.get("input")
+        if inp is None and args:
+            inp = args[0]
+        if isinstance(inp, list):
+            request_sizes.append(len(inp))
+        return original_create(*args, **kwargs)
+
+    stored_count = 0
+    try:
+        embeddings.client.create = recording_create
+        store.store_chunks(chunks, slug=_SLUG, batch_size=num_chunks)
+        stored_count = store.count()
+    finally:
+        embeddings.client.create = original_create
+        try:
+            client = chromadb.HttpClient(
+                host=store_config.resolved_host(),
+                port=store_config.resolved_port(),
+            )
+            client.delete_collection(collection)
+            logger.info("Deleted batch test collection: %s", collection)
+        except Exception:
+            logger.warning("Could not delete collection: %s", collection)
+
+    logger.info("Embedding request sizes: %s", request_sizes)
+
+    assert stored_count == num_chunks
+    assert sum(request_sizes) == num_chunks
+    assert max(request_sizes) <= request_chunk_size
+    assert len(request_sizes) == num_chunks // request_chunk_size

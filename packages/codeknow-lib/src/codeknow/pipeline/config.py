@@ -34,6 +34,7 @@ class PipelineConfig:
     no_embed: bool = False
     embed_provider: Literal["docker", "ollama", "openrouter"] = "docker"
     embed_model: str = "ai/qwen3-embedding:4B"
+    embed_batch_size: int = 50
     chroma_host: str | None = None
     chroma_port: int | None = None
     chroma_collection: str | None = None

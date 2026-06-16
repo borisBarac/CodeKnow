@@ -11,7 +11,7 @@ uv run --env-file e2e/.env.e2e -- python -m pytest e2e/
 
 # Run a single suite.
 uv run -- python -m pytest e2e/test_embeddings.py
-uv run -- python -m pytest e2e/graph_gen/test_hybrid_search.py -v
+uv run -- python -m pytest e2e/test_graph/test_hybrid_search.py -v
 
 # Quick health-check (no pytest).
 uv run --env-file e2e/.env.e2e -- python e2e/check_services.py
@@ -37,24 +37,21 @@ defaults). `e2e/conftest.py` auto-loads this file at collection time via
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `EMBEDDING_PROVIDER` | `docker` | Embedding backend (enables DMR check) |
-| `EMBEDDING_MODEL` | `ai/qwen3-embedding` | Embedding model name |
+| `EMBEDDING_MODEL` | `ai/qwen3-embedding:4B` | Embedding model name |
 | `DOCKER_MODEL_RUNNER_URL` | `http://localhost:12434/engines/v1` | DMR API base URL |
 | `CHROMA_HOST` / `CHROMA_PORT` | `localhost` / `8018` | ChromaDB address |
-| `JUDGE_LLM_MODEL` | `deepseek/deepseek-v4-pro` | LLM judge model |
-| `JUDGE_LLM_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible judge API base |
-| `JUDGE_LLM_API_KEY` | — | Judge API key (falls back to `OPENROUTER_API_KEY`). Set in `.env.e2e.local`. |
-| `E2E_TRAVERSAL_DEPTH` | `3` | Graph BFS depth used by the judge gates |
 
 ## Service Health Checks
 
-Before tests run, `check_services.py` verifies that required services are
+Test setup (inside fixtures, or at module level in `test_embeddings.py`)
+calls helpers from `check_services.py` to verify that required services are
 reachable:
 
 - **Docker Model Runner** (when `EMBEDDING_PROVIDER=docker`) — pings `DOCKER_MODEL_RUNNER_URL/engines/v1/models`
 - **Ollama** (when `EMBEDDING_PROVIDER=ollama`) — pings `OLLAMA_BASE_URL/api/tags`
 - **ChromaDB** — pings `CHROMA_HOST:CHROMA_PORT/api/v2/heartbeat`
 
-If either service is unreachable the test session exits immediately with
+If a required service is unreachable the affected tests fail fast with
 instructions on how to start it.
 
 ### Starting services
@@ -72,30 +69,10 @@ docker desktop enable model-runner --tcp 12434
 | Path | What it tests | Services required |
 | --- | --- | --- |
 | `test_embeddings.py` | Embedding generation + ChromaDB lifecycle: store, search by text/vector, ranking, delete. | DMR + ChromaDB |
-| `graph_gen/test_graph_gen.py` | Pipeline on `graph_gen/code-test-small/`: discover → extract → build → cluster. | DMR + ChromaDB |
-| `graph_gen/test_hybrid_search.py` | Hybrid search (vector + graph traversal): smoke tests, deterministic retrieval-metric gates (P@5, R@10, F1@10 against ground truth), and an LLM-judge quality gate. | DMR + ChromaDB (+ LLM key for judge) |
-| `graph_gen/test_hybrid_vs_agent_grep.py` | Hybrid search vs an agent-grep (ripgrep) baseline, both LLM-judged. Reuses setup from `test_hybrid_search.py`. | DMR + ChromaDB + LLM key |
-| `judge/judge.py`, `judge/schemas.py` | Shared LLM judge library (LangChain structured output) used by the graph_gen suites. | — |
-| `judge/test_judge.py` | Tests the judge itself with synthetic `JudgeInput` data. | LLM key |
+| `test_graph/test_graph_gen.py` | Pipeline on `test_graph/code-test-small/`: discover → extract → build → cluster. Verifies nodes/edges/communities and graph + chunk-map save/load round-trips. | **None** (pure graph building) |
+| `test_graph/test_hybrid_search.py` | Hybrid search (vector + graph traversal): smoke tests verifying real data is returned (response shape, vector hits, required result fields, relevance sort, graph expansion). | DMR + ChromaDB |
 | `api_cli_integration/test_cli_api_integration.py` | CLI commands through the real FastAPI server with `CODEKNOW_STUB=1` (`StubMiddleware` returns canned JSON). | **None** (fully stubbed, no network) |
 
-## Selecting / Skipping LLM-judge Tests
-
-Judge tests carry the `llm_judge` marker (registered in `pyproject.toml`)
-and are skipped automatically when no `JUDGE_LLM_API_KEY` /
-`OPENROUTER_API_KEY` is set.
-
-```bash
-# Skip all LLM-judged tests (fastest, no API key needed).
-uv run -- python -m pytest e2e/ -m "not llm_judge"
-
-# Run only the judged tests.
-uv run -- python -m pytest e2e/ -m llm_judge
-```
-
-## Generated Reports
-
-Some graph_gen tests write Markdown reports (rewritten each run):
-
-- `graph_gen/test_hybrid_search_report.md` — per-query retrieval metrics and judge scores.
-- `graph_gen/test_hybrid_vs_agent_grep_report.md` — hybrid vs agent-grep judge comparison.
+> Both `test_graph/` suites use module-scoped pytest fixtures with `yield`
+> teardown. Setup (pipeline build, embeddings, Chroma collection) runs lazily
+> on first request, and the Chroma collection is dropped in fixture teardown.

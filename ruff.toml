@@ -46,3 +46,4 @@ ignore = [
 [lint.per-file-ignores]
 "**/tests/**" = ["ANN001", "ANN201", "ANN202", "INP001", "N802", "S101", "SLF001"]
 "e2e/**" = ["ANN001", "ANN201", "ANN202", "INP001", "N802", "S101", "SLF001"]
+"evals/eval_word_press.py" = ["ANN001", "ANN201", "ANN202", "INP001", "N802", "S101", "SLF001", "E402", "T201", "S603", "S607"]

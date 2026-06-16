@@ -8,6 +8,11 @@ from codeknow.pipeline import PipelineConfig, PipelineResult
 from codeknow.pipeline.embed_stage import embed
 from codeknow.pipeline.metadata import build_chunk_metadata
 from codeknow.schemas import Chunk
+from codeknow.vector.embeddings import (
+    EmbeddingConfig,
+    _batch_texts_for_embedding_requests,
+    embed_texts,
+)
 
 
 def _make_config(**overrides: Any) -> PipelineConfig:
@@ -119,6 +124,7 @@ class TestEmbedStage:
         assert out.embed_stats["chunks_embedded"] == 5
         assert out.embed_stats["provider"] == "docker"
         assert out.embed_stats["model"] == "ai/qwen3-embedding:4B"
+        assert out.embed_stats["batch_size"] == 50
         mock_store.store_chunk_map.assert_called_once()
         mock_create_emb.assert_called_once()
         emb_config = mock_create_emb.call_args[0][0]
@@ -229,6 +235,22 @@ class TestEmbedStage:
         assert emb_config.provider == "openrouter"
         assert emb_config.model == "text-embedding-3-small"
 
+    @patch("codeknow.pipeline.embed_stage.ChromaStore")
+    @patch("codeknow.pipeline.embed_stage.create_embeddings")
+    def test_custom_batch_size(self, mock_create_emb, mock_store_cls):
+        mock_store = MagicMock()
+        mock_store.store_chunk_map.return_value = 1
+        mock_store_cls.return_value = mock_store
+
+        config = _make_config(embed_batch_size=1)
+        result = _make_result(config)
+
+        out = embed(result)
+
+        assert out.embed_stats["batch_size"] == 1
+        mock_create_emb.assert_called_once()
+        assert mock_store.store_chunk_map.call_args.kwargs["batch_size"] == 1
+
 
 class TestChromaStoreExtraMetadata:
     def test_store_chunks_merges_extra_metadata(self):
@@ -258,7 +280,7 @@ class TestChromaStoreExtraMetadata:
                 return_value=mock_collection,
             ),
             patch(
-                "codeknow.vector.chroma._read_chunk_content",
+                "codeknow.vector.ingest._read_chunk_content",
                 return_value="some code",
             ),
         ):
@@ -270,6 +292,92 @@ class TestChromaStoreExtraMetadata:
         assert metas["community_ids"] == "1,2"
         assert metas["slug"] == "owner-repo"
         assert metas["file"] == "auth.py"
+
+
+class TestTokenBudgetedEmbeddings:
+    def test_batch_texts_for_embedding_requests_keeps_requests_under_limit(self):
+        batches = _batch_texts_for_embedding_requests(
+            ["a" * 9, "b" * 9, "c" * 3],
+            max_tokens=6,
+        )
+
+        assert batches == [["a" * 9, "b" * 9], ["c" * 3]]
+
+    def test_embed_texts_splits_by_token_budget_and_preserves_order(self):
+        class RecordingEmbeddings:
+            def __init__(self) -> None:
+                self.requests: list[list[str]] = []
+
+            def embed_documents(self, texts: list[str]) -> list[list[float]]:
+                self.requests.append(list(texts))
+                return [[float(ord(text[0]))] for text in texts]
+
+        embeddings = RecordingEmbeddings()
+
+        vectors = embed_texts(
+            ["a" * 9, "b" * 9, "c" * 9],
+            embeddings,  # type: ignore[arg-type]
+            max_request_tokens=6,
+        )
+
+        assert embeddings.requests == [["a" * 9, "b" * 9], ["c" * 9]]
+        assert vectors == [[97.0], [98.0], [99.0]]
+
+    def test_store_chunks_uses_token_budgeted_embedding_requests(self):
+        from codeknow.vector.chroma import ChromaStore
+
+        class RecordingEmbeddings:
+            def __init__(self) -> None:
+                self.requests: list[list[str]] = []
+
+            def embed_documents(self, texts: list[str]) -> list[list[float]]:
+                self.requests.append(list(texts))
+                return [[float(ord(text[0]))] for text in texts]
+
+        embeddings = RecordingEmbeddings()
+        mock_collection = MagicMock()
+
+        store = ChromaStore(
+            embeddings=embeddings,  # type: ignore[arg-type]
+            embedding_config=EmbeddingConfig(
+                max_request_tokens=6,
+                token_safety_margin=0,
+            ),
+        )
+        store._collection = mock_collection
+
+        chunks = [
+            Chunk(file="one.py", start_line=1, end_line=1, hash="a" * 64),
+            Chunk(file="two.py", start_line=1, end_line=1, hash="b" * 64),
+            Chunk(file="three.py", start_line=1, end_line=1, hash="c" * 64),
+        ]
+
+        with (
+            patch.object(
+                store,
+                "_get_or_create_collection",
+                return_value=mock_collection,
+            ),
+            patch(
+                "codeknow.vector.ingest._read_chunk_content",
+                side_effect=["a" * 9, "b" * 9, "c" * 9],
+            ),
+        ):
+            store.store_chunks(chunks, batch_size=3)
+
+        assert embeddings.requests == [["a" * 9, "b" * 9], ["c" * 9]]
+        assert mock_collection.upsert.call_args.kwargs["embeddings"] == [
+            [97.0],
+            [98.0],
+            [99.0],
+        ]
+
+    def test_oversized_single_text_is_sent_alone_and_warns(self, caplog):
+        with caplog.at_level("WARNING", logger="codeknow.vector.embeddings"):
+            batches = _batch_texts_for_embedding_requests(["a" * 9], max_tokens=2)
+
+        assert batches == [["a" * 9]]
+        assert "exceeds token budget" in caplog.text
 
 
 class TestDeleteBySlug:

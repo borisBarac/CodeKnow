@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from codeknow.git_download import download, is_cloned
+from codeknow.git_download import download, get_commit_hash, is_cloned
 from git import Repo
 
 
@@ -47,3 +47,10 @@ def test_download_pulls_existing(tmp_path: Path) -> None:
     repo.index.commit("add file")
     download(str(remote), target)
     assert (target / "new.txt").exists()
+
+
+def test_get_commit_hash_returns_none_for_non_git_directory(tmp_path: Path) -> None:
+    source_snapshot = tmp_path / "source-snapshot"
+    source_snapshot.mkdir()
+
+    assert get_commit_hash(source_snapshot) is None

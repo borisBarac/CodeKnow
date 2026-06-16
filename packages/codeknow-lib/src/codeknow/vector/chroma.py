@@ -9,13 +9,15 @@ to pass it per-call.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from .embeddings import _read_chunk_content
+from .embeddings import EmbeddingConfig
+from .ingest import embed_chunk_batches
 from .store import SearchResult
 
 if TYPE_CHECKING:
@@ -84,6 +86,7 @@ class ChromaStore:
         self,
         config: ChromaConfig | None = None,
         embeddings: Embeddings | None = None,
+        embedding_config: EmbeddingConfig | None = None,
     ) -> None:
         if embeddings is None:
             msg = (
@@ -93,6 +96,7 @@ class ChromaStore:
             raise ValueError(msg)
         self._config = config or ChromaConfig()
         self._embeddings = embeddings
+        self._embedding_config = embedding_config or EmbeddingConfig()
         self._client: chromadb.HttpClient | None = None  # type: ignore[valid-type]
         self._collection: Collection | None = None
 
@@ -123,6 +127,17 @@ class ChromaStore:
         """Drop cached client/collection so they are re-created on next use."""
         self._collection = None
 
+    def drop_collection(self) -> None:
+        """Delete the underlying Chroma collection and reset cached refs.
+
+        Safe to call when the collection does not exist.
+        """
+        with contextlib.suppress(Exception):
+            self._get_client().delete_collection(  # type: ignore[attr-defined]
+                name=self._config.collection_name
+            )
+        self._collection = None
+
     # ------------------------------------------------------------------
     # VectorStore protocol methods
     # ------------------------------------------------------------------
@@ -131,61 +146,30 @@ class ChromaStore:
         self,
         chunks: list[Chunk],
         *,
-        batch_size: int = 500,
+        batch_size: int = 50,
         slug: str | None = None,
         extra_metadata: dict[str, dict] | None = None,
     ) -> int:
         if not chunks:
             return 0
 
-        collection = self._get_or_create_collection()
         stored = 0
-        seen: set[str] = set()
-
-        for offset in range(0, len(chunks), batch_size):
-            batch = chunks[offset : offset + batch_size]
-
-            ids: list[str] = []
-            texts: list[str] = []
-            metas: list[dict[str, Any]] = []
-
-            for chunk in batch:
-                if chunk.hash in seen:
-                    continue
-                seen.add(chunk.hash)
-                content = _read_chunk_content(chunk)
-                if not content.strip():
-                    logger.warning(
-                        "Skipping chunk %s: empty content (file=%s)",
-                        chunk.hash[:8],
-                        chunk.file,
-                    )
-                    continue
-                ids.append(chunk.hash)
-                texts.append(content)
-                meta: dict[str, Any] = {
-                    "file": chunk.file,
-                    "start_line": chunk.start_line,
-                    "end_line": chunk.end_line,
-                }
-                if slug is not None:
-                    meta["slug"] = slug
-                if extra_metadata is not None and chunk.hash in extra_metadata:
-                    meta.update(extra_metadata[chunk.hash])
-                metas.append(meta)
-
-            if not ids:
-                continue
-
-            vectors = self._embeddings.embed_documents(texts)
-
+        collection = self._get_or_create_collection()
+        for batch in embed_chunk_batches(
+            chunks,
+            self._embeddings,
+            self._embedding_config,
+            batch_size=batch_size,
+            slug=slug,
+            extra_metadata=extra_metadata,
+        ):
             collection.upsert(
-                ids=ids,
-                embeddings=vectors,  # type: ignore[arg-type]
-                documents=texts,
-                metadatas=metas,  # type: ignore[arg-type]
+                ids=batch.ids,
+                embeddings=batch.vectors,  # type: ignore[arg-type]
+                documents=batch.texts,
+                metadatas=batch.metadatas,  # type: ignore[arg-type]
             )
-            stored += len(ids)
+            stored += len(batch.ids)
 
         logger.info(
             "Stored %d chunk embeddings in '%s'",
@@ -198,7 +182,7 @@ class ChromaStore:
         self,
         chunk_map: ChunkMap,
         *,
-        batch_size: int = 500,
+        batch_size: int = 50,
         slug: str | None = None,
         extra_metadata: dict[str, dict] | None = None,
     ) -> int:

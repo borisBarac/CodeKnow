@@ -113,6 +113,79 @@ class TestGraphSearcherSearch:
         assert len(result.results) == 1
         assert result.results[0].provenance == "vector"
 
+    def test_sparse_candidates_survive_rrf_cutoff(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from codeknow.vector.search import GraphSearcher
+
+        empty_dir = tmp_path / "no_graph"
+        empty_dir.mkdir()
+        dense_hash = "a" * 64
+        sparse_hash = "b" * 64
+        store = _mock_store(search_results=[_sr(hash_=dense_hash)])
+        searcher = GraphSearcher(empty_dir, store=store)
+
+        monkeypatch.setattr(
+            searcher,
+            "_bm25_search",
+            lambda *_args, **_kwargs: [
+                (
+                    sparse_hash,
+                    10.0,
+                    "sparse exact match",
+                    {"file": "route.js", "start_line": 10, "end_line": 20},
+                )
+            ],
+        )
+
+        result = searcher.search("exact", top_k=1)
+
+        assert {r.chunk_hash for r in result.results} == {dense_hash, sparse_hash}
+
+    def test_source_sparse_candidates_survive_test_heavy_sparse_results(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from codeknow.vector.search import GraphSearcher
+
+        empty_dir = tmp_path / "no_graph"
+        empty_dir.mkdir()
+        dense_hash = "a" * 64
+        test_hash = "b" * 64
+        source_hash = "c" * 64
+        store = _mock_store(search_results=[_sr(hash_=dense_hash)])
+        searcher = GraphSearcher(empty_dir, store=store)
+
+        monkeypatch.setattr(
+            searcher,
+            "_bm25_search",
+            lambda *_args, **_kwargs: [
+                (
+                    test_hash,
+                    10.0,
+                    "test exact match",
+                    {"file": "test/route.test.js", "start_line": 10, "end_line": 20},
+                ),
+                (
+                    source_hash,
+                    9.0,
+                    "source exact match",
+                    {"file": "lib/route.js", "start_line": 30, "end_line": 40},
+                ),
+            ],
+        )
+
+        result = searcher.search("exact", top_k=1)
+
+        assert {r.chunk_hash for r in result.results} == {
+            dense_hash,
+            test_hash,
+            source_hash,
+        }
+
     def test_graph_expansion_finds_neighbor_chunks(self, graph_dir: Path) -> None:
         from codeknow.vector.search import GraphSearcher
 
@@ -147,3 +220,26 @@ class TestGraphSearcherSearch:
         vector_idx = provenances.index("vector")
         graph_idx = provenances.index("graph")
         assert vector_idx < graph_idx
+
+    def test_bm25_result_distance_reflects_sparse_score(self, graph_dir: Path) -> None:
+        from codeknow.vector.search import GraphSearcher
+
+        searcher = GraphSearcher(graph_dir, store=_mock_store())
+        strong = searcher._make_bm25_result(
+            "c" * 64,
+            "exact code match",
+            {"file": "route.js", "start_line": 10, "end_line": 20},
+            score=9.0,
+            max_score=10.0,
+        )
+        weak = searcher._make_bm25_result(
+            "d" * 64,
+            "weak code match",
+            {"file": "route.js", "start_line": 30, "end_line": 40},
+            score=1.0,
+            max_score=10.0,
+        )
+
+        assert strong.distance < weak.distance
+        assert strong.distance == pytest.approx(0.1)
+        assert weak.distance == pytest.approx(0.9)
