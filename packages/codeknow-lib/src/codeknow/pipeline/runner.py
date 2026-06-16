@@ -34,6 +34,16 @@ _STAGES: list[tuple[str, int, str]] = [
 ]
 
 
+def _progress(
+    progress_callback: Callable[[str, int, str], None] | None,
+    stage_index: int,
+) -> None:
+    if progress_callback is None:
+        return
+    stage, pct, msg = _STAGES[stage_index]
+    progress_callback(stage, pct, msg)
+
+
 def run_pipeline(
     config: PipelineConfig,
     *,
@@ -69,35 +79,29 @@ def run_pipeline(
     _embed = embed_fn or _default_embed
 
     root = _resolve(config)
-    if progress_callback:
-        progress_callback("resolve", 14, "Resolving repository...")
+    _progress(progress_callback, 0)
     commit_hash = get_commit_hash(root)
 
     raw = _detect(root)
     discovery = raw if isinstance(raw, dict) else _to_dict(raw)
-    if progress_callback:
-        progress_callback("detect", 28, "Discovering files...")
+    _progress(progress_callback, 1)
 
     extractions: list[dict] = []
     ast_result = _extract_ast(discovery)
     extractions.append(
         ast_result if isinstance(ast_result, dict) else _to_dict(ast_result)
     )
-    if progress_callback:
-        progress_callback("extract_ast", 42, "Extracting AST...")
+    _progress(progress_callback, 2)
 
     G = _build(extractions)
-    if progress_callback:
-        progress_callback("build", 57, "Building graph...")
+    _progress(progress_callback, 3)
 
     G, chunk_map = _map_chunks(G, discovery.get("files", {}))
-    if progress_callback:
-        progress_callback("map_chunks", 71, "Mapping chunks...")
+    _progress(progress_callback, 4)
 
     communities = _cluster(G)
     _assign_communities(G, communities)
-    if progress_callback:
-        progress_callback("cluster", 85, "Detecting communities...")
+    _progress(progress_callback, 5)
 
     stats = {
         "nodes": G.number_of_nodes(),
@@ -117,8 +121,7 @@ def run_pipeline(
     )
 
     result = _embed(result)
-    if progress_callback:
-        progress_callback("embed", 100, "Generating embeddings...")
+    _progress(progress_callback, 6)
 
     graph_path = save_pipeline_result(result)
     return replace(result, graph_path=graph_path, commit_hash=commit_hash)

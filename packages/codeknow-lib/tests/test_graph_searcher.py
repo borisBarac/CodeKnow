@@ -113,6 +113,36 @@ class TestGraphSearcherSearch:
         assert len(result.results) == 1
         assert result.results[0].provenance == "vector"
 
+    def test_sparse_only_results_do_not_count_as_vector_hits(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from codeknow.vector.search import GraphSearcher
+
+        empty_dir = tmp_path / "no_graph"
+        empty_dir.mkdir()
+        store = _mock_store(search_results=[])
+        searcher = GraphSearcher(empty_dir, store=store)
+
+        monkeypatch.setattr(
+            searcher,
+            "_bm25_search",
+            lambda *_args, **_kwargs: [
+                (
+                    "s" * 64,
+                    10.0,
+                    "sparse exact match",
+                    {"file": "route.js", "start_line": 10, "end_line": 20},
+                )
+            ],
+        )
+
+        result = searcher.search("exact")
+
+        assert result.vector_hits == 0
+        assert result.results[0].provenance == "sparse"
+
     def test_sparse_candidates_survive_rrf_cutoff(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -243,3 +273,4 @@ class TestGraphSearcherSearch:
         assert strong.distance < weak.distance
         assert strong.distance == pytest.approx(0.1)
         assert weak.distance == pytest.approx(0.9)
+        assert strong.provenance == "sparse"

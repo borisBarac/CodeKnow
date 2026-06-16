@@ -253,7 +253,7 @@ class GraphSearcher:
 
     @staticmethod
     def _compute_relevance_score(r: HybridSearchResult) -> float:
-        if r.provenance == "vector" and r.distance is not None:
+        if r.provenance in {"vector", "sparse"} and r.distance is not None:
             normalized = min(1.0, max(0.0, r.distance))
             relevance = 1.0 - normalized
             return relevance * 1.0
@@ -335,7 +335,7 @@ class GraphSearcher:
             distance=distance,
             node_labels=labels,
             community_ids=ids,
-            provenance="vector",
+            provenance="sparse",
         )
 
     def _bm25_search(
@@ -496,9 +496,10 @@ class GraphSearcher:
                 by_hash[sr.hash] = self._make_vector_result(sr)
 
         if self._graph is None or not self._reverse_index or not by_hash:
+            vector_hits = sum(1 for r in by_hash.values() if r.provenance == "vector")
             return HybridSearchResponse(
                 query=query,
-                vector_hits=len(by_hash),
+                vector_hits=vector_hits,
                 graph_expanded=0,
                 results=list(by_hash.values()),
             )
@@ -510,9 +511,10 @@ class GraphSearcher:
         seed_nodes = list(seed_nodes_set)
 
         if not seed_nodes:
+            vector_hits = sum(1 for r in by_hash.values() if r.provenance == "vector")
             return HybridSearchResponse(
                 query=query,
-                vector_hits=len(by_hash),
+                vector_hits=vector_hits,
                 graph_expanded=0,
                 results=list(by_hash.values()),
             )

@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
+
+
+def _read_mapping(store_path: Path) -> dict[str, str]:
+    raw = json.loads(store_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        msg = f"repo map must contain a JSON object, got {type(raw).__name__}"
+        raise TypeError(msg)
+    return {str(k): str(v) for k, v in raw.items()}
 
 DEFAULT_STORE_PATH = Path.home() / ".codeknow" / "repo_map.json"
 
@@ -11,18 +20,29 @@ DEFAULT_STORE_PATH = Path.home() / ".codeknow" / "repo_map.json"
 def load(*, store_path: Path = DEFAULT_STORE_PATH) -> dict[str, str]:
     """Load the URL→path mapping from disk. Returns empty dict if file missing."""
     try:
-        return json.loads(store_path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
-    except (FileNotFoundError, json.JSONDecodeError):
+        return _read_mapping(store_path)
+    except FileNotFoundError:
         return {}
+    except json.JSONDecodeError as exc:
+        msg = f"Corrupt repo map JSON at {store_path}: {exc}"
+        raise ValueError(msg) from exc
 
 
 def save(mapping: dict[str, str], *, store_path: Path = DEFAULT_STORE_PATH) -> None:
     """Persist the mapping to disk."""
     store_path.parent.mkdir(parents=True, exist_ok=True)
-    store_path.write_text(
-        json.dumps(mapping, indent=2, ensure_ascii=False),
+    payload = json.dumps(mapping, indent=2, ensure_ascii=False)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
         encoding="utf-8",
-    )
+        dir=store_path.parent,
+        prefix=f".{store_path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as tmp:
+        tmp_path = Path(tmp.name)
+        tmp.write(payload)
+    tmp_path.replace(store_path)
 
 
 def register(

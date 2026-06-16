@@ -54,21 +54,22 @@ def build_from_json(extraction: dict, *, directed: bool = False) -> nx.Graph:
     # Canonicalize legacy node/edge schema before validation.
     for node in extraction.get("nodes", []):
         if isinstance(node, dict) and "source" in node and "source_file" not in node:
-            # Count edges that reference this node so the warning is actionable (#479)
-            node_id = node.get("id", "?")
-            sum(
-                1
-                for e in extraction.get("edges", [])
-                if e.get("source") == node_id or e.get("target") == node_id
-            )
             node["source_file"] = node.pop("source")
+
+    for edge in extraction.get("edges", []):
+        if isinstance(edge, dict):
+            if "source" not in edge and "from" in edge:
+                edge["source"] = edge["from"]
+            if "target" not in edge and "to" in edge:
+                edge["target"] = edge["to"]
 
     errors = validate_extraction(extraction)
     # Dangling edges (stdlib/external imports) are expected -
     # only warn about real schema errors.
     real_errors = [e for e in errors if "does not match any node id" not in e]
     if real_errors:
-        pass
+        msg = "Invalid extraction JSON:\n" + "\n".join(f"  - {e}" for e in real_errors)
+        raise ValueError(msg)
     G: nx.Graph = nx.DiGraph() if directed else nx.Graph()
     for node in extraction.get("nodes", []):
         G.add_node(node["id"], **{k: v for k, v in node.items() if k != "id"})
@@ -78,10 +79,6 @@ def build_from_json(extraction: dict, *, directed: bool = False) -> nx.Graph:
     # e.g. "Session_ValidateToken" maps to "session_validatetoken".
     norm_to_id: dict[str, str] = {_normalize_id(nid): nid for nid in node_set}
     for edge in extraction.get("edges", []):
-        if "source" not in edge and "from" in edge:
-            edge["source"] = edge["from"]
-        if "target" not in edge and "to" in edge:
-            edge["target"] = edge["to"]
         if "source" not in edge or "target" not in edge:
             continue
         src, tgt = edge["source"], edge["target"]
@@ -221,8 +218,6 @@ def build_merge(
             n for n, d in G.nodes(data=True) if d.get("source_file") in prune_sources
         ]
         G.remove_nodes_from(to_remove)
-        if to_remove:
-            pass
 
     # Safety check: refuse to shrink the graph silently (#479)
     if graph_path.exists():

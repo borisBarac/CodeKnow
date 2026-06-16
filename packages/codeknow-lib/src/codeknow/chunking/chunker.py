@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import logging
 from pathlib import Path
 
 from codeknow.schemas import Chunk, ChunkMap
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CHUNK_SIZE = 100
 DEFAULT_OVERLAP = 20
@@ -87,6 +90,15 @@ def _hash_content(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _validate_window(chunk_size: int, overlap: int) -> None:
+    if chunk_size <= 0:
+        msg = "chunk_size must be > 0"
+        raise ValueError(msg)
+    if overlap < 0 or overlap >= chunk_size:
+        msg = "overlap must satisfy 0 <= overlap < chunk_size"
+        raise ValueError(msg)
+
+
 def chunk_file_ast(
     path: str,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
@@ -99,6 +111,7 @@ def chunk_file_ast(
     parse failure.
     """
     p = Path(path)
+    _validate_window(chunk_size, overlap)
     ext = p.suffix.lower()
     config = _AST_CONFIGS.get(ext)
     if config is None:
@@ -120,7 +133,12 @@ def chunk_file_ast(
         parser = Parser(language)
         source = p.read_bytes()
         tree = parser.parse(source)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "AST chunking failed for %s, falling back to linear: %s",
+            path,
+            exc,
+        )
         return chunk_file_linear(path, chunk_size, overlap)
 
     text = source.decode("utf-8", errors="replace")
@@ -194,6 +212,7 @@ def chunk_file_linear(
     Used for docs/markdown/non-code files where AST doesn't apply.
     """
     p = Path(path)
+    _validate_window(chunk_size, overlap)
     try:
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines(
             keepends=True

@@ -138,7 +138,7 @@ def test_hybrid_search_results_have_required_fields(search_env):
         assert r.chunk_hash
         assert r.file
         assert r.content
-        assert r.provenance in ("vector", "graph")
+        assert r.provenance in ("vector", "sparse", "graph")
         assert r.start_line >= 1
         assert r.end_line >= r.start_line
 

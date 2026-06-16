@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
-EVALS_DIR = Path(__file__).parent
+EVALS_DIR = Path(__file__).resolve().parent.parent
 if str(EVALS_DIR) not in sys.path:
     sys.path.insert(0, str(EVALS_DIR))
 
@@ -20,7 +20,7 @@ def test_index_health_returns_false_when_chroma_is_unreachable(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    support = importlib.import_module("fastify_eval_support")
+    support = importlib.import_module("support.fastify_eval_support")
     graph_dir = tmp_path / "fastify-graph"
     graph_dir.mkdir()
     (graph_dir / "graph.json").write_text("{}", encoding="utf-8")

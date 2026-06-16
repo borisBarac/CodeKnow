@@ -42,7 +42,7 @@ from evalkit.judge.aggregate import build_profile
 from evalkit.judge.judge import LLMJudge
 from evalkit.llm import JudgeLLMConfig
 from evalkit.schemas import AgentRun, Cost, JudgeOutput, PairwiseJudgment, Task
-from fastify_eval_support import (
+from support.fastify_eval_support import (
     CHROMA_COLLECTION,
     EVALS_DIR,
     GRAPH_DIR,

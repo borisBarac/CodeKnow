@@ -56,6 +56,38 @@ class TestExtractorCrossFile:
         relations = [e["relation"] for e in result["edges"]]
         assert "imports_from" in relations
 
+    def test_mixed_paths_keep_python_alignment(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        captured: dict[str, int] = {}
+
+        monkeypatch.setattr(
+            "codeknow.extract.extractor._resolve_cross_file_imports",
+            lambda results, paths: captured.update(
+                {"results": len(results), "paths": len(paths)}
+            )
+            or [],
+        )
+        monkeypatch.setattr(
+            Extractor,
+            "_DISPATCH",
+            {
+                ".py": lambda _path: {
+                    "nodes": [],
+                    "edges": [],
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                }
+            },
+        )
+
+        extractor = Extractor()
+        extractor._extract([tmp_path / "a.py", tmp_path / "b.md", tmp_path / "c.py"])
+
+        assert captured == {"results": 2, "paths": 2}
+
 
 class TestExtractorGraphignore:
     def test_respects_graphignore(self, tmp_path: Path) -> None:

@@ -44,7 +44,9 @@ def validate_extraction(data: dict) -> list[str]:
         errors.append("'edges' must be a list")
     else:
         node_ids = {
-            n["id"] for n in data.get("nodes", []) if isinstance(n, dict) and "id" in n
+            n["id"]
+            for n in (data.get("nodes") or [])
+            if isinstance(n, dict) and "id" in n
         }
         for i, edge in enumerate(edge_list):
             if not isinstance(edge, dict):
@@ -89,7 +91,7 @@ def _validate_node(idx: int, node: dict, errors: list[str]) -> None:
 
     if "community" in node:
         cid = node["community"]
-        if not isinstance(cid, int) or cid < 0:
+        if isinstance(cid, bool) or not isinstance(cid, int) or cid < 0:
             errors.append(
                 f"Node {idx} (id={nid!r}) 'community' must be "
                 f"a non-negative int, got {cid!r}"
@@ -97,7 +99,7 @@ def _validate_node(idx: int, node: dict, errors: list[str]) -> None:
 
     if "end_line" in node:
         el = node["end_line"]
-        if not isinstance(el, int) or el < 1:
+        if isinstance(el, bool) or not isinstance(el, int) or el < 1:
             errors.append(
                 f"Node {idx} (id={nid!r}) 'end_line' must be a positive int, got {el!r}"
             )
@@ -116,15 +118,17 @@ def _validate_edge(idx: int, edge: dict, node_ids: set[str], errors: list[str]) 
 
     if "confidence_score" in edge:
         cs = edge["confidence_score"]
-        if not isinstance(cs, (int, float)) or not (0.0 <= cs <= 1.0):
+        if isinstance(cs, bool) or not isinstance(cs, (int, float)) or not (
+            0.0 <= cs <= 1.0
+        ):
             errors.append(f"Edge {idx} 'confidence_score' must be 0.0–1.0, got {cs!r}")
 
-    if "source" in edge and node_ids and edge["source"] not in node_ids:
+    if "source" in edge and edge["source"] not in node_ids:
         errors.append(
             f"Edge {idx} source '{edge['source']}' does not match any node id"
         )
 
-    if "target" in edge and node_ids and edge["target"] not in node_ids:
+    if "target" in edge and edge["target"] not in node_ids:
         errors.append(
             f"Edge {idx} target '{edge['target']}' does not match any node id"
         )

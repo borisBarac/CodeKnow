@@ -4,6 +4,7 @@
 
 from pathlib import Path
 
+import pytest
 from codeknow.git_download.repo_map import (
     DEFAULT_STORE_PATH,
     get_path,
@@ -60,6 +61,14 @@ def test_list_all(tmp_path: Path) -> None:
 
 def test_load_missing_file(tmp_path: Path) -> None:
     assert load(store_path=tmp_path / "nonexistent.json") == {}
+
+
+def test_load_corrupt_file_raises(tmp_path: Path) -> None:
+    store = tmp_path / "repo_map.json"
+    store.write_text("{not-json", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Corrupt repo map JSON"):
+        load(store_path=store)
 
 
 def test_round_trip(tmp_path: Path) -> None:

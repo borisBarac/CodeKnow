@@ -63,7 +63,7 @@ STAGES = [
     "resolve",
     "detect",
     "extract_ast",
-    "build_graph",
+    "build",
     "map_chunks",
     "cluster",
     "embed",
@@ -85,7 +85,7 @@ STAGE_IO: dict[str, dict[str, str]] = {
             " tree-sitter, confidence=EXTRACTED)"
         ),
     },
-    "build_graph": {
+    "build": {
         "input": "[ExtractionResult]",
         "output": "NetworkX Graph (merged AST + semantic, deduplicated nodes)",
     },

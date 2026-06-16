@@ -149,7 +149,7 @@ class HybridSearchResponse(BaseModel):
 class RepoMetadata(BaseModel):
     github_ssh_url: str
     slug: str
-    commit_hash: str
+    commit_hash: str | None
     built_at: str
     node_count: int
     edge_count: int

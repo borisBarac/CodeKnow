@@ -11,7 +11,7 @@ from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
 
 logger = logging.getLogger(__name__)
 
-EVALS_DIR = Path(__file__).parent
+EVALS_DIR = Path(__file__).resolve().parent.parent
 ENV_FILE = EVALS_DIR / ".env"
 REPO_DIR = EVALS_DIR / "fastify-main"
 GRAPH_DIR = EVALS_DIR / ".cache" / "fastify-graph"

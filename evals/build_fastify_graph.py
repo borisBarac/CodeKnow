@@ -9,7 +9,7 @@ from codeknow.service_checks import (
     check_docker_model_runner,
     check_ollama,
 )
-from fastify_eval_support import (
+from support.fastify_eval_support import (
     CHROMA_COLLECTION,
     GRAPH_DIR,
     REPO_DIR,

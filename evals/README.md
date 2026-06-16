@@ -8,13 +8,14 @@ The target codebase is Fastify (`./fastify-main`). Ten natural-language question
 
 | Path | Purpose |
 |---|---|
-| `eval_fastify.py` | Main eval: defines the 10 task items, builds the two agents, runs them in parallel, invokes the judge, writes the report |
-| `build_fastify_graph.py` | Builds (or reuses) the Fastify knowledge graph + Chroma embeddings index |
-| `fastify_eval_support.py` | Shared paths, `.env` loading, Chroma store factory, and index-health checks |
-| `test_fastify_eval_integration.py` | Unit tests (index health, tool wiring, output formatting) |
-| `.env.example` | Eval-local env defaults |
-| `fastify-main/` | The repo under test |
-| `results/fastify/` | Outputs: `runs.jsonl` + `profile.md` |
+| `eval_fastify.py` | Main eval runner: task definitions, tool setup, agent execution, judge, report |
+| `build_fastify_graph.py` | Builds or reuses the Fastify graph + Chroma index |
+| `support/fastify_eval_support.py` | Shared env loading, paths, Chroma helpers, and index checks |
+| `support/test_fastify_eval_integration.py` | Integration tests for index health, tool wiring, and result formatting |
+| `support/` | Shared eval helpers and tests |
+| `.env.example` | Local env defaults for this eval |
+| `fastify-main/` | Target repo under test |
+| `results/fastify/` | Generated outputs: `runs.jsonl` and `profile.md` |
 
 ## Prerequisites
 
@@ -25,7 +26,7 @@ The target codebase is Fastify (`./fastify-main`). Ten natural-language question
   - OpenRouter (`EMBEDDING_PROVIDER=openrouter`)
 - A **judge LLM endpoint** (OpenAI-compatible) for both the agents and the judge. Defaults to DeepSeek; see `JUDGE_LLM_*` below.
 
-## Quick start
+## Quick Start
 
 ```bash
 # 1. Configure env (fill in JUDGE_LLM_API_KEY and any provider overrides)
@@ -38,22 +39,40 @@ uv run python evals/build_fastify_graph.py
 uv run python evals/eval_fastify.py
 ```
 
-A fast sanity check before the full run:
+### Wrapper
+
+```bash
+bash evals/run_fastify_eval.sh help
+```
+
+Use subcommands:
+
+```bash
+bash evals/run_fastify_eval.sh build
+bash evals/run_fastify_eval.sh smoke
+bash evals/run_fastify_eval.sh eval
+bash evals/run_fastify_eval.sh all
+bash evals/run_fastify_eval.sh help
+```
+
+The wrapper locates the repo root automatically, so it works from any CWD.
+
+### Smoke Check
 
 ```bash
 SMOKE=1 uv run python evals/eval_fastify.py   # runs the first item only
 ```
 
-## How it works
+## How It Works
 
-### The two agents
+### Agents
 
 - **hybrid** — calls CodeKnow's `GraphSearcher` (vector similarity expanded by the knowledge graph) with `top_k=10`.
 - **grep** — calls LangChain's `FilesystemFileSearchMiddleware` (ripgrep) over the raw source tree.
 
 Both are built with `langchain.agents.create_agent`, share `AGENT_SYSTEM_PROMPT`, and are capped at a tool-call budget via `ToolCallLimitMiddleware(exit_behavior="continue")` — on the (N+1)th attempt the agent is told to stop searching and answer, so `invoke()` returns normally instead of raising `GraphRecursionError`.
 
-### The 10 task items
+### Task Items
 
 Defined in `SEARCH_ITEMS` (`eval_fastify.py`), each tagged with:
 
@@ -61,13 +80,13 @@ Defined in `SEARCH_ITEMS` (`eval_fastify.py`), each tagged with:
 - **stratum** — `single-hop` or `multi-hop`.
 - **difficulty** — `easy`, `medium`, or `hard`.
 
-### The runner
+### Runner
 
 `run_all` dispatches every `(item, tool, seed)` combination in parallel (`MAX_CONCURRENCY=8`) via a thread pool and streams each finished run as a JSONL row to `results/fastify/runs.jsonl`. A `CostCallback` accumulates token usage and search-call counts per run.
 
 If an agent ends with an empty final answer, its gathered tool outputs are fed back through `_synthesize_answer` so the run still yields a grounded, non-empty answer rather than being discarded.
 
-### Index health
+### Index Health
 
 `assert_prebuilt_index_ready` runs before any LLM call and fails fast if the index is missing or incomplete. It requires:
 
@@ -76,7 +95,7 @@ If an agent ends with an empty final answer, its gathered tool outputs are fed b
 - the five `REQUIRED_INDEX_FILES` (core Fastify `lib/*.js` files) indexed
 - at least one `.js` and one `.ts` file in the map
 
-## The 3-stage judge
+## Judge
 
 Run by `evalkit.LLMJudge` (see [`../evalkit/`](../evalkit/) for internals):
 
@@ -94,7 +113,7 @@ Results are aggregated by `evalkit.judge.aggregate.build_profile` into a per-too
 - **`results/fastify/runs.jsonl`** — one `AgentRun` row per `(item, tool, seed)`, including the final answer, extracted citations, and cost counters.
 - **`results/fastify/profile.md`** — the human-readable report: per-tool profile table, pairwise winners, per-task detail (grounding/faithfulness/existence + ungrounded claims / hallucinated paths), and the bias & significance section.
 
-## Environment variables
+## Environment Variables
 
 All read via `evals/.env` (use `os.environ.setdefault`, so shell values win). The key ones:
 
@@ -117,7 +136,7 @@ All read via `evals/.env` (use `os.environ.setdefault`, so shell values win). Th
 ## Tests
 
 ```bash
-uv run pytest evals/test_fastify_eval_integration.py
+uv run pytest evals/support/test_fastify_eval_integration.py
 ```
 
 Covers index-health detection, the rebuild preflight (services checked before any cache is dropped), the grep tool wiring, and hybrid result formatting.

@@ -113,7 +113,7 @@ class Extractor:
 
         Per-file dispatch → cache → merge → ID remap → cross-file resolution.
         """
-        per_file: list[dict] = []
+        per_file: list[tuple[Path, dict]] = []
         stale_id_remap: dict[str, str] = {}
 
         try:
@@ -145,16 +145,16 @@ class Extractor:
                 _reanchor_paths(cached, str(path))
                 if stale_nid is not None and stale_nid != current_nid:
                     stale_id_remap[stale_nid] = current_nid
-                per_file.append(cached)
+                per_file.append((path, cached))
                 continue
             result = extractor(path)
             if "error" not in result:
                 save_cached(path, result, self._cache_dir or root)
-            per_file.append(result)
+            per_file.append((path, result))
 
         all_nodes: list[dict] = []
         all_edges: list[dict] = []
-        for result in per_file:
+        for _, result in per_file:
             all_nodes.extend(result.get("nodes", []))
             all_edges.extend(result.get("edges", []))
 
@@ -189,9 +189,7 @@ class Extractor:
 
         py_paths = [p for p in paths if p.suffix == ".py"]
         if py_paths:
-            py_results = [
-                r for r, p in zip(per_file, paths, strict=False) if p.suffix == ".py"
-            ]
+            py_results = [result for path, result in per_file if path.suffix == ".py"]
             try:
                 cross_file_edges = _resolve_cross_file_imports(py_results, py_paths)
                 all_edges.extend(cross_file_edges)
@@ -208,13 +206,15 @@ class Extractor:
                 global_label_to_nid[normalised.lower()] = n["id"]
 
         existing_pairs = {(e["source"], e["target"]) for e in all_edges}
-        for result in per_file:
+        for _, result in per_file:
             for rc in result.get("raw_calls", []):
                 callee = rc.get("callee", "")
                 if not callee:
                     continue
                 tgt = global_label_to_nid.get(callee.lower())
-                caller = rc["caller_nid"]
+                caller = rc.get("caller_nid")
+                if caller is None:
+                    continue
                 if tgt and tgt != caller and (caller, tgt) not in existing_pairs:
                     existing_pairs.add((caller, tgt))
                     all_edges.append(
