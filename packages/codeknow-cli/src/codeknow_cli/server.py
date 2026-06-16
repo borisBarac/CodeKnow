@@ -40,10 +40,19 @@ class ServerBackend:
 class DockerBackend(ServerBackend):
     """Manage the docker compose stack at infra/docker-compose.yml."""
 
-    def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
+    def _preflight(self) -> str:
+        """Ensure docker is installed and the compose file exists.
+
+        Returns the resolved docker binary path. Raises ``CodeknowError``
+        if any prerequisite is missing.
+        """
         docker_bin = shutil.which("docker")
         if docker_bin is None:
-            msg = "docker is not installed or not on PATH"
+            msg = (
+                "docker is not installed or not on PATH.\n"
+                "Install Docker, or switch modes with: "
+                "codeknow server mode daemon"
+            )
             raise CodeknowError(msg)
         if not COMPOSE_FILE.exists():
             msg = (
@@ -51,10 +60,15 @@ class DockerBackend(ServerBackend):
                 "run 'codeknow server start' from the repository root"
             )
             raise CodeknowError(msg)
+        return docker_bin
+
+    def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
+        docker_bin = self._preflight()
         cmd = [docker_bin, "compose", "-f", str(COMPOSE_FILE), *args]
         return subprocess.run(cmd, capture_output=True, text=True, check=False)  # noqa: S603
 
     def start(self) -> None:
+        self._preflight()
         click.echo("Starting docker stack...")
         result = self._run(["up", "-d"])
         if result.returncode != 0:

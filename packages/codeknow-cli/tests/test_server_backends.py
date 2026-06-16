@@ -88,8 +88,26 @@ class TestDockerBackend:
             "codeknow_cli.server.shutil.which", MagicMock(return_value=None)
         )
         monkeypatch.setattr("codeknow_cli.server.COMPOSE_FILE", compose)
-        with pytest.raises(CodeknowError, match="docker is not installed"):
+        with pytest.raises(CodeknowError, match="docker is not installed") as exc:
             DockerBackend().start()
+        assert "Install Docker" in str(exc.value)
+        assert "codeknow server mode daemon" in str(exc.value)
+
+    def test_start_docker_missing_does_not_print_starting(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        compose = tmp_path / "docker-compose.yml"
+        compose.write_text("services:", encoding="utf-8")
+        monkeypatch.setattr(
+            "codeknow_cli.server.shutil.which", MagicMock(return_value=None)
+        )
+        monkeypatch.setattr("codeknow_cli.server.COMPOSE_FILE", compose)
+        with pytest.raises(CodeknowError):
+            DockerBackend().start()
+        assert "Starting docker stack..." not in capsys.readouterr().out
 
     def test_raises_when_compose_file_missing(
         self, monkeypatch: pytest.MonkeyPatch
