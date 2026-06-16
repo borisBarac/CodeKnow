@@ -37,6 +37,3 @@ class RepoConflictError(CodeknowError):
 
 class ConfigError(CodeknowError):
     """Raised when required tools or configuration are missing."""
-
-
-ClientError = CodeknowError

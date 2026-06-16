@@ -112,8 +112,10 @@ class DaemonBackend(ServerBackend):
 
     def stop(self) -> None:
         manager = self._manager()
-        manager.stop()
-        click.echo("Daemon stopped.")
+        if manager.stop():
+            click.echo("Daemon stopped.")
+        else:
+            click.echo("Daemon not running.")
 
     def status(self) -> None:
         manager = self._manager()

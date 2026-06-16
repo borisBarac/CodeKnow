@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import click
 from rich.console import Console
 from rich.text import Text
 
@@ -34,7 +35,7 @@ def _truncate_content(content: str) -> str:
 
 
 def format_search_results(query: str, result: SearchResult) -> None:
-    console = Console(force_terminal=None)
+    console = Console()
     is_tty = console.is_terminal
 
     if is_tty:
@@ -78,8 +79,6 @@ def _format_plain(
     query: str,
     result: SearchResult,
 ) -> None:
-    import click
-
     click.echo(f"Query: {query}")
     click.echo(
         f"Hits: {result.vector_hits} vector, {result.graph_expanded} graph-expanded"

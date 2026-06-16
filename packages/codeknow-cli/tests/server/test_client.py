@@ -13,10 +13,14 @@ from code_know_api_client.models import (
 from code_know_api_client.models.http_validation_error import HTTPValidationError
 from code_know_api_client.models.search_request import SearchRequest
 from code_know_api_client.models.search_response import SearchResponse
+from code_know_api_client.models.search_response_results_item import (
+    SearchResponseResultsItem,
+)
 from code_know_api_client.models.validation_error import (
     ValidationError as ApiValidationError,
 )
 from code_know_api_client.types import Response as ApiResponse
+from code_know_api_client.types import Unset
 from codeknow_cli.client import (
     BuildStatusResult,
     Client,
@@ -348,13 +352,54 @@ def test_remove_raises_on_404_from_delete(mock_delete: MagicMock) -> None:
 
 
 def _make_search_response(data: dict) -> ApiResponse:
+    items: list[SearchResponseResultsItem] = []
+    for raw in data.get("results", []):
+        item = SearchResponseResultsItem()
+        item.additional_properties = raw
+        items.append(item)
     parsed = SearchResponse(
         query=data.get("query", ""),
         vector_hits=data.get("vector_hits", 0),
         graph_expanded=data.get("graph_expanded", 0),
-        results=[],
+        results=items,
     )
     return ApiResponse(status_code=200, content=b"", headers={}, parsed=parsed)
+
+
+@patch("codeknow_cli.client.search_v1_search_post")
+def test_search_maps_results_into_hits(mock_search: MagicMock) -> None:
+    c = _unit_client()
+    mock_search.sync_detailed.return_value = _make_search_response(
+        {
+            "query": "q",
+            "vector_hits": 1,
+            "graph_expanded": 0,
+            "results": [
+                {
+                    "file": "src/app.py",
+                    "start_line": 10,
+                    "end_line": 20,
+                    "provenance": "vector",
+                    "distance": 0.12,
+                    "slug": "org-repo",
+                    "graph_path": "graph.json",
+                    "content": "def main(): ...",
+                },
+            ],
+        }
+    )
+    result = c.search("q")
+    assert isinstance(result, SearchResult)
+    assert len(result.results) == 1
+    hit = result.results[0]
+    assert hit.file == "src/app.py"
+    assert hit.start_line == 10
+    assert hit.end_line == 20
+    assert hit.provenance == "vector"
+    assert hit.distance == 0.12
+    assert hit.slug == "org-repo"
+    assert hit.graph_path == "graph.json"
+    assert hit.content == "def main(): ..."
 
 
 @patch("codeknow_cli.client.search_v1_search_post")
@@ -391,7 +436,7 @@ def test_search_without_slugs_omits_repos(mock_search: MagicMock) -> None:
     c.search("test")
     call_body = mock_search.sync_detailed.call_args[1]["body"]
     assert isinstance(call_body, SearchRequest)
-    assert call_body.repos is None or isinstance(call_body.repos, object)
+    assert isinstance(call_body.repos, Unset)
 
 
 @patch("codeknow_cli.client.search_v1_search_post")
@@ -425,3 +470,73 @@ def test_search_422_validation(mock_search: MagicMock) -> None:
     )
     with pytest.raises(ValidationError, match=r"Validation error.*bad input"):
         c.search("test")
+
+
+@patch("codeknow_cli.client.httpx.get")
+def test_check_server_false_on_timeout(mock_get: MagicMock) -> None:
+    import httpx
+
+    c = _unit_client()
+    mock_get.side_effect = httpx.TimeoutException("timed out")
+    assert c.check_server(timeout=0.1) is False
+
+
+@patch("codeknow_cli.client.httpx.get")
+@patch("codeknow_cli.client.httpx.post")
+def test_add_times_out_when_build_exceeds_timeout(
+    mock_post: MagicMock,
+    mock_get: MagicMock,
+) -> None:
+    c = _unit_client()
+    mock_post.return_value = _mock_post_response(
+        202,
+        {
+            "status": "queued",
+            "slug": "org-repo",
+            "status_url": "/v1/build/org-repo",
+            "progress": 0,
+        },
+    )
+    mock_get.return_value = _mock_post_response(
+        202,
+        {
+            "status": "running",
+            "slug": "org-repo",
+            "progress": 50,
+            "stage": "building",
+        },
+    )
+
+    with (
+        patch("codeknow_cli.client.time.sleep"),
+        pytest.raises(ApiError, match="did not finish within"),
+    ):
+        c.add_to_index("git@github.com:org/repo.git", build_timeout=0.0)
+
+
+@patch("codeknow_cli.client.httpx.get")
+@patch("codeknow_cli.client.httpx.post")
+def test_add_raises_on_unknown_terminal_status(
+    mock_post: MagicMock,
+    mock_get: MagicMock,
+) -> None:
+    c = _unit_client()
+    mock_post.return_value = _mock_post_response(
+        202,
+        {
+            "status": "queued",
+            "slug": "org-repo",
+            "status_url": "/v1/build/org-repo",
+            "progress": 0,
+        },
+    )
+    mock_get.return_value = _mock_post_response(
+        200,
+        {"status": "cancelled", "slug": "org-repo", "progress": 50},
+    )
+
+    with (
+        patch("codeknow_cli.client.time.sleep"),
+        pytest.raises(ApiError, match=r"unexpected state 'cancelled'"),
+    ):
+        c.add_to_index("git@github.com:org/repo.git")

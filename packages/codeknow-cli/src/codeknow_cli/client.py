@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn, ParamSpec, TypeVar
 
+import click
 import httpx
 from code_know_api_client import errors as api_errors
 from code_know_api_client.api.default import (
@@ -44,6 +45,17 @@ _DelResp = _del_mod.DeleteRepoV1ReposDeleteResponseDeleteRepoV1ReposDelete
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+
+_DEFAULT_BUILD_TIMEOUT = 1800.0
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    with contextlib.suppress(ValueError):
+        return float(raw)
+    return default
 
 
 @dataclass
@@ -108,6 +120,7 @@ class Client:
         self._bind_host = cfg.bind_host
         self._pid_file = cfg.pid_file
         self._remote = cfg.is_remote
+        self._mode = cfg.mode
         self._daemon_pid: int | None = None
         self._manager: DaemonManager | None = None
         if cfg.worker_command is not None:
@@ -124,6 +137,10 @@ class Client:
     def is_remote(self) -> bool:
         return self._remote
 
+    @property
+    def mode(self) -> str:
+        return self._mode
+
     def _require_manager(self) -> DaemonManager:
         if self._manager is None:
             msg = "No local daemon manager available"
@@ -132,7 +149,7 @@ class Client:
 
     def start_daemon(self, timeout: float = 5.0) -> DaemonStartResult:
         if self._remote:
-            print("You are in remote mode")  # noqa: T201
+            click.echo("You are in remote mode")
             return DaemonStartResult(status="remote")
         manager = self._require_manager()
         pid = manager.start()
@@ -142,7 +159,7 @@ class Client:
 
     def stop_daemon(self, timeout: float = 5.0) -> DaemonStopResult:
         if self._remote:
-            print("You are in remote mode")  # noqa: T201
+            click.echo("You are in remote mode")
             return DaemonStopResult(status="remote")
         manager = self._require_manager()
         manager.stop(timeout=timeout)
@@ -208,12 +225,13 @@ class Client:
         self,
         ssh_url: str,
         progress_callback: Callable[[str, int, str], None] | None = None,
-        poll_interval: float = 3.0,
+        poll_interval: float | None = None,
+        build_timeout: float | None = None,
     ) -> BuildStatusResult:
-        env_poll = os.environ.get("CODEKNOW_POLL_INTERVAL")
-        if env_poll is not None:
-            with contextlib.suppress(ValueError):
-                poll_interval = float(env_poll)
+        if poll_interval is None:
+            poll_interval = _env_float("CODEKNOW_POLL_INTERVAL", 3.0)
+        if build_timeout is None:
+            build_timeout = _env_float("CODEKNOW_BUILD_TIMEOUT", _DEFAULT_BUILD_TIMEOUT)
         try:
             submit_resp = httpx.post(
                 f"{self.base_url}/v1/build",
@@ -242,7 +260,13 @@ class Client:
         body = submit_resp.json()
         slug = body["slug"]
 
+        deadline = time.monotonic() + build_timeout
         while True:
+            if time.monotonic() >= deadline:
+                msg = (
+                    f"Build for {slug} did not finish within {build_timeout:g}s timeout"
+                )
+                raise ApiError(msg)
             time.sleep(poll_interval)
             poll_resp = httpx.get(
                 f"{self.base_url}/v1/build/{slug}",
@@ -271,6 +295,8 @@ class Client:
                     error = data.get("error", "Unknown error")
                     msg = f"Build failed: {error}"
                     raise ApiError(msg)
+                msg = f"Build for {slug} ended in unexpected state {status!r}"
+                raise ApiError(msg)
 
             if poll_resp.status_code == 202:
                 if progress_callback is not None:

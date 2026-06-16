@@ -8,7 +8,7 @@ from code_know_api_client.models.list_repos_response import ListReposResponse
 from code_know_api_client.models.repo_metadata import RepoMetadata
 from codeknow_cli.client import Client, DeleteResult, SearchResult
 from codeknow_cli.config import UserConfig
-from codeknow_cli.exceptions import ApiError, ClientError
+from codeknow_cli.exceptions import ApiError, CodeknowError, RepoNotFoundError
 from codeknow_cli.main import cli
 
 
@@ -142,10 +142,10 @@ def test_remove_command_output(mock_remove: MagicMock, runner: CliRunner) -> Non
 def test_remove_command_propagates_error(
     mock_remove: MagicMock, runner: CliRunner
 ) -> None:
-    mock_remove.side_effect = ClientError("Repo with slug 'x' not found")
+    mock_remove.side_effect = RepoNotFoundError("Repo with slug 'x' not found")
     result = runner.invoke(cli, ["remove", "x"])
     assert result.exception is not None
-    assert isinstance(result.exception, ClientError)
+    assert isinstance(result.exception, RepoNotFoundError)
     assert "Repo with slug 'x' not found" in str(result.exception)
 
 
@@ -176,7 +176,7 @@ def test_search_when_server_down_exits_1(
 
 
 def test_main_catches_client_error_and_exits() -> None:
-    with patch("codeknow_cli.main.cli", side_effect=ClientError("boom")):
+    with patch("codeknow_cli.main.cli", side_effect=CodeknowError("boom")):
         from codeknow_cli.main import main
 
         with pytest.raises(SystemExit) as exc_info:

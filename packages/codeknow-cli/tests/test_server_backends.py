@@ -143,7 +143,7 @@ class TestDaemonBackend:
         manager_instance.start.return_value = start_return
         manager_instance.is_running.return_value = is_running
         manager_instance.read_pid.return_value = read_pid
-        manager_instance.stop.return_value = None
+        manager_instance.stop.return_value = True
 
         manager_class = MagicMock(return_value=manager_instance)
         monkeypatch.setattr("codeknow_cli.server.DaemonManager", manager_class)
@@ -180,6 +180,17 @@ class TestDaemonBackend:
         DaemonBackend().stop()
         assert "Daemon stopped." in capsys.readouterr().out
         manager_instance.stop.assert_called_once()
+
+    def test_stop_reports_not_running_when_noop(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        manager_instance = self._setup_manager(monkeypatch)
+        manager_instance.stop.return_value = False
+        DaemonBackend().stop()
+        assert "Daemon not running." in capsys.readouterr().out
+        assert "Daemon stopped." not in capsys.readouterr().out
 
     def test_status_running(
         self,

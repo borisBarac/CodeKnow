@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import functools
-import os
 import shutil
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
 from code_know_api_client.types import Unset
+from codeknow.pipeline.config import _CODEKNOW_HOME, _env_path
 
 from codeknow_cli import __version__
 from codeknow_cli.client import Client
@@ -18,8 +17,6 @@ from codeknow_cli.config import VALID_MODES, load_config, save_config
 from codeknow_cli.exceptions import (
     ApiError,
     CodeknowError,
-    ConfigError,
-    DaemonAlreadyRunningError,
     DaemonNotRunningError,
     DaemonTimeoutError,
     RepoConflictError,
@@ -31,11 +28,7 @@ from codeknow_cli.server import get_backend
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-
-def _env_path(key: str, default: Path) -> Path:
-    raw = os.environ.get(key)
-    return Path(raw) if raw else default
+    from pathlib import Path
 
 
 def _dir_size(path: Path) -> str:
@@ -133,7 +126,7 @@ def info() -> None:
     client = Client()
 
     if client.is_remote:
-        click.echo(f"API: {client.base_url} (remote)")
+        click.echo(f"API: {client.base_url} ({client.mode})")
     else:
         running = client.check_server()
         if not running:
@@ -169,8 +162,6 @@ def info() -> None:
 @click.option("-y", "--yes", is_flag=True, help="Skip confirmation prompt.")
 def clean(yes: bool) -> None:
     """Remove cached repos, graph output, and temp files."""
-    from codeknow.pipeline.config import _CODEKNOW_HOME
-
     client = Client()
 
     if not client.is_remote and client.check_daemon():
@@ -246,9 +237,6 @@ def main() -> None:
     """Entry point for the ``codeknow`` console script."""
     try:
         cli()
-    except DaemonNotRunningError as exc:
-        click.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
     except DaemonTimeoutError:
         click.echo(
             "Error: Daemon is not responding. "
@@ -256,24 +244,18 @@ def main() -> None:
             err=True,
         )
         sys.exit(1)
-    except DaemonAlreadyRunningError as exc:
-        click.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
-    except ConfigError as exc:
-        click.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
-    except RepoNotFoundError as exc:
-        click.echo(f"Repo not found: {exc}", err=True)
-        sys.exit(1)
-    except RepoConflictError as exc:
-        click.echo(f"Conflict: {exc}", err=True)
-        sys.exit(1)
-    except ValidationError as exc:
-        click.echo(f"Invalid input: {exc}", err=True)
-        sys.exit(1)
-    except ApiError as exc:
-        click.echo(f"API error: {exc}", err=True)
-        sys.exit(1)
     except CodeknowError as exc:
-        click.echo(f"Error: {exc}", err=True)
+        click.echo(f"{_error_label(exc)}: {exc}", err=True)
         sys.exit(1)
+
+
+def _error_label(exc: CodeknowError) -> str:
+    if isinstance(exc, RepoNotFoundError):
+        return "Repo not found"
+    if isinstance(exc, RepoConflictError):
+        return "Conflict"
+    if isinstance(exc, ValidationError):
+        return "Invalid input"
+    if isinstance(exc, ApiError):
+        return "API error"
+    return "Error"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -12,7 +13,6 @@ from .conftest import _free_port, _started_pids
 
 if TYPE_CHECKING:
     from collections.abc import Generator
-    from pathlib import Path
 
 
 def _worker_command(port: int) -> list[str]:
@@ -79,3 +79,31 @@ def test_is_running_false_when_no_pid_file(tmp_path: Path) -> None:
         worker_command=[],
     )
     assert not manager.is_running()
+
+
+def test_stop_returns_true_for_tracked_process(daemon_manager: DaemonManager) -> None:
+    pid = daemon_manager.start()
+    _started_pids.add(pid)
+    assert daemon_manager.stop(timeout=5) is True
+
+
+def test_stop_returns_false_when_nothing_running(tmp_path: Path) -> None:
+    manager = DaemonManager(
+        pid_file=str(tmp_path / "absent.pid"),
+        worker_command=[],
+    )
+    assert manager.stop(timeout=2) is False
+
+
+def test_stop_by_pid_kills_cross_process_daemon(tmp_path: Path) -> None:
+    pid_file = str(tmp_path / "cross.pid")
+    port = _free_port()
+    starter = DaemonManager(pid_file=pid_file, worker_command=_worker_command(port))
+    pid = starter.start()
+    _started_pids.add(pid)
+
+    # A fresh manager has no tracked proc, so stop() must go via _stop_by_pid.
+    other = DaemonManager(pid_file=pid_file, worker_command=_worker_command(port))
+    assert other.stop(timeout=5) is True
+    assert not other.is_running()
+    assert not Path(pid_file).exists()

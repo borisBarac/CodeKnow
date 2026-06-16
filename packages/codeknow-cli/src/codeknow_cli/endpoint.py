@@ -20,6 +20,7 @@ DEFAULT_PID_FILE = "/tmp/codeknow-daemon.pid"  # noqa: S108
 class EndpointConfig:
     base_url: str
     is_remote: bool
+    mode: str
     host: str
     port: int
     bind_host: str
@@ -33,6 +34,7 @@ def resolve_endpoint() -> EndpointConfig:
         return EndpointConfig(
             base_url=DEFAULT_API_URL,
             is_remote=True,
+            mode="docker",
             host=DEFAULT_HOST,
             port=DEFAULT_PORT,
             bind_host="",
@@ -45,6 +47,7 @@ def resolve_endpoint() -> EndpointConfig:
         return EndpointConfig(
             base_url=cfg.remote_url.rstrip("/"),
             is_remote=True,
+            mode="remote",
             host="",
             port=0,
             bind_host="",
@@ -81,6 +84,7 @@ def _resolve_daemon(host: str, port: int, pid_file: str) -> EndpointConfig:
     return EndpointConfig(
         base_url=f"http://{bind_host}:{port}",
         is_remote=False,
+        mode="daemon",
         host=host,
         port=port,
         bind_host=bind_host,
