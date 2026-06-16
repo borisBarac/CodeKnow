@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
-import codeknow_api.app as app_module
 import pytest
-from codeknow_api.app import create_app
+from codeknow_api.app import ApiConfig, create_app
 from codeknow_api.models import BuildJob
 from fastapi.testclient import TestClient
 
@@ -16,16 +16,21 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def graph_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def graph_dir(tmp_path: Path) -> Path:
     gdir = tmp_path / "graph"
     gdir.mkdir()
-    monkeypatch.setattr(app_module, "GRAPH_DIR", gdir)
     return gdir
 
 
 @pytest.fixture
 def client(graph_dir: Path) -> TestClient:
-    app = create_app()
+    config = ApiConfig(
+        graph_dir=graph_dir,
+        temp_dir=graph_dir.parent / "temp",
+        job_ttl=timedelta(hours=1),
+        cache_ttl=300,
+    )
+    app = create_app(config=config)
     return TestClient(app)
 
 
@@ -93,7 +98,7 @@ class TestSearchBuildCollision:
         self, client: TestClient, graph_dir: Path
     ) -> None:
         _seed_repo(graph_dir, "building-repo")
-        client.app.state.build_jobs["building-repo"] = BuildJob(
+        client.app.state.codeknow.build_jobs["building-repo"] = BuildJob(
             slug="building-repo",
             status="running",
             progress=42,
@@ -108,11 +113,11 @@ class TestSearchBuildCollision:
             assert resp.status_code == 409
             assert "building-repo" in resp.json()["detail"]
         finally:
-            del client.app.state.build_jobs["building-repo"]
+            del client.app.state.codeknow.build_jobs["building-repo"]
 
     def test_done_slug_is_searchable(self, client: TestClient, graph_dir: Path) -> None:
         _seed_repo(graph_dir, "done-repo")
-        client.app.state.build_jobs["done-repo"] = BuildJob(
+        client.app.state.codeknow.build_jobs["done-repo"] = BuildJob(
             slug="done-repo", status="succeeded", progress=100
         )
         try:
@@ -122,17 +127,17 @@ class TestSearchBuildCollision:
             )
             assert resp.status_code == 200
         finally:
-            del client.app.state.build_jobs["done-repo"]
+            del client.app.state.codeknow.build_jobs["done-repo"]
 
     def test_mix_building_and_done_reports_only_building(
         self, client: TestClient, graph_dir: Path
     ) -> None:
         _seed_repo(graph_dir, "done-repo")
         _seed_repo(graph_dir, "building-repo")
-        client.app.state.build_jobs["done-repo"] = BuildJob(
+        client.app.state.codeknow.build_jobs["done-repo"] = BuildJob(
             slug="done-repo", status="succeeded", progress=100
         )
-        client.app.state.build_jobs["building-repo"] = BuildJob(
+        client.app.state.codeknow.build_jobs["building-repo"] = BuildJob(
             slug="building-repo",
             status="running",
             progress=50,
@@ -148,8 +153,8 @@ class TestSearchBuildCollision:
             assert "building-repo" in resp.json()["detail"]
             assert "done-repo" not in resp.json()["detail"]
         finally:
-            del client.app.state.build_jobs["done-repo"]
-            del client.app.state.build_jobs["building-repo"]
+            del client.app.state.codeknow.build_jobs["done-repo"]
+            del client.app.state.codeknow.build_jobs["building-repo"]
 
 
 class TestSearchResponseShape:

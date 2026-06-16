@@ -5,9 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-import codeknow_api.app as app_module
 import pytest
-from codeknow_api.app import _evict_completed_jobs, create_app
+from codeknow_api.app import ApiConfig, _evict_completed_jobs, create_app
 from codeknow_api.models import BuildJob
 from fastapi.testclient import TestClient
 
@@ -16,24 +15,32 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def graph_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def graph_dir(tmp_path: Path) -> Path:
     gdir = tmp_path / "graph"
     gdir.mkdir()
-    monkeypatch.setattr(app_module, "GRAPH_DIR", gdir)
     return gdir
 
 
 @pytest.fixture
-def temp_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def temp_dir(tmp_path: Path) -> Path:
     tdir = tmp_path / "temp"
     tdir.mkdir()
-    monkeypatch.setattr(app_module, "TEMP_DIR", tdir)
     return tdir
 
 
 @pytest.fixture
-def client(graph_dir: Path, temp_dir: Path) -> TestClient:
-    app = create_app()
+def config(graph_dir: Path, temp_dir: Path) -> ApiConfig:
+    return ApiConfig(
+        graph_dir=graph_dir,
+        temp_dir=temp_dir,
+        job_ttl=timedelta(hours=1),
+        cache_ttl=300,
+    )
+
+
+@pytest.fixture
+def client(config: ApiConfig) -> TestClient:
+    app = create_app(config=config)
     return TestClient(app)
 
 
@@ -41,14 +48,11 @@ class TestBuildSubmit:
     def test_submit_returns_202_with_correct_shape(
         self, client: TestClient, graph_dir: Path
     ) -> None:
-        import asyncio
-        from unittest.mock import patch
+        from unittest.mock import Mock, patch
 
-        fake_lock = asyncio.Lock()
-        client.app.state.build_locks["owner-repo"] = fake_lock
-
-        async def fake_create_task(coro: object) -> None:
-            pass
+        def fake_create_task(coro):
+            coro.close()
+            return Mock()
 
         with patch("asyncio.create_task", side_effect=fake_create_task):
             resp = client.post(
@@ -66,8 +70,8 @@ class TestBuildSubmit:
         assert resp.headers["Location"] == "/v1/build/owner-repo"
         assert "Retry-After" in resp.headers
 
-        del client.app.state.build_jobs["owner-repo"]
-        del client.app.state.build_locks["owner-repo"]
+        del client.app.state.codeknow.build_jobs["owner-repo"]
+        client.app.state.codeknow.builds_in_flight.discard("owner-repo")
 
 
 class TestBuildStatus:
@@ -77,7 +81,7 @@ class TestBuildStatus:
         assert "nonexistent-slug" in resp.json()["detail"]
 
     def test_queued_returns_202(self, client: TestClient) -> None:
-        client.app.state.build_jobs["test-repo"] = BuildJob(slug="test-repo")
+        client.app.state.codeknow.build_jobs["test-repo"] = BuildJob(slug="test-repo")
         try:
             resp = client.get("/v1/build/test-repo")
             assert resp.status_code == 202
@@ -86,10 +90,10 @@ class TestBuildStatus:
             assert body["progress"] == 0
             assert resp.headers.get("retry-after") == "3"
         finally:
-            del client.app.state.build_jobs["test-repo"]
+            del client.app.state.codeknow.build_jobs["test-repo"]
 
     def test_running_returns_202(self, client: TestClient) -> None:
-        client.app.state.build_jobs["test-repo"] = BuildJob(
+        client.app.state.codeknow.build_jobs["test-repo"] = BuildJob(
             slug="test-repo",
             status="running",
             progress=42,
@@ -105,10 +109,10 @@ class TestBuildStatus:
             assert body["stage"] == "build"
             assert resp.headers.get("retry-after") == "3"
         finally:
-            del client.app.state.build_jobs["test-repo"]
+            del client.app.state.codeknow.build_jobs["test-repo"]
 
     def test_succeeded_returns_200(self, client: TestClient) -> None:
-        client.app.state.build_jobs["test-repo"] = BuildJob(
+        client.app.state.codeknow.build_jobs["test-repo"] = BuildJob(
             slug="test-repo",
             status="succeeded",
             progress=100,
@@ -126,10 +130,10 @@ class TestBuildStatus:
             assert body["commit_hash"] == "abc123"
             assert body["node_count"] == 10
         finally:
-            del client.app.state.build_jobs["test-repo"]
+            del client.app.state.codeknow.build_jobs["test-repo"]
 
     def test_failed_returns_200(self, client: TestClient) -> None:
-        client.app.state.build_jobs["test-repo"] = BuildJob(
+        client.app.state.codeknow.build_jobs["test-repo"] = BuildJob(
             slug="test-repo",
             status="failed",
             progress=28,
@@ -144,7 +148,7 @@ class TestBuildStatus:
             assert body["status"] == "failed"
             assert body["error"] == "Something went wrong"
         finally:
-            del client.app.state.build_jobs["test-repo"]
+            del client.app.state.codeknow.build_jobs["test-repo"]
 
 
 class TestJobEviction:
@@ -175,7 +179,7 @@ class TestJobEviction:
                 progress=50,
             ),
         }
-        _evict_completed_jobs(jobs)
+        _evict_completed_jobs(jobs, timedelta(hours=1))
         assert "old-done" not in jobs
         assert "old-failed" not in jobs
         assert "recent-done" in jobs
@@ -186,12 +190,12 @@ class TestJobEviction:
             "queued": BuildJob(slug="queued"),
             "running": BuildJob(slug="running", status="running", progress=10),
         }
-        _evict_completed_jobs(jobs)
+        _evict_completed_jobs(jobs, timedelta(hours=1))
         assert len(jobs) == 2
 
     def test_eviction_on_build_status_endpoint(self, client: TestClient) -> None:
         old = datetime.now(tz=timezone.utc) - timedelta(days=7)
-        client.app.state.build_jobs["stale-repo"] = BuildJob(
+        client.app.state.codeknow.build_jobs["stale-repo"] = BuildJob(
             slug="stale-repo",
             status="succeeded",
             progress=100,
@@ -199,4 +203,4 @@ class TestJobEviction:
         )
         resp = client.get("/v1/build/stale-repo")
         assert resp.status_code == 404
-        assert "stale-repo" not in client.app.state.build_jobs
+        assert "stale-repo" not in client.app.state.codeknow.build_jobs

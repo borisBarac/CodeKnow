@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import fakeredis.aioredis
@@ -125,12 +126,12 @@ class TestCacheSearch:
         call_count = 0
 
         @cache.cache_search(ttl=60)
-        async def handler(body: dict[str, Any]) -> dict[str, Any]:
+        async def handler(body: Any) -> dict[str, Any]:
             nonlocal call_count
             call_count += 1
             return {"results": [{"text": "hit"}]}
 
-        result = await handler(body={"query": "test", "repos": None, "top_k": 10})
+        result = await handler(body=SimpleNamespace(query="test", repos=None, top_k=10))
         assert result == {"results": [{"text": "hit"}]}
         assert call_count == 1
 
@@ -146,13 +147,13 @@ class TestCacheSearch:
         call_count = 0
 
         @cache.cache_search()
-        async def handler(body: dict[str, Any]) -> dict[str, Any]:
+        async def handler(body: Any) -> dict[str, Any]:
             nonlocal call_count
             call_count += 1
             return {"results": [{"text": f"call-{call_count}"}]}
 
-        r1 = await handler(body={"query": "test", "top_k": 10})
-        r2 = await handler(body={"query": "test", "top_k": 10})
+        r1 = await handler(body=SimpleNamespace(query="test", top_k=10, repos=None))
+        r2 = await handler(body=SimpleNamespace(query="test", top_k=10, repos=None))
         assert r1 == r2
         assert call_count == 1
 
@@ -161,13 +162,13 @@ class TestCacheSearch:
         call_count = 0
 
         @cache.cache_search()
-        async def handler(body: dict[str, Any]) -> dict[str, Any]:
+        async def handler(body: Any) -> dict[str, Any]:
             nonlocal call_count
             call_count += 1
             return {"results": []}
 
-        await handler(body={"query": "test"})
-        await handler(body={"query": "test"})
+        await handler(body=SimpleNamespace(query="test", top_k=10, repos=None))
+        await handler(body=SimpleNamespace(query="test", top_k=10, repos=None))
         assert call_count == 2
 
     @pytest.mark.anyio
@@ -175,11 +176,11 @@ class TestCacheSearch:
         self, with_fake_service: fakeredis.aioredis.FakeRedis
     ) -> None:
         @cache.cache_search()
-        async def handler(body: dict[str, Any]) -> dict[str, Any]:
-            return {"query": body.get("query", ""), "results": []}
+        async def handler(body: Any) -> dict[str, Any]:
+            return {"query": body.query, "results": []}
 
-        await handler(body={"query": "alpha"})
-        await handler(body={"query": "beta"})
+        await handler(body=SimpleNamespace(query="alpha", top_k=10, repos=None))
+        await handler(body=SimpleNamespace(query="beta", top_k=10, repos=None))
 
         keys = await with_fake_service.keys("ck:search:*")
         assert len(keys) == 2

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from codeknow_api.params import is_valid_github_ssh_url
+from codeknow_api.params import validate_github_ssh_url
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -28,20 +28,6 @@ class BuildJob:
     def is_terminal(self) -> bool:
         return self.status in ("succeeded", "failed")
 
-    def to_response_dict(self) -> dict[str, Any]:
-        return {
-            "status": self.status,
-            "slug": self.slug,
-            "progress": self.progress,
-            "stage": self.stage,
-            "message": self.message,
-            "error": self.error,
-            "commit_hash": self.commit_hash,
-            "node_count": self.node_count,
-            "edge_count": self.edge_count,
-            "community_count": self.community_count,
-        }
-
 
 class BuildRequest(BaseModel):
     github_ssh_url: str
@@ -49,9 +35,7 @@ class BuildRequest(BaseModel):
     @field_validator("github_ssh_url")
     @classmethod
     def _validate_url(cls, v: str) -> str:
-        if not is_valid_github_ssh_url(v):
-            msg = "Invalid GitHub SSH URL (expected git@github.com:owner/repo[.git])"
-            raise ValueError(msg)
+        validate_github_ssh_url(v)
         return v
 
 
@@ -83,12 +67,17 @@ class DeleteRepoRequest(BaseModel):
     def resolve_slug(self) -> str:
         if self.slug:
             return self.slug
-        if self.url:
-            from codeknow.pipeline.facade import PipelineFacade
+        # _at_least_one_field guarantees url is set whenever slug is not.
+        assert self.url is not None  # noqa: S101 - invariant, not a runtime check
+        from codeknow.pipeline.facade import PipelineFacade
 
-            return PipelineFacade.resolve_slug(self.url)
-        msg = "Either 'url' or 'slug' must be provided"
-        raise ValueError(msg)
+        return PipelineFacade.resolve_slug(self.url)
+
+
+class DeleteRepoResponse(BaseModel):
+    status: str
+    slug: str
+    chunks_deleted: int
 
 
 class SearchRequest(BaseModel):

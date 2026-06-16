@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -64,43 +65,80 @@ _STUB_BUILD_STATUS: dict[str, Any] = {
     "community_count": _STUB_REPO["community_count"],
 }
 
-_STUB_ROUTES: dict[str, dict[str, _Handler]] = {
-    "POST": {
-        "/v1/build": lambda _body, _qs: (
-            202,
-            {
-                "status": "queued",
-                "slug": _STUB_REPO["slug"],
-                "status_url": f"/v1/build/{_STUB_REPO['slug']}",
-                "progress": 0,
-            },
-        ),
-        "/v1/search": lambda body, _qs: (
-            200,
-            {
-                "query": json.loads(body).get("query"),
-                "vector_hits": 0,
-                "graph_expanded": 0,
-                "results": [],
-            },
-        ),
-    },
-    "DELETE": {
-        "/v1/repos": _stub_delete,
-    },
-    "GET": {
-        "/v1/repos": lambda _body, _qs: (
-            200,
-            {
-                "repos": [_STUB_REPO],
-                "total": 1,
-                "page": 1,
-                "page_size": 50,
-                "errors": [],
-            },
-        ),
-    },
-}
+_Matcher = str | re.Pattern[str]
+
+
+def _route_matches(matcher: _Matcher, path: str) -> bool:
+    """Match a path against a literal route or a compiled template (S4)."""
+    if isinstance(matcher, re.Pattern):
+        return matcher.fullmatch(path) is not None
+    return matcher == path
+
+
+def _stub_build(_body: bytes, _qs: str) -> tuple[int, dict[str, Any]]:
+    return (
+        202,
+        {
+            "status": "queued",
+            "slug": _STUB_REPO["slug"],
+            "status_url": f"/v1/build/{_STUB_REPO['slug']}",
+            "progress": 0,
+        },
+    )
+
+
+def _stub_search(body: bytes, _qs: str) -> tuple[int, dict[str, Any]]:
+    return (
+        200,
+        {
+            "query": json.loads(body).get("query"),
+            "vector_hits": 0,
+            "graph_expanded": 0,
+            "results": [],
+        },
+    )
+
+
+def _stub_list_repos(_body: bytes, _qs: str) -> tuple[int, dict[str, Any]]:
+    return (
+        200,
+        {
+            "repos": [_STUB_REPO],
+            "total": 1,
+            "page": 1,
+            "page_size": 50,
+            "errors": [],
+        },
+    )
+
+
+def _stub_build_status(_body: bytes, _qs: str) -> tuple[int, dict[str, Any]]:
+    return 200, _STUB_BUILD_STATUS
+
+
+# (method, matcher, handler) triples. ``matcher`` is a literal path or a
+# compiled pattern, so the templated GET /v1/build/{slug} route is no longer
+# special-cased (S4).
+_STUB_ROUTES: list[tuple[str, _Matcher, _Handler]] = [
+    ("POST", "/v1/build", _stub_build),
+    ("POST", "/v1/search", _stub_search),
+    ("DELETE", "/v1/repos", _stub_delete),
+    ("GET", "/v1/repos", _stub_list_repos),
+    ("GET", re.compile(r"/v1/build/[^/]+"), _stub_build_status),
+]
+
+
+async def _send_json(send: Send, status: int, payload: dict[str, Any]) -> None:
+    """Emit a single JSON ASGI response (S3)."""
+    body = json.dumps(payload).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [[b"content-type", b"application/json"]],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
 
 
 class StubMiddleware:
@@ -114,46 +152,13 @@ class StubMiddleware:
         if self.stub_mode and scope["type"] == "http":
             method = scope["method"]
             path = scope["path"]
-            handlers = _STUB_ROUTES.get(method)
-            if handlers and path in handlers:
+            for route_method, matcher, handler in _STUB_ROUTES:
+                if route_method != method or not _route_matches(matcher, path):
+                    continue
                 body = await _read_body(receive)
-                query_string = scope.get("query_string", b"").decode()
-                status, response_body = handlers[path](body, query_string)
-                payload = json.dumps(response_body).encode()
-                await send(
-                    {
-                        "type": "http.response.start",
-                        "status": status,
-                        "headers": [
-                            [b"content-type", b"application/json"],
-                        ],
-                    }
-                )
-                await send(
-                    {
-                        "type": "http.response.body",
-                        "body": payload,
-                    }
-                )
-                return
-
-            if method == "GET" and path.startswith("/v1/build/"):
-                payload = json.dumps(_STUB_BUILD_STATUS).encode()
-                await send(
-                    {
-                        "type": "http.response.start",
-                        "status": 200,
-                        "headers": [
-                            [b"content-type", b"application/json"],
-                        ],
-                    }
-                )
-                await send(
-                    {
-                        "type": "http.response.body",
-                        "body": payload,
-                    }
-                )
+                query_string = scope["query_string"].decode()
+                status, response_body = handler(body, query_string)
+                await _send_json(send, status, response_body)
                 return
 
         await self.app(scope, receive, send)

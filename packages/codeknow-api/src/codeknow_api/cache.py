@@ -128,35 +128,23 @@ def _body_references_slug(data: Any, slug: str) -> bool:
 def cache_search(ttl: int | None = None) -> Any:
     """Decorator that caches the return value of a FastAPI search handler.
 
-    The decorated function must accept a body that is either a
-    ``dict[str, Any]`` or a Pydantic model with ``query``, ``top_k``, and
-    ``repos`` attributes.  The cache key is derived from those three
-    parameters so identical queries are served from Redis without
-    re-executing the search.
+    The decorated function must accept a ``body`` that is an object exposing
+    ``query``, ``top_k`` and ``repos`` attributes (e.g. a :class:`SearchRequest`).
+    The cache key is derived from those three parameters so identical queries
+    are served from Redis without re-executing the search.
     """
     _ttl = ttl or DEFAULT_TTL
 
     def decorator(func: Any) -> Any:
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            raw = kwargs.get("body", args[0] if args else {})
-
-            if isinstance(raw, dict):
-                query = raw.get("query", "")
-                top_k = raw.get("top_k", 10)
-                repos = raw.get("repos")
-            elif (
-                hasattr(raw, "query")
-                and hasattr(raw, "top_k")
-                and hasattr(raw, "repos")
-            ):
-                query = raw.query
-                top_k = raw.top_k
-                repos = raw.repos
-            else:
-                query = ""
-                top_k = 10
-                repos = None
+            raw = kwargs.get("body", args[0] if args else None)
+            if raw is None:
+                msg = "cache_search requires a body with query/top_k/repos"
+                raise TypeError(msg)
+            query = raw.query
+            top_k = raw.top_k
+            repos = raw.repos
 
             cache_key = _make_key(query, repos, top_k)
             redis = await get_redis()
@@ -183,7 +171,9 @@ def cache_search(ttl: int | None = None) -> Any:
                 except Exception:
                     logger.warning("Search cache write failed", exc_info=True)
 
-            return payload
+            # Return the original object (not the dumped dict) so FastAPI does
+            # not re-validate an already-serialised payload (N6).
+            return result
 
         return wrapper
 
