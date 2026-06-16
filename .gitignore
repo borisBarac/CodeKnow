@@ -82,6 +82,10 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+# Keep eval benchmark artifacts tracked (overrides the broad .cache rule above)
+!evals/.cache/
+evals/.cache/*
+!evals/.cache/fastify-graph/
 nosetests.xml
 coverage.xml
 *.cover
