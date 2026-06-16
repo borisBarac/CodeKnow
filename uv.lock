@@ -335,7 +335,6 @@ dependencies = [
     { name = "codeknow-api" },
     { name = "codeknow-cli" },
     { name = "codeknow-lib" },
-    { name = "evalkit" },
 ]
 
 [package.dev-dependencies]
@@ -354,7 +353,6 @@ requires-dist = [
     { name = "codeknow-api", editable = "packages/codeknow-api" },
     { name = "codeknow-cli", editable = "packages/codeknow-cli" },
     { name = "codeknow-lib", editable = "packages/codeknow-lib" },
-    { name = "evalkit", editable = "evalkit" },
 ]
 
 [package.metadata.requires-dev]
@@ -673,7 +671,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "codeknow-lib", editable = "packages/codeknow-lib" },
+    { name = "codeknow-lib" },
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
