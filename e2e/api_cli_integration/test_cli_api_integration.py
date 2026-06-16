@@ -16,10 +16,12 @@ import signal
 import socket
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
 from codeknow_cli.client import Client, DeleteResult, SearchResult
+from codeknow_cli.config import UserConfig
 from codeknow_cli.exceptions import RepoNotFoundError
 from codeknow_cli.main import cli
 
@@ -73,33 +75,43 @@ atexit.register(_atexit_cleanup)
 def _daemon_lifecycle(tmp_path_factory: pytest.TempPathFactory) -> None:
     global _CLIENT  # noqa: PLW0603
 
-    _save_env(["CODEKNOW_STUB", "CODEKNOW_HOST", "CODEKNOW_API_PORT"])
+    _save_env(["CODEKNOW_STUB"])
     os.environ["CODEKNOW_STUB"] = "1"
 
     pid_file = str(tmp_path_factory.mktemp("daemon") / "test-daemon.pid")
     port = _free_port()
 
-    _CLIENT = Client(host="127.0.0.1", port=port, pid_file=pid_file)
-    result = _CLIENT.start_daemon(timeout=10)
-    _STARTED_PIDS.add(result.pid)
-
-    _CLI_ENV.update(
-        {
-            "CODEKNOW_STUB": "1",
-            "CODEKNOW_HOST": _CLIENT.host,
-            "CODEKNOW_API_PORT": str(_CLIENT.port),
-            "CODEKNOW_POLL_INTERVAL": "0.1",
-        }
+    load_config_patch = patch(
+        "codeknow_cli.endpoint.load_config",
+        return_value=UserConfig(mode="daemon", host="localhost", port=port),
     )
+    pid_file_patch = patch("codeknow_cli.endpoint.DEFAULT_PID_FILE", pid_file)
+    load_config_patch.start()
+    pid_file_patch.start()
+    result = None
+    try:
+        _CLIENT = Client()
+        result = _CLIENT.start_daemon(timeout=10)
+        _STARTED_PIDS.add(result.pid)
 
-    yield
+        _CLI_ENV.update(
+            {
+                "CODEKNOW_STUB": "1",
+                "CODEKNOW_POLL_INTERVAL": "0.1",
+            }
+        )
 
-    if _CLIENT is not None:
-        with contextlib.suppress(TimeoutError, RuntimeError):
-            _CLIENT.stop_daemon(timeout=5)
-        _kill_process_group(result.pid)
-        _STARTED_PIDS.discard(result.pid)
-    _restore_env()
+        yield
+    finally:
+        if _CLIENT is not None:
+            with contextlib.suppress(TimeoutError, RuntimeError):
+                _CLIENT.stop_daemon(timeout=5)
+            if result is not None:
+                _kill_process_group(result.pid)
+                _STARTED_PIDS.discard(result.pid)
+        pid_file_patch.stop()
+        load_config_patch.stop()
+        _restore_env()
 
 
 # ---------------------------------------------------------------------------

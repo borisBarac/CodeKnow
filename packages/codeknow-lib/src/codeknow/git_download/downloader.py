@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path  # noqa: TC003
 
 from git import Repo
+from git.exc import InvalidGitRepositoryError
 
 
 def is_cloned(target_path: Path) -> bool:
@@ -25,7 +26,7 @@ def is_cloned(target_path: Path) -> bool:
 def get_commit_hash(target_path: Path) -> str | None:
     try:
         return Repo(target_path).head.commit.hexsha
-    except ValueError:
+    except (InvalidGitRepositoryError, ValueError):
         return None
 
 

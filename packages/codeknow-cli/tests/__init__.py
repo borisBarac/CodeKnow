@@ -1,1 +1,0 @@
-"""codeknow-cli test suite."""

@@ -11,6 +11,7 @@ dependencies = [
     "codeknow-lib",
     "codeknow-api",
     "codeknow-cli",
+    "evalkit",
 ]
 
 [project.scripts]
@@ -23,6 +24,7 @@ packages = [
     "packages/codeknow-api/src/codeknow_api",
     "packages/codeknow-cli/src/codeknow_cli",
     "packages/codeknow-cli/generated/code_know_api_client",
+    "evalkit/src/evalkit",
 ]
 
 [tool.hatch.build.targets.editable]
@@ -31,15 +33,17 @@ dev-mode-dirs = [
     "packages/codeknow-api/src",
     "packages/codeknow-cli/src",
     "packages/codeknow-cli/generated",
+    "evalkit/src",
 ]
 
 [tool.uv.workspace]
-members = ["packages/*"]
+members = ["packages/*", "evalkit"]
 
 [tool.uv.sources]
 codeknow-lib = { workspace = true }
 codeknow-api = { workspace = true }
 codeknow-cli = { workspace = true }
+evalkit = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -53,7 +57,10 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/codeknow-lib/tests"]
+testpaths = ["packages/codeknow-lib/tests", "evalkit/tests"]
 pythonpath = ["e2e"]
-markers = ["llm_judge: requires JUDGE_LLM_API_KEY or OPENROUTER_API_KEY"]
+markers = [
+    "llm_judge: requires JUDGE_LLM_API_KEY or OPENROUTER_API_KEY",
+    "slow: long-running tests (15+ minutes)",
+]
 

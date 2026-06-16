@@ -37,13 +37,18 @@ def embed(result: PipelineResult, **kwargs: Any) -> PipelineResult:
         collection_name=collection_name,
     )
 
-    store = ChromaStore(config=chroma_config, embeddings=embeddings)
+    store = ChromaStore(
+        config=chroma_config,
+        embeddings=embeddings,
+        embedding_config=embed_config,
+    )
 
     extra_metadata = build_chunk_metadata(result)
 
     start = time.monotonic()
     stored = store.store_chunk_map(
         result.chunk_map,
+        batch_size=config.embed_batch_size,
         slug=slug,
         extra_metadata=extra_metadata,
     )
@@ -53,6 +58,7 @@ def embed(result: PipelineResult, **kwargs: Any) -> PipelineResult:
         "chunks_embedded": stored,
         "provider": config.embed_provider,
         "model": config.embed_model,
+        "batch_size": config.embed_batch_size,
         "duration_seconds": round(duration, 3),
     }
 

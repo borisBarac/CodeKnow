@@ -26,6 +26,12 @@ def _simple_tokenize(text: str) -> list[str]:
     return re.findall(r"[a-zA-Z0-9_]+", text.lower())
 
 
+def _is_test_or_docs_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    parts = set(normalized.split("/"))
+    return "test" in parts or "tests" in parts or "docs" in parts
+
+
 class GraphSearcher:
     """Collapsed hybrid search interface.
 
@@ -312,15 +318,21 @@ class GraphSearcher:
         hash_val: str,
         doc: str,
         meta: dict[str, Any],
+        *,
+        score: float | None = None,
+        max_score: float | None = None,
     ) -> HybridSearchResult:
         labels, ids = self._parse_labels(meta)
+        distance = 0.5
+        if score is not None and max_score and max_score > 0:
+            distance = max(0.05, min(0.95, 1.0 - (score / max_score)))
         return HybridSearchResult(
             chunk_hash=hash_val,
             file=meta.get("file", ""),
             start_line=int(meta.get("start_line", 1)),
             end_line=int(meta.get("end_line", 1)),
             content=doc,
-            distance=0.5,
+            distance=distance,
             node_labels=labels,
             community_ids=ids,
             provenance="vector",
@@ -438,7 +450,7 @@ class GraphSearcher:
         store = self._get_store()
         vector_results = store.search(query, n_results=top_k)
 
-        bm25_results = self._bm25_search(query, store, n_results=top_k)
+        bm25_results = self._bm25_search(query, store, n_results=top_k * 5)
 
         by_hash: dict[str, HybridSearchResult] = {}
 
@@ -452,13 +464,33 @@ class GraphSearcher:
             vector_hash_to_sr = {sr.hash: sr for sr in vector_results}
             bm25_map = {h: (sc, doc, meta) for h, sc, doc, meta in bm25_results}
 
-            for hash_val in all_hashes_by_rrf[:top_k]:
+            candidate_hashes = list(dict.fromkeys(all_hashes_by_rrf[:top_k]))
+            for hash_val, *_ in bm25_results[:top_k]:
+                if hash_val not in candidate_hashes:
+                    candidate_hashes.append(hash_val)
+            source_sparse = [
+                hash_val
+                for hash_val, _, _, meta in bm25_results
+                if not _is_test_or_docs_path(str(meta.get("file", "")))
+            ][:top_k]
+            for hash_val in source_sparse:
+                if hash_val not in candidate_hashes:
+                    candidate_hashes.append(hash_val)
+
+            for hash_val in candidate_hashes:
                 if hash_val in vector_hash_to_sr:
                     sr = vector_hash_to_sr[hash_val]
                     by_hash[sr.hash] = self._make_vector_result(sr)
                 elif hash_val in bm25_map:
-                    _, doc, meta = bm25_map[hash_val]
-                    by_hash[hash_val] = self._make_bm25_result(hash_val, doc, meta)
+                    score, doc, meta = bm25_map[hash_val]
+                    max_score = max((s for s, _, _ in bm25_map.values()), default=score)
+                    by_hash[hash_val] = self._make_bm25_result(
+                        hash_val,
+                        doc,
+                        meta,
+                        score=score,
+                        max_score=max_score,
+                    )
         else:
             for sr in vector_results:
                 by_hash[sr.hash] = self._make_vector_result(sr)

@@ -24,6 +24,8 @@ Configuration is read from a ``.env`` file in the working directory:
 
 from __future__ import annotations
 
+import logging
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -34,6 +36,62 @@ if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
 
     from codeknow.schemas import Chunk, ChunkMap
+
+logger = logging.getLogger(__name__)
+
+
+def _estimate_tokens(text: str) -> int:
+    """Conservative token estimate for provider-agnostic request budgeting."""
+    if not text:
+        return 0
+    return max(1, math.ceil(len(text) / 3))
+
+
+def _batch_texts_for_embedding_requests(
+    texts: list[str],
+    *,
+    max_tokens: int,
+) -> list[list[str]]:
+    """Group existing chunk texts into embedding requests under a token budget.
+
+    This does *not* create or resize CodeKnow source chunks. Source chunks are
+    produced earlier by ``codeknow.chunking`` using line-based/AST-aware rules.
+    At this point each string in ``texts`` is already one chunk's content.
+
+    The purpose of this helper is only to avoid sending too many existing chunk
+    texts in one OpenAI-compatible ``/embeddings`` request. If one individual
+    chunk text exceeds ``max_tokens``, it is sent alone and a warning is logged;
+    this layer intentionally does not split it into smaller chunks.
+    """
+    if max_tokens < 1:
+        msg = "max_tokens must be greater than zero"
+        raise ValueError(msg)
+
+    batches: list[list[str]] = []
+    current: list[str] = []
+    current_tokens = 0
+
+    for text in texts:
+        text_tokens = _estimate_tokens(text)
+        if text_tokens > max_tokens:
+            logger.warning(
+                "Embedding text estimate exceeds token budget: %d > %d",
+                text_tokens,
+                max_tokens,
+            )
+
+        if current and current_tokens + text_tokens > max_tokens:
+            batches.append(current)
+            current = []
+            current_tokens = 0
+
+        current.append(text)
+        current_tokens += text_tokens
+
+    if current:
+        batches.append(current)
+
+    return batches
 
 
 def _read_chunk_content(chunk: Chunk) -> str:
@@ -82,6 +140,20 @@ class EmbeddingConfig(BaseSettings):
     )
     openrouter_api_key: str | None = Field(default=None, alias="OPENROUTER_API_KEY")
 
+    request_chunk_size: int | None = Field(
+        default=None, alias="EMBEDDING_REQUEST_CHUNK_SIZE"
+    )
+    # Request-budgeting controls how existing chunk texts are packed into
+    # embedding requests. It does not affect source chunk size or overlap.
+    max_request_tokens: int | None = Field(
+        default=1800,
+        alias="EMBEDDING_MAX_REQUEST_TOKENS",
+    )
+    token_safety_margin: int = Field(
+        default=128,
+        alias="EMBEDDING_TOKEN_SAFETY_MARGIN",
+    )
+
     def resolved_base_url(self) -> str:
         if self.base_url:
             return self.base_url
@@ -115,14 +187,38 @@ def create_embeddings(config: EmbeddingConfig) -> Embeddings:
     }
     if config.provider in ("docker", "ollama"):
         kwargs["check_embedding_ctx_length"] = False
+    if config.request_chunk_size is not None:
+        kwargs["chunk_size"] = config.request_chunk_size
     return OpenAIEmbeddings(**kwargs)
 
 
 def embed_texts(
     texts: list[str],
     embeddings: Embeddings,
+    *,
+    max_request_tokens: int | None = None,
+    token_safety_margin: int = 0,
 ) -> list[list[float]]:
-    return embeddings.embed_documents(texts)
+    """Embed existing texts, optionally splitting requests by token budget.
+
+    ``texts`` are already-built chunk contents. Token-budget splitting only
+    controls the size of each outbound embedding request; it does not create,
+    resize, or overlap CodeKnow chunks.
+    """
+    if not texts:
+        return []
+
+    if max_request_tokens is None:
+        return embeddings.embed_documents(texts)
+
+    effective_max_tokens = max(1, max_request_tokens - token_safety_margin)
+    vectors: list[list[float]] = []
+    for batch in _batch_texts_for_embedding_requests(
+        texts,
+        max_tokens=effective_max_tokens,
+    ):
+        vectors.extend(embeddings.embed_documents(batch))
+    return vectors
 
 
 def embed_chunks(

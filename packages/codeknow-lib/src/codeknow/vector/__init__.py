@@ -26,6 +26,12 @@ from .embeddings import (
     embed_chunks,
     embed_texts,
 )
+from .ingest import (
+    EmbedChunkMapStats,
+    EmbeddedChunkBatch,
+    embed_chunk_batches,
+    embed_chunk_map_only,
+)
 from .store import SearchResult, VectorStore
 
 with contextlib.suppress(ImportError):
@@ -39,6 +45,8 @@ with contextlib.suppress(ImportError):
 __all__ = [
     "ChromaConfig",
     "ChromaStore",
+    "EmbedChunkMapStats",
+    "EmbeddedChunkBatch",
     "EmbeddingConfig",
     "GraphSearcher",
     "HybridSearchResponse",
@@ -46,7 +54,9 @@ __all__ = [
     "SearchResult",
     "VectorStore",
     "create_embeddings",
+    "embed_chunk_batches",
     "embed_chunk_map",
+    "embed_chunk_map_only",
     "embed_chunks",
     "embed_texts",
 ]
