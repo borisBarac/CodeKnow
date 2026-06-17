@@ -22,7 +22,7 @@ EOF
 
 run_build() {
   printf '%s\n' 'Building Fastify eval index...'
-  uv run python evals/build_fastify_graph.py
+  FORCE_REINDEX=1 uv run python evals/build_fastify_graph.py
 }
 
 run_smoke() {

@@ -1,7 +1,7 @@
 {
-  "chunks_embedded": 3407,
+  "chunks_embedded": 3449,
   "provider": "docker",
   "model": "ai/qwen3-embedding:4B",
   "batch_size": 50,
-  "duration_seconds": 1991.688
+  "duration_seconds": 2026.578
 }
