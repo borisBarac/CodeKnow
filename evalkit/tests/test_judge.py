@@ -1,5 +1,7 @@
 """Tests for the LLMJudge orchestrator — full pipeline with stubbed LLM."""
 
+# ruff: noqa: T201
+
 from pathlib import Path
 
 from evalkit.judge.judge import LLMJudge, _majority
@@ -208,3 +210,66 @@ def test_judge_run_reconciles_hallucinated_paths(tmp_path: Path):
 
     assert out.hallucinated_paths == ["missing.py:99"]
     assert out.unsupported_ranges == ["src/a.py:1", ":5"]
+
+
+def test_judge_all_resolves_both_repo_relative_and_root_relative_citations(
+    tmp_path: Path,
+):
+    """End-to-end guard: the grep root-relative fix must not regress hybrid.
+
+    Hybrid cites repo-relative (``lib/route.js:2``); grep cites root-relative
+    (``/lib/route.js:2``). Both point at the same underlying file, so Stage 0
+    must resolve both (``existence_rate == 1.0``, no hallucinated paths) and
+    Stage 2 pairwise must receive real snippets for BOTH candidates — never
+    ``[FILE NOT FOUND]``. This is the cross-tool regression guard for the
+    earlier "fix one tool, break the other" failure.
+    """
+    repo = tmp_path / "fastify-main"
+    (repo / "lib").mkdir(parents=True)
+    (repo / "lib" / "route.js").write_text(
+        "module.exports = function () {\n  return 42\n}\n", encoding="utf-8"
+    )
+
+    prompts: list[str] = []
+
+    def capture_llm(prompt: str) -> dict:
+        prompts.append(prompt)
+        return _stub_llm(prompt)
+
+    judge = LLMJudge(repo_root=repo, llm=capture_llm)
+    tasks = [_task("T-1")]
+    runs = [
+        _run("T-1", "hybrid", 0, "lib/route.js:2"),
+        _run("T-1", "grep", 0, "/lib/route.js:2"),
+    ]
+
+    outputs, _pairwise = judge.judge_all(tasks, runs)
+
+    # ── Full-result logging (visible with `pytest -s` or on failure) ──
+    stage2_prompts = [p for p in prompts if "Candidate 1" in p]
+
+    print("\n===== judge_all full result =====")
+    print(f"repo_root: {repo}")
+    print(f"runs: {[(r.tool, r.cited_locations) for r in runs]}")
+    print("\n-- Stage 1 JudgeOutputs --")
+    for o in outputs:
+        print(o.model_dump_json(indent=2))
+    print("\n-- Stage 2 pairwise verdict --")
+    for p in _pairwise:
+        print(p.model_dump_json(indent=2))
+    print(f"\n-- Stage 2 double-swap prompts captured: {len(stage2_prompts)} --")
+    for i, p in enumerate(stage2_prompts, 1):
+        print(f"--- swap call {i} ---\n{p}")
+    print("===== end full result =====\n")
+
+    # Both tools' citations resolve to the same real file.
+    assert [o.existence_rate for o in outputs] == [1.0, 1.0]
+    assert all(o.hallucinated_paths == [] for o in outputs)
+
+    # Stage 2 ran the double-swap; each swap call carries both candidates.
+    assert len(stage2_prompts) == 2  # AB and BA
+    for p in stage2_prompts:
+        assert "### lib/route.js:2" in p
+        assert "### /lib/route.js:2" in p
+        assert "[FILE NOT FOUND]" not in p
+        assert "return 42" in p  # the real code at line 2 reached the judge

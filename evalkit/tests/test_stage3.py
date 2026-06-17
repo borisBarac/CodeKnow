@@ -86,3 +86,43 @@ def test_stage3_splits_pairs_between_llm_and_embeddings():
     score = stage3(_task(), runs, llm=llm, embed_fn=embed_fn, llm_subset_size=2)
     # 2 pairs @1.0 (llm) + 4 pairs @0.0 (distinct orthogonal vectors) => 2/6.
     assert score == pytest.approx(2 / 6)
+
+
+def test_stage3_clamps_negative_cosine_to_zero_agreement():
+    # Opposite-direction embeddings would yield cosine = -1, which is outside
+    # the [0, 1] consistency scale. It must collapse to 0 agreement, not render
+    # as a negative consistency % in the report.
+    runs = [_run(i, f"ans{i}") for i in range(4)]  # 6 pairs, all embedding-scored
+
+    def llm(_prompt: str) -> dict:
+        msg = "LLM should not be called with llm_subset_size=0"
+        raise AssertionError(msg)
+
+    def embed_fn(text: str) -> list[float]:
+        # Opposite directions for ans0 and ans1; others orthogonal.
+        idx = int(text[-1])
+        v = [0.0] * 4
+        v[idx % 4] = 1.0 if idx in (0, 2) else -1.0
+        return v
+
+    score = stage3(_task(), runs, llm=llm, embed_fn=embed_fn, llm_subset_size=0)
+    # All agreement values must be within [0, 1]; no negative contribution.
+    assert 0.0 <= score <= 1.0
+
+
+def test_stage3_clamps_out_of_range_llm_agreement_scores():
+    # LLMs sometimes drift outside [0, 1] (e.g. 1.2 or -0.3). The judge output
+    # schema constrains consistency to [0, 1]; stage3 must enforce it.
+    runs = [_run(0, "a"), _run(1, "b")]  # 1 pair, LLM-scored
+
+    def llm(_prompt: str) -> dict:
+        return {"equivalent": True, "agreement_score": 1.5}
+
+    score = stage3(_task(), runs, llm=llm, embed_fn=lambda _s: [1.0])
+    assert score == 1.0
+
+    def llm_low(_prompt: str) -> dict:
+        return {"equivalent": False, "agreement_score": -0.4}
+
+    score_low = stage3(_task(), runs, llm=llm_low, embed_fn=lambda _s: [1.0])
+    assert score_low == 0.0

@@ -14,7 +14,7 @@ from collections.abc import Callable
 from itertools import product
 from typing import TYPE_CHECKING
 
-from evalkit.judge.stage0 import Stage0Result, stage0
+from evalkit.judge.stage0 import Stage0Result, resolve_citation_path, stage0
 from evalkit.judge.stage1 import stage1
 from evalkit.judge.stage2 import stage2
 from evalkit.judge.stage3 import stage3
@@ -192,7 +192,7 @@ def _reconcile_hallucinations(
         if (
             _looks_like_path(file_path)
             and file_path not in existing_files
-            and not (repo_root / file_path).exists()
+            and resolve_citation_path(file_path, repo_root) is None
         ):
             hallucinated.append(entry)
         else:

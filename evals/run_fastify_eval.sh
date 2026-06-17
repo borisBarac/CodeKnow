@@ -27,7 +27,7 @@ run_build() {
 
 run_smoke() {
   printf '%s\n' 'Running smoke eval...'
-  SMOKE=1 uv run python evals/eval_fastify.py
+  SMOKE=1 EVAL_SEEDS=3 uv run python evals/eval_fastify.py
 }
 
 run_eval() {

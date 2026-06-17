@@ -1,10 +1,10 @@
 # CodeKnow
 
-Turn any GitHub repo into a searchable **code knowledge graph**. CodeKnow indexes source code into a graph of entities and relationships, then answers natural-language queries with **hybrid search** — vector similarity expanded by graph traversal — so you find code by meaning *and* by structure.
+Turn any GitHub repo into a LOCAL searchable **code knowledge graph**. CodeKnow indexes source code into a graph of entities and relationships, then answers natural-language queries with **hybrid search** — vector similarity expanded by graph traversal — so you find code by meaning *and* by structure.
 
 ## What is CodeKnow?
 
-CodeKnow is a self-hosted code intelligence stack that indexes repositories into a per-repo knowledge graph and serves grounded, navigable search over them.
+CodeKnow is a self-hosted (not token cost, just docker) code intelligence stack that indexes repositories into a per-repo knowledge graph and serves grounded, navigable search over them.
 
 - **Hybrid search** — every query runs through vector similarity *and* a weighted BFS over the knowledge graph (edges like `calls`, `inherits`, `uses`, `semantically_similar_to`), then merges the two.
 - **Three components** — `codeknow-lib` (the indexing + search pipeline), `codeknow-api` (FastAPI server), `codeknow-cli` (user-facing CLI).

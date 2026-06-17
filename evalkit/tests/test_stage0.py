@@ -4,6 +4,7 @@ from pathlib import Path
 
 from evalkit.judge.stage0 import (
     extract_snippet,
+    resolve_citation_path,
     stage0,
     verify_existence,
 )
@@ -41,6 +42,61 @@ def test_verify_existence_accepts_absolute_path(tmp_path: Path):
     elsewhere.write_text("x = 1\n", encoding="utf-8")
     result = verify_existence([f"{elsewhere}:1"], repo)
     assert result[f"{elsewhere}:1"] is True
+
+
+def test_verify_existence_resolves_root_relative_grep_paths(tmp_path: Path):
+    """Grep emits root-relative paths like ``/lib/route.js:455``.
+
+    The leading slash must NOT cause the citation to be checked against the
+    host's ``/lib/route.js`` (which doesn't exist) and marked nonexistent. It
+    should fall back to ``repo_root / "lib/route.js"``. Without this fallback
+    grep is systematically penalised in the eval even when it cited a real
+    repo file.
+    """
+    repo = tmp_path / "fastify-main"
+    (repo / "lib").mkdir(parents=True)
+    (repo / "lib" / "route.js").write_text("module.exports = {}\n", encoding="utf-8")
+
+    result = verify_existence(["/lib/route.js:455"], repo)
+    assert result["/lib/route.js:455"] is True
+
+
+def test_resolve_citation_path_returns_none_for_truly_missing(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    # Root-relative that does not exist under repo_root either.
+    assert resolve_citation_path("/nope/missing.js", repo) is None
+    # Relative that does not exist.
+    assert resolve_citation_path("nope/missing.js", repo) is None
+
+
+def test_resolve_citation_path_prefers_literal_absolute_when_it_exists(tmp_path: Path):
+    """Don't strip a real absolute path's leading slash unnecessarily.
+
+    If ``/abs/path`` literally exists, return it rather than the stripped form
+    — so genuine in-repo absolute citations (hybrid) keep working.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    real_abs = tmp_path / "lib" / "route.js"
+    real_abs.parent.mkdir(parents=True)
+    real_abs.write_text("x = 1\n", encoding="utf-8")
+    resolved = resolve_citation_path(str(real_abs), repo)
+    assert resolved == real_abs
+
+
+def test_stage0_extracts_snippet_for_root_relative_citation(tmp_path: Path):
+    """End-to-end: a grep-style root-relative citation yields a real snippet."""
+    repo = tmp_path / "fastify-main"
+    (repo / "lib").mkdir(parents=True)
+    (repo / "lib" / "route.js").write_text(
+        "module.exports = function () {\n  return 42\n}\n", encoding="utf-8"
+    )
+
+    result = stage0(["/lib/route.js:2"], repo)
+    assert result.existence_rate == 1.0
+    assert result.snippets["/lib/route.js:2"] is not None
+    assert "return 42" in result.snippets["/lib/route.js:2"]
 
 
 def _write_lines(path: Path, n: int) -> None:

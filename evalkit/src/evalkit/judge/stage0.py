@@ -41,7 +41,8 @@ def stage0(citations: list[str], repo_root: Path, context: int = 5) -> Stage0Res
             snippets[citation] = None
             continue
         file_path, line = _split_citation(citation)
-        snippets[citation] = extract_snippet(repo_root / file_path, line, context)
+        resolved = resolve_citation_path(file_path, repo_root)
+        snippets[citation] = extract_snippet(resolved, line, context)
     rate = sum(existence_map.values()) / len(existence_map) if existence_map else None
     return Stage0Result(
         existence_rate=rate, existence_map=existence_map, snippets=snippets
@@ -52,13 +53,42 @@ def verify_existence(citations: list[str], repo_root: Path) -> dict[str, bool]:
     """Return ``{citation: file_exists}`` for each cited ``file:line``.
 
     Existence is file-level (the file at ``citation``'s path exists under
-    ``repo_root``); the line number is consumed by snippet extraction.
+    ``repo_root``); the line number is consumed by snippet extraction. Handles
+    the three path forms the agents emit (see :func:`resolve_citation_path`).
     """
-    out: dict[str, bool] = {}
-    for citation in citations:
-        file_path, _line = _split_citation(citation)
-        out[citation] = (repo_root / file_path).exists()
-    return out
+    return {
+        citation: resolve_citation_path(_split_citation(citation)[0], repo_root)
+        is not None
+        for citation in citations
+    }
+
+
+def resolve_citation_path(file_path: str, repo_root: Path) -> Path | None:
+    """Resolve a citation's file half to an existing path, or ``None``.
+
+    Handles the three path forms the two tools emit:
+
+    - **repo-relative** (grep + hybrid display layer): ``lib/route.js`` ->
+      ``repo_root / "lib/route.js"``.
+    - **absolute in-repo** (hybrid tool output): ``/abs/repo/lib/route.js`` ->
+      that path. Pathlib's ``/`` discards ``repo_root`` when the right operand
+      is absolute, so a single join covers this.
+    - **root-relative** (grep tool output): ``/lib/route.js``. The natural join
+      lands at the host's ``/lib/route.js`` (which does not exist on the eval
+      host); fall back to ``repo_root / "lib/route.js"``. Without this fallback
+      grep citations are systematically marked nonexistent even when the agent
+      cited a real repo file, unfairly penalising grep in the eval.
+
+    Returns ``None`` when no candidate resolves to an existing file.
+    """
+    direct = repo_root / file_path
+    if direct.exists():
+        return direct
+    if file_path.startswith("/"):
+        stripped = repo_root / file_path.lstrip("/")
+        if stripped.exists():
+            return stripped
+    return None
 
 
 def _split_citation(citation: str) -> tuple[str, int]:

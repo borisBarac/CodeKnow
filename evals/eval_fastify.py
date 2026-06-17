@@ -451,7 +451,11 @@ def make_agent(tool_obj: Any, name: str) -> Any:
     )
 
 
-def _synthesize_answer(item: Task, tool_outputs: list[str]) -> str:
+def _synthesize_answer(
+    item: Task,
+    tool_outputs: list[str],
+    callback: CostCallback | None = None,
+) -> str:
     """Recover a grounded answer from gathered tool outputs when the agent
     produced no final answer of its own.
 
@@ -459,6 +463,12 @@ def _synthesize_answer(item: Task, tool_outputs: list[str]) -> str:
     answer from ONLY those results, citing real file:line locations. This is
     the safety net so an agent run never yields an empty ``final_answer`` —
     the work the agent did is recovered instead of discarded.
+
+    When ``callback`` is supplied the synthesis LLM call is run through it so
+    its token usage and LLM-turn count are folded into the run's cost. Without
+    this, a run that fell back to synthesis would look artificially cheap
+    (the recovery call is invisible to the cost axis), distorting the
+    hybrid-vs-grep cost comparison.
     """
     if not tool_outputs:
         return "(no search results retrieved)"
@@ -472,8 +482,13 @@ def _synthesize_answer(item: Task, tool_outputs: list[str]) -> str:
         f"Search results:\n{context}\n\n"
         "Answer (<=15 lines, grounded in the cited code):"
     )
+    invoke_kwargs: dict[str, Any] = {}
+    if callback is not None:
+        invoke_kwargs["config"] = {"callbacks": [callback]}
     try:
-        resp = _make_chat_model().invoke([HumanMessage(content=prompt)])
+        resp = _make_chat_model().invoke(
+            [HumanMessage(content=prompt)], **invoke_kwargs
+        )
         content = resp.content if isinstance(resp.content, str) else str(resp.content)
         return content.strip() or "(synthesis produced no answer)"
     except Exception:
@@ -544,7 +559,9 @@ def run_one(
                 item.task_id,
                 tool_name,
             )
-            final_answer = _synthesize_answer(item, callback.cost.tool_outputs)
+            final_answer = _synthesize_answer(
+                item, callback.cost.tool_outputs, callback=callback
+            )
         else:
             final_answer = "(no answer produced and no search results retrieved)"
     else:
@@ -711,6 +728,43 @@ def _fmt_opt(value: float | None, suffix: str = "") -> str:
     return f"{value:.1f}{suffix}" if value is not None else "N/A"
 
 
+def _format_seed_lines(o: JudgeOutput, multi_seed: bool) -> list[str]:
+    """Render one per-seed bullet for the per-task detail section.
+
+    With a single seed the seed index is omitted (concise, backward-compatible
+    display). With multiple seeds each seed gets its own indented bullet so
+    variance and per-seed failures are visible instead of collapsed into one
+    arbitrary survivor.
+    """
+    existence = f"{o.existence_rate:.0%}" if o.existence_rate is not None else "N/A"
+    consistency = (
+        f", consistency {o.consistency_vs_other_seeds:.0%}"
+        if o.consistency_vs_other_seeds is not None
+        else ""
+    )
+    seed_prefix = f"seed={o.seed}: " if multi_seed else ""
+    indent = "  " if multi_seed else ""
+    lines = [
+        f"{indent}- {seed_prefix}grounding {o.grounding}/5, "
+        f"faithfulness {o.faithfulness}/5, existence {existence}{consistency}\n"
+    ]
+    if o.ungrounded_claims:
+        lines.append(f"{indent}  - ungrounded claims:\n")
+        for c in o.ungrounded_claims:
+            lines.append(f"{indent}    - {c}\n")
+    if o.hallucinated_paths:
+        lines.append(f"{indent}  - hallucinated paths:\n")
+        for path in o.hallucinated_paths:
+            lines.append(f"{indent}    - {path}\n")
+    if o.unsupported_ranges:
+        lines.append(
+            f"{indent}  - unsupported ranges (cited, exist; range not shown):\n"
+        )
+        for path in o.unsupported_ranges:
+            lines.append(f"{indent}    - {path}\n")
+    return lines
+
+
 def write_report(
     items: list[Task],
     outputs: list[JudgeOutput],
@@ -720,7 +774,15 @@ def write_report(
     """Write the per-tool profile + pairwise + per-task detail to PROFILE_MD."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    out_by_key = {(o.task_id, o.tool): o for o in outputs}
+    # Group per-(task, tool) outputs by seed so multi-seed evals surface every
+    # seed rather than overwriting earlier ones. With EVAL_SEEDS>=2 the old
+    # ``{(task_id, tool): o}`` dict silently dropped all but the last seed,
+    # hiding seed variance and any per-seed failures behind an arbitrary one.
+    outputs_by_key: dict[tuple[str, str], list[JudgeOutput]] = {}
+    for o in outputs:
+        outputs_by_key.setdefault((o.task_id, o.tool), []).append(o)
+    for seed_list in outputs_by_key.values():
+        seed_list.sort(key=lambda o: o.seed)
     pw_by_task = {p.task_id: p for p in pairwise}
 
     md: list[str] = []
@@ -777,30 +839,15 @@ def write_report(
         if pw is not None:
             md.append(f"**Pairwise winner:** {pw.winner} ({pw.confidence})\n\n")
         for tool_name in ("hybrid", "grep"):
-            o = out_by_key.get((item.task_id, tool_name))
-            if o is None:
+            tool_outputs = outputs_by_key.get((item.task_id, tool_name), [])
+            if not tool_outputs:
                 md.append(f"- **{tool_name}:** (no run)\n")
                 continue
-            existence = (
-                f"{o.existence_rate:.0%}" if o.existence_rate is not None else "N/A"
-            )
-            md.append(
-                f"- **{tool_name}:** grounding {o.grounding}/5, "
-                f"faithfulness {o.faithfulness}/5, "
-                f"existence {existence}\n"
-            )
-            if o.ungrounded_claims:
-                md.append("  - ungrounded claims:\n")
-                for c in o.ungrounded_claims:
-                    md.append(f"    - {c}\n")
-            if o.hallucinated_paths:
-                md.append("  - hallucinated paths:\n")
-                for path in o.hallucinated_paths:
-                    md.append(f"    - {path}\n")
-            if o.unsupported_ranges:
-                md.append("  - unsupported ranges (cited, exist; range not shown):\n")
-                for path in o.unsupported_ranges:
-                    md.append(f"    - {path}\n")
+            multi_seed = len(tool_outputs) > 1
+            md.append(f"- **{tool_name}:**\n")
+            for o in tool_outputs:
+                md.extend(_format_seed_lines(o, multi_seed))
+        md.append("\n")
         md.append("\n")
 
     # ── Bias + stats ──

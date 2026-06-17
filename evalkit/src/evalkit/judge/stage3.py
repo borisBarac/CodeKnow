@@ -35,6 +35,18 @@ def cosine_sim(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
+def _to_agreement(score: float) -> float:
+    """Clamp a raw similarity/score into the ``[0.0, 1.0]`` agreement scale.
+
+    Cosine similarity lives in ``[-1, 1]`` and LLM-emitted ``agreement_score``
+    JSON can drift outside ``[0, 1]``. ``JudgeOutput.consistency_vs_other_seeds``
+    and the report's consistency % assume ``[0, 1]``; negative similarity would
+    otherwise render as a negative consistency %. Opposite-direction
+    embeddings collapse to ``0`` agreement.
+    """
+    return max(0.0, min(1.0, float(score)))
+
+
 def stage3(
     task: Task,
     runs: list[AgentRun],
@@ -52,7 +64,9 @@ def stage3(
             agreements.append(_llm_agreement(task, r1, r2, llm))
         else:
             agreements.append(
-                cosine_sim(embed_fn(r1.final_answer), embed_fn(r2.final_answer))
+                _to_agreement(
+                    cosine_sim(embed_fn(r1.final_answer), embed_fn(r2.final_answer))
+                )
             )
     return mean(agreements)
 
@@ -63,6 +77,6 @@ def _llm_agreement(task: Task, r1: AgentRun, r2: AgentRun, llm: LLM) -> float:
     )
     raw = llm(prompt)
     try:
-        return float(raw.get("agreement_score", 0.0))
+        return _to_agreement(raw.get("agreement_score", 0.0))
     except (TypeError, ValueError):
         return 0.0

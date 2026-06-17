@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -127,3 +128,214 @@ def test_hybrid_results_include_precise_line_numbers() -> None:
     assert "452 | if (shouldExposeHead) {" in formatted
     assert "453 |   prepareRoute.call(this)" in formatted
     assert "454 | }" in formatted
+
+
+def _minimal_profile() -> dict:
+    return {
+        "hybrid": {
+            "grounding_mean": 3.0,
+            "faithfulness_mean": 3.0,
+            "consistency_pct": None,
+            "preference_win_rate_pct": 50.0,
+            "preference_win_rate_ci": None,
+            "cost": {
+                "median_tokens": 0.0,
+                "median_search_calls": 0.0,
+                "median_wall_clock_s": 0.0,
+            },
+        },
+        "grep": {
+            "grounding_mean": 3.0,
+            "faithfulness_mean": 3.0,
+            "consistency_pct": None,
+            "preference_win_rate_pct": 50.0,
+            "preference_win_rate_ci": None,
+            "cost": {
+                "median_tokens": 0.0,
+                "median_search_calls": 0.0,
+                "median_wall_clock_s": 0.0,
+            },
+        },
+        "bias_check": {"length_winrate_correlation": None, "bias_flagged": False},
+        "stats": {
+            "binomial_preference_p": None,
+            "wilcoxon_grounding_p": None,
+            "wilcoxon_faithfulness_p": None,
+        },
+    }
+
+
+def _task(task_id: str) -> Any:
+    eval_fastify = importlib.import_module("eval_fastify")
+    return eval_fastify.Task(
+        task_id=task_id,
+        type="locate",
+        stratum="single-hop",
+        difficulty="easy",
+        prompt="Where is the login entry point?",
+    )
+
+
+def _jout(task_id: str, tool: str, seed: int, grounding: int) -> Any:
+    eval_fastify = importlib.import_module("eval_fastify")
+    return eval_fastify.JudgeOutput(
+        task_id=task_id,
+        tool=tool,
+        seed=seed,
+        grounding=grounding,
+        existence_rate=1.0,
+        faithfulness=3,
+        ungrounded_claims=[],
+        hallucinated_paths=[],
+    )
+
+
+def test_write_report_renders_every_seed_in_multi_seed_eval(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Multi-seed evals must surface every seed, not just the last one.
+
+    Regression: ``out_by_key = {(task_id, tool): o}`` used to overwrite earlier
+    seeds, so the per-task detail showed one arbitrary seed while the profile
+    aggregated all of them. With EVAL_SEEDS>=2 both ``seed=0`` and ``seed=1``
+    must appear per tool.
+    """
+    eval_fastify = importlib.import_module("eval_fastify")
+    monkeypatch.setattr(eval_fastify, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(eval_fastify, "PROFILE_MD", tmp_path / "profile.md")
+
+    task = _task("T-1")
+    outputs = [
+        _jout("T-1", "hybrid", 0, 4),
+        _jout("T-1", "hybrid", 1, 2),
+        _jout("T-1", "grep", 0, 3),
+        _jout("T-1", "grep", 1, 5),
+    ]
+    pairwise = [
+        eval_fastify.PairwiseJudgment(task_id="T-1", winner="Tie", confidence="low")
+    ]
+
+    eval_fastify.write_report([task], outputs, pairwise, _minimal_profile())
+
+    report = (tmp_path / "profile.md").read_text(encoding="utf-8")
+    # All four seeds are present.
+    assert "seed=0" in report
+    assert "seed=1" in report
+    # Both grounding scores for hybrid (4 and 2) appear, proving no overwrite.
+    assert "grounding 4/5" in report
+    assert "grounding 2/5" in report
+    assert "grounding 5/5" in report  # grep seed=1
+
+
+def test_write_report_single_seed_omits_seed_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Single-seed evals keep the concise display (no ``seed=0`` prefix)."""
+    eval_fastify = importlib.import_module("eval_fastify")
+    monkeypatch.setattr(eval_fastify, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(eval_fastify, "PROFILE_MD", tmp_path / "profile.md")
+
+    task = _task("T-1")
+    outputs = [_jout("T-1", "hybrid", 0, 4), _jout("T-1", "grep", 0, 3)]
+    pairwise = [
+        eval_fastify.PairwiseJudgment(task_id="T-1", winner="hybrid", confidence="high")
+    ]
+
+    eval_fastify.write_report([task], outputs, pairwise, _minimal_profile())
+
+    report = (tmp_path / "profile.md").read_text(encoding="utf-8")
+    assert "seed=" not in report
+    assert "grounding 4/5" in report
+
+
+class _FakeUsageResponse:
+    """Mimics a LangChain LLMResult: ``.content`` for invoke, ``.llm_output``."""
+
+    def __init__(self, content: str, usage: dict | None = None) -> None:
+        self.content = content
+        self.llm_output = {"token_usage": usage} if usage else None
+
+
+class _FakeChatModel:
+    """Records the invoke config and fires the callback like LangChain would."""
+
+    def __init__(self, answer: str, usage: dict) -> None:
+        self.answer = answer
+        self.usage = usage
+        self.received_callbacks: list | None = None
+
+    def invoke(self, _messages: object, **kwargs: object) -> _FakeUsageResponse:
+        cfg = kwargs.get("config") or {}
+        callbacks = cfg.get("callbacks", [])  # type: ignore[union-attr]
+        self.received_callbacks = callbacks
+        for cb in callbacks:
+            cb.on_chat_model_start({}, [])
+            cb.on_llm_end(_FakeUsageResponse(self.answer, self.usage))
+        return _FakeUsageResponse(self.answer)
+
+
+def test_synthesize_answer_accounts_for_cost_via_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The recovery LLM call must fold its tokens/turns into the run's cost.
+
+    Regression: ``_synthesize_answer`` used to invoke the model with no
+    callback, so a run that fell back to synthesis looked artificially cheap
+    on the cost axis. With the callback wired through, the synthesis call's
+    ``llm_turns`` and token usage are captured.
+    """
+    eval_fastify = importlib.import_module("eval_fastify")
+
+    fake = _FakeChatModel(
+        answer="synthesized answer",
+        usage={"prompt_tokens": 100, "completion_tokens": 20},
+    )
+    monkeypatch.setattr(eval_fastify, "_make_chat_model", lambda: fake)
+
+    callback = eval_fastify.CostCallback(search_tool_name="hybrid")
+    item = _task("T-1")
+
+    answer = eval_fastify._synthesize_answer(item, ["result line 1"], callback=callback)
+
+    assert answer == "synthesized answer"
+    # The callback reached the fake model's invoke call.
+    assert callback in (fake.received_callbacks or [])
+    # Cost was accumulated from the synthesis call.
+    assert callback.cost.llm_turns == 1
+    assert callback.cost.tokens_in == 100
+    assert callback.cost.tokens_out == 20
+    # search_calls is untouched by synthesis (only the search tool bumps it).
+    assert callback.cost.search_calls == 0
+
+
+def test_synthesize_answer_works_without_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backward compat: synthesis still returns an answer with no callback."""
+    eval_fastify = importlib.import_module("eval_fastify")
+
+    fake = _FakeChatModel(
+        answer="no-callback answer", usage={"prompt_tokens": 50, "completion_tokens": 5}
+    )
+    monkeypatch.setattr(eval_fastify, "_make_chat_model", lambda: fake)
+
+    item = _task("T-1")
+    answer = eval_fastify._synthesize_answer(item, ["result line 1"])
+
+    assert answer == "no-callback answer"
+    assert fake.received_callbacks == []
+
+
+def test_synthesize_answer_no_tool_outputs_returns_sentinel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    eval_fastify = importlib.import_module("eval_fastify")
+    monkeypatch.setattr(
+        eval_fastify, "_make_chat_model", lambda: _FakeChatModel("x", {})
+    )
+    assert (
+        eval_fastify._synthesize_answer(_task("T-1"), [])
+        == "(no search results retrieved)"
+    )
