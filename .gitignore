@@ -54,6 +54,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+!evals/fastify-main/lib/
+!evals/fastify-main/lib/**
 lib64/
 parts/
 sdist/
