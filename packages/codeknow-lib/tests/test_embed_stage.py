@@ -251,6 +251,28 @@ class TestEmbedStage:
         mock_create_emb.assert_called_once()
         assert mock_store.store_chunk_map.call_args.kwargs["batch_size"] == 1
 
+    @patch("codeknow.pipeline.embed_stage.ChromaStore")
+    @patch("codeknow.pipeline.embed_stage.create_embeddings")
+    def test_forwards_on_progress_to_store(
+        self,
+        _mock_create_emb,  # noqa: PT019
+        mock_store_cls,
+    ):
+        mock_store = MagicMock()
+        mock_store.store_chunk_map.return_value = 3
+        mock_store_cls.return_value = mock_store
+
+        config = _make_config()
+        result = _make_result(config)
+
+        def _on_progress(done: int, total: int) -> None: ...
+
+        embed(result, on_progress=_on_progress)
+
+        assert (
+            mock_store.store_chunk_map.call_args.kwargs["on_progress"] is _on_progress
+        )
+
 
 class TestChromaStoreExtraMetadata:
     def test_store_chunks_merges_extra_metadata(self):
@@ -371,6 +393,56 @@ class TestTokenBudgetedEmbeddings:
             [98.0],
             [99.0],
         ]
+
+    def test_store_chunks_invokes_on_progress_per_batch(self):
+        from codeknow.vector.chroma import ChromaStore
+
+        class RecordingEmbeddings:
+            def __init__(self) -> None:
+                self.requests: list[list[str]] = []
+
+            def embed_documents(self, texts: list[str]) -> list[list[float]]:
+                self.requests.append(list(texts))
+                return [[float(ord(text[0]))] for text in texts]
+
+        embeddings = RecordingEmbeddings()
+        mock_collection = MagicMock()
+
+        store = ChromaStore(
+            embeddings=embeddings,  # type: ignore[arg-type]
+            embedding_config=EmbeddingConfig(
+                max_request_tokens=10_000,
+                token_safety_margin=0,
+            ),
+        )
+        store._collection = mock_collection
+
+        chunks = [
+            Chunk(file="one.py", start_line=1, end_line=1, hash="a" * 64),
+            Chunk(file="two.py", start_line=1, end_line=1, hash="b" * 64),
+            Chunk(file="three.py", start_line=1, end_line=1, hash="c" * 64),
+        ]
+
+        calls: list[tuple[int, int]] = []
+
+        def on_progress(done: int, total: int) -> None:
+            calls.append((done, total))
+
+        with (
+            patch.object(
+                store,
+                "_get_or_create_collection",
+                return_value=mock_collection,
+            ),
+            patch(
+                "codeknow.vector.ingest._read_chunk_content",
+                side_effect=["alpha", "beta", "gamma"],
+            ),
+        ):
+            store.store_chunks(chunks, batch_size=2, on_progress=on_progress)
+
+        # batch_size=2 over 3 chunks => two batches: [0,1] then [2].
+        assert calls == [(2, 3), (3, 3)]
 
     def test_oversized_single_text_is_sent_alone_and_warns(self, caplog):
         with caplog.at_level("WARNING", logger="codeknow.vector.embeddings"):

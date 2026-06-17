@@ -10,12 +10,19 @@ from codeknow.vector.chroma import ChromaConfig, ChromaStore
 from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from codeknow.pipeline import PipelineResult
 
 logger = logging.getLogger(__name__)
 
 
-def embed(result: PipelineResult, **kwargs: Any) -> PipelineResult:
+def embed(
+    result: PipelineResult,
+    *,
+    on_progress: Callable[[int, int], None] | None = None,
+    **kwargs: Any,
+) -> PipelineResult:
     config = result.config
 
     if config.no_embed:
@@ -51,6 +58,7 @@ def embed(result: PipelineResult, **kwargs: Any) -> PipelineResult:
         batch_size=config.embed_batch_size,
         slug=slug,
         extra_metadata=extra_metadata,
+        on_progress=on_progress,
     )
     duration = time.monotonic() - start
 

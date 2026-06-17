@@ -21,6 +21,8 @@ from .ingest import embed_chunk_batches
 from .store import SearchResult
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from chromadb.api.models.Collection import Collection
     from langchain_core.embeddings import Embeddings
 
@@ -149,10 +151,12 @@ class ChromaStore:
         batch_size: int = 50,
         slug: str | None = None,
         extra_metadata: dict[str, dict] | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> int:
         if not chunks:
             return 0
 
+        total = len(chunks)
         stored = 0
         collection = self._get_or_create_collection()
         for batch in embed_chunk_batches(
@@ -170,6 +174,8 @@ class ChromaStore:
                 metadatas=batch.metadatas,  # type: ignore[arg-type]
             )
             stored += len(batch.ids)
+            if on_progress is not None:
+                on_progress(stored, total)
 
         logger.info(
             "Stored %d chunk embeddings in '%s'",
@@ -185,6 +191,7 @@ class ChromaStore:
         batch_size: int = 50,
         slug: str | None = None,
         extra_metadata: dict[str, dict] | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> int:
         all_chunks: list[Chunk] = []
         for file_chunks in chunk_map.values():
@@ -194,6 +201,7 @@ class ChromaStore:
             batch_size=batch_size,
             slug=slug,
             extra_metadata=extra_metadata,
+            on_progress=on_progress,
         )
 
     def search(

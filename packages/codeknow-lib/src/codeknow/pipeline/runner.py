@@ -23,13 +23,15 @@ if TYPE_CHECKING:
         ResolveFn,
     )
 
+# Embeddings are typically the longest stage, so they own the entire second
+# half of the progress bar (50 -> 100). The first six stages share 0 -> 50.
 _STAGES: list[tuple[str, int, str]] = [
-    ("resolve", 14, "Resolving repository..."),
-    ("detect", 28, "Discovering files..."),
-    ("extract_ast", 42, "Extracting AST..."),
-    ("build", 57, "Building graph..."),
-    ("map_chunks", 71, "Mapping chunks..."),
-    ("cluster", 85, "Detecting communities..."),
+    ("resolve", 7, "Resolving repository..."),
+    ("detect", 14, "Discovering files..."),
+    ("extract_ast", 21, "Extracting AST..."),
+    ("build", 28, "Building graph..."),
+    ("map_chunks", 35, "Mapping chunks..."),
+    ("cluster", 50, "Detecting communities..."),
     ("embed", 100, "Generating embeddings..."),
 ]
 
@@ -42,6 +44,31 @@ def _progress(
         return
     stage, pct, msg = _STAGES[stage_index]
     progress_callback(stage, pct, msg)
+
+
+def _make_embed_progress(
+    progress_callback: Callable[[str, int, str], None] | None,
+) -> Callable[[int, int], None] | None:
+    """Adapt the store's raw ``(done, total)`` counts into a callback that
+    reports the ``embed`` stage across the ``[cluster_pct, embed_pct]`` window.
+
+    The store only knows how many chunks it has stored; this maps that fraction
+    onto the percentage range reserved for embeddings (50 -> 100 by default).
+    """
+    if progress_callback is None:
+        return None
+    lo_pct = _STAGES[5][1]  # cluster's terminal pct (start of embed window)
+    hi_pct = _STAGES[6][1]  # embed's terminal pct (end of embed window)
+    stage, _pct, msg = _STAGES[6]
+
+    def _on_embed(done: int, total: int) -> None:
+        if total <= 0:
+            return
+        frac = done / total
+        pct = min(hi_pct, round(lo_pct + (hi_pct - lo_pct) * frac))
+        progress_callback(stage, pct, msg)
+
+    return _on_embed
 
 
 def run_pipeline(
@@ -120,7 +147,7 @@ def run_pipeline(
         config=config,
     )
 
-    result = _embed(result)
+    result = _embed(result, on_progress=_make_embed_progress(progress_callback))
     _progress(progress_callback, 6)
 
     graph_path = save_pipeline_result(result)

@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from codeknow.schemas import Chunk, ChunkMap
 
 
@@ -40,8 +42,13 @@ class VectorStore(Protocol):
         batch_size: int = 500,
         slug: str | None = None,
         extra_metadata: dict[str, dict] | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> int:
-        """Persist chunk embeddings.  Returns the number of chunks stored."""
+        """Persist chunk embeddings.  Returns the number of chunks stored.
+
+        If *on_progress* is given it is invoked after each batch with
+        ``(stored_so_far, total_chunks)`` so callers can report progress.
+        """
         ...
 
     def store_chunk_map(
@@ -51,6 +58,7 @@ class VectorStore(Protocol):
         batch_size: int = 500,
         slug: str | None = None,
         extra_metadata: dict[str, dict] | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> int:
         """Flatten *chunk_map* and persist all chunks.  Returns count stored."""
         ...
