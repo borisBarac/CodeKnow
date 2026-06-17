@@ -1,20 +1,119 @@
 # CodeKnow
 
-Index GitHub repos into a searchable code knowledge graph. Ships a CLI, a FastAPI server, and a background daemon.
+Turn any GitHub repo into a searchable **code knowledge graph**. CodeKnow indexes source code into a graph of entities and relationships, then answers natural-language queries with **hybrid search** — vector similarity expanded by graph traversal — so you find code by meaning *and* by structure.
 
-## Setup
+## What is CodeKnow?
 
-- [Set up for development](docs/SetUp.md)
-- [Install as a tool/dependency](docs/install.md)
-- [Infrastructure setup (ChromaDB, Redis, embeddings)](docs/infra-setup.md)
+CodeKnow is a self-hosted code intelligence stack that indexes repositories into a per-repo knowledge graph and serves grounded, navigable search over them.
+
+- **Hybrid search** — every query runs through vector similarity *and* a weighted BFS over the knowledge graph (edges like `calls`, `inherits`, `uses`, `semantically_similar_to`), then merges the two.
+- **Three components** — `codeknow-lib` (the indexing + search pipeline), `codeknow-api` (FastAPI server), `codeknow-cli` (user-facing CLI).
+- **Three run modes** — `docker` (CLI drives the full Compose stack, default), `remote` (point at any shared API), `daemon` (CLI manages a local `codeknow-api` process).
+- **Multi-repo** — index many repos at once and search across all of them, or scope a query to specific slugs.
+
+## Why does it exist?
+
+Plain keyword and ripgrep search find *where a string appears*, but miss the relationships that make code understandable — which function calls which, what inherits from what, what a chunk is semantically *about*. When an LLM agent (or a human) needs to answer "how does auth work?", keyword hits alone leave it ungrounded: it sees the word `auth` everywhere but not the flow.
+
+CodeKnow closes that gap by combining two signals that keyword tools can't:
+
+1. **Semantic similarity** (vector embeddings) — finds code that means the same thing even with different names.
+2. **Structural connectivity** (the knowledge graph) — walks the real call/inherit/use edges so answers stay grounded in how the code actually fits together.
+
+The eval in [`evals/README.md`](evals/README.md) measures exactly this: identical agents, identical prompts, only the search tool differs — CodeKnow's hybrid search vs. plain ripgrep — scored by a multi-stage LLM judge.
+
+## How it works
+
+At a high level, two flows:
+
+- **Indexing** runs each repo through a 7-stage pipeline: clone → detect source files (tree-sitter) → extract AST → build the knowledge graph → map overlapping text chunks onto graph nodes → cluster communities → embed chunks into ChromaDB. Each repo gets its own graph (`~/.codeknow/graph/<slug>/`) and its own Chroma collection.
+- **Searching** runs 3 stages: embed the query and match chunk embeddings (vector) → map hits back to graph nodes and expand via weighted BFS (graph) → merge and rank by provenance + relevance. Backed by ChromaDB (vectors), Redis (response cache), and Docker Model Runner (local embeddings).
+
+Details in [How search works](#how-search-works) below.
+
+## System diagram
+
+```mermaid
+flowchart TB
+    User([User])
+
+    subgraph CLI[codeknow-cli]
+        direction TB
+        CLI_main[main.py: add, remove, search, info, clean, server]
+        CLI_client[client.py: HTTP wrapper]
+        CLI_config[config.py: UserConfig ~/.codeknow/config.jsonl]
+        CLI_endpoint[endpoint.py: mode dispatch]
+        CLI_server[server.py: Docker, Daemon, Remote backends]
+        CLI_daemon[daemon_manager.py: subprocess lifecycle]
+        CLI_formatters[formatters: rich output]
+    end
+
+    subgraph GEN[code-know-api-client]
+        GEN_client[code_know_api_client: generated httpx client]
+    end
+
+    subgraph API[codeknow-api]
+        direction TB
+        API_app[app.py: create_app, main, health, build, search, repos]
+        API_models[models.py: Build and Search request models]
+        API_cache[cache.py: RedisService and cache_search]
+        API_mw[middleware.py: StubMiddleware]
+    end
+
+    subgraph LIB[codeknow-lib]
+        direction TB
+        LIB_facade[pipeline.facade.PipelineFacade: build, search, delete, list_repos]
+        LIB_pipeline[pipeline.runner, config, io]
+        LIB_schemas[schemas.py: Node, Edge, Chunk, RepoMetadata]
+        LIB_extract[extract: tree-sitter AST]
+        LIB_chunk[chunking]
+        LIB_graph[graph: NetworkX and Leiden]
+        LIB_vector[vector: ChromaDB and embeddings]
+        LIB_git[git_download: GitPython clone]
+        LIB_cache[cache: file and redis backends]
+    end
+
+    Redis[(Redis)]
+    Chroma[(ChromaDB)]
+    GitHub[(GitHub repos)]
+    Docker[docker compose: infra/docker-compose.yml]
+
+    CLI_client --> GEN_client
+    CLI_config -.->|pipeline.config: _CODEKNOW_HOME, _env_path| LIB_pipeline
+    API_app -->|PipelineFacade, schemas, vector, git_download, pipeline.io| LIB_facade
+    LIB_facade --> LIB_pipeline
+    LIB_facade --> LIB_vector
+    LIB_facade --> LIB_git
+    LIB_facade --> LIB_schemas
+    LIB_pipeline --> LIB_extract
+    LIB_pipeline --> LIB_chunk
+    LIB_pipeline --> LIB_graph
+
+    LIB_git --> GitHub
+    LIB_vector --> Chroma
+    LIB_cache --> Redis
+    API_cache --> Redis
+
+    GEN_client -. HTTP REST .-> API_app
+    CLI_daemon -. subprocess: codeknow-api .-> API_app
+    CLI_server -. docker mode .-> Docker
+    Docker -. runs .-> API_app
+
+    User -->|codeknow ...| CLI_main
+    User -->|codeknow-api| API_app
+
+    classDef ext fill:#fef3e2,stroke:#b35900,stroke-width:1px
+    class Redis,Chroma,GitHub,Docker ext
+```
+
+Full legend and per-node detail in [`docs/system-diagram.md`](docs/system-diagram.md).
 
 ## Quick start
 
-The CLI connects to the API exposed by the Docker stack (`localhost:8080`) by default — no daemon to manage:
+The CLI defaults to `docker` mode, which drives the full Compose stack (API + ChromaDB + Redis + embeddings) on `localhost:8080` — nothing to configure.
 
 ```bash
-# 1. Start the full stack (API + ChromaDB + Redis + embeddings) — see docs/infra-setup.md
-#    (run from the repo root; equivalent to: docker compose -f infra/docker-compose.yml up -d --build)
+# 1. Start the full stack from the repo root
 codeknow server start
 
 # 2. Index a repo
@@ -74,12 +173,6 @@ codeknow search "database connection" --slug owner-repo --slug other-repo
 
 The CLI resolves its endpoint from the `mode` field in `~/.codeknow/config.jsonl`. The default mode is `docker`, which connects to the Docker stack at `localhost:8080`. Switch to `daemon` (CLI manages a local `codeknow-api` process) or `remote` (any other API URL) with `codeknow server mode <mode>`. See [docs/usage.md](docs/usage.md).
 
-Use `--slug` to scope search to specific repos (repeatable):
-
-```bash
-codeknow search "database connection" --slug owner-repo --slug other-repo
-```
-
 ## API server
 
 ```bash
@@ -115,3 +208,14 @@ The CLI is **config-file driven**, not environment-variable driven. It reads a s
 - `host` / `port` — used only in `daemon` mode.
 
 See [docs/usage.md](docs/usage.md) for the full reference. (The `codeknow-api` server itself still reads `CODEKNOW_API_HOST` / `CODEKNOW_API_PORT` — see the table above.)
+
+## Documentation
+
+| Link | What it covers |
+|---|---|
+| [docs/SetUp.md](docs/SetUp.md) | Development setup from source — `uv sync`, running tests, `dev-check` (ruff + pyrefly), bringing up infra |
+| [docs/install.md](docs/install.md) | Installing CodeKnow as a global tool / dependency; global install, remote mode, and troubleshooting |
+| [docs/infra-setup.md](docs/infra-setup.md) | Bringing up the backing services — ChromaDB, Redis, Docker Model Runner; full-stack Docker Compose; troubleshooting |
+| [docs/usage.md](docs/usage.md) | Full CLI command reference — the three modes (`docker` / `remote` / `daemon`), the `server` group, config-file format, running `codeknow-api` directly |
+| [docs/system-diagram.md](docs/system-diagram.md) | Full architecture diagram with legend — CLI, API, lib, and external services |
+| [evals/README.md](evals/README.md) | Hybrid (CodeKnow) vs. grep (ripgrep) eval on the Fastify codebase, scored by a 3-stage LLM judge on grounding and faithfulness |
