@@ -10,9 +10,9 @@ module-scoped ``search_env`` fixture).
 from __future__ import annotations
 
 import logging
-import time
 from pathlib import Path
 from typing import Any, NamedTuple
+from uuid import uuid4
 
 import chromadb
 import pytest
@@ -77,7 +77,7 @@ def search_env(tmp_path_factory):
 
     # ── 4. Embed chunks into ChromaDB ─────────────────────────────────
     embeddings = create_embeddings(EmbeddingConfig())
-    collection = f"e2e_hybrid_{int(time.time())}"
+    collection = f"e2e_hybrid_{uuid4().hex[:8]}"
     chroma_cfg = ChromaConfig(collection_name=collection)
     store = ChromaStore(config=chroma_cfg, embeddings=embeddings)
 
@@ -97,7 +97,7 @@ def search_env(tmp_path_factory):
         client.delete_collection(collection)
         logger.info("Deleted collection: %s", collection)
     except Exception:
-        logger.warning("Could not delete collection: %s", collection)
+        logger.warning("Could not delete collection: %s", collection, exc_info=True)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -158,22 +158,32 @@ def test_hybrid_search_graph_expansion(search_env):
         n_results=5,
         traversal_depth=2,
     )
+    assert isinstance(resp, HybridSearchResponse)
+    # graph_expanded is a count of graph-provenance results. Asserting its
+    # presence/type catches a renamed or missing field; the count itself is
+    # data-dependent (this small repo may yield 0 at traversal_depth=2).
+    assert isinstance(resp.graph_expanded, int)
+    assert resp.graph_expanded >= 0
+
+    graph_results = [r for r in resp.results if r.provenance == "graph"]
     logger.info(
-        "graph_expanded=%d, vector_hits=%d, total=%d",
+        "graph_expanded=%d, graph_results=%d, vector_hits=%d, total=%d",
         resp.graph_expanded,
+        len(graph_results),
         resp.vector_hits,
         len(resp.results),
     )
-    graph_results = [r for r in resp.results if r.provenance == "graph"]
-    if graph_results:
-        for r in graph_results:
-            logger.info(
-                "  graph: provenance=%s node_labels=%s path=%s",
-                r.provenance,
-                r.node_labels,
-                r.graph_path,
-            )
-    else:
+
+    # When expansion fires, every graph result must carry graph-specific
+    # metadata — this is what would be missing/empty if the graph provenance
+    # path were broken.
+    for r in graph_results:
+        logger.info("  graph: node_labels=%s path=%s", r.node_labels, r.graph_path)
+        assert r.node_labels, "graph result missing node_labels"
+        assert r.graph_path, "graph result missing graph_path"
+
+    if not graph_results:
         logger.info(
-            "No graph expansion results (BFS depth/relations may limit discovery)"
+            "No graph expansion results on this dataset at traversal_depth=2 "
+            "(BFS depth/relations may limit discovery); structural invariants held."
         )

@@ -109,6 +109,10 @@ def _daemon_lifecycle(tmp_path_factory: pytest.TempPathFactory) -> None:
             if result is not None:
                 _kill_process_group(result.pid)
                 _STARTED_PIDS.discard(result.pid)
+            # Verify the stop actually removed the pid file. This covers the
+            # behaviour that previously lived in a last-to-run test, so the
+            # suite no longer depends on test ordering.
+            assert not Path(pid_file).exists()
         pid_file_patch.stop()
         load_config_patch.stop()
         _restore_env()
@@ -208,14 +212,16 @@ def test_cli_remove_command() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Daemon stop (must be last test)
+# Daemon stoppability (order-independent)
 # ---------------------------------------------------------------------------
 
 
-def test_daemon_stop_cleans_up() -> None:
-    assert _CLIENT is not None
-    pid_file = Path(_CLIENT._pid_file)
+def test_daemon_is_stoppable() -> None:
+    """Daemon is running and ready for fixture-teardown cleanup.
 
-    _CLIENT.stop_daemon(timeout=5)
-    assert not _CLIENT.check_daemon()
-    assert not pid_file.exists()
+    The actual stop + pid-file removal is performed and asserted in the
+    ``_daemon_lifecycle`` fixture teardown, so this test never stops the
+    shared daemon itself and is safe under any test ordering.
+    """
+    assert _CLIENT is not None
+    assert _CLIENT.check_daemon()
