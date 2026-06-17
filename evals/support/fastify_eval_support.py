@@ -43,6 +43,17 @@ def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _index_has_file(indexed_files: set[str], required: str) -> bool:
+    """True if ``required`` is indexed as a complete path.
+
+    Matches the exact path or any path ending in ``/`` + ``required``, so a
+    required ``lib/route.js`` matches ``lib/route.js`` and
+    ``fastify-main/lib/route.js`` but NOT ``some-lib/route.js`` or
+    ``lib/route.js.bak`` (the previous substring match accepted both).
+    """
+    return any(f == required or f.endswith("/" + required) for f in indexed_files)
+
+
 def _make_store() -> ChromaStore:
     embeddings = create_embeddings(EmbeddingConfig())
     config = ChromaConfig(collection_name=CHROMA_COLLECTION)
@@ -72,8 +83,7 @@ def _index_is_healthy() -> bool:  # noqa: PLR0911
 
     indexed_files = set(raw.keys())
     for required in REQUIRED_INDEX_FILES:
-        found = any(f.endswith(required) or required in f for f in indexed_files)
-        if not found:
+        if not _index_has_file(indexed_files, required):
             logger.info("index unhealthy: %s not in chunk_map.json", required)
             return False
 
@@ -115,7 +125,7 @@ def _assert_eval_index_ready() -> None:
 
     missing: list[str] = []
     for required in REQUIRED_INDEX_FILES:
-        if not any(f.endswith(required) or required in f for f in indexed_files):
+        if not _index_has_file(indexed_files, required):
             missing.append(required)
 
     has_js = any(f.endswith(".js") for f in indexed_files)

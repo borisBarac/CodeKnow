@@ -65,10 +65,9 @@ class TestExtractorCrossFile:
 
         monkeypatch.setattr(
             "codeknow.extract.extractor._resolve_cross_file_imports",
-            lambda results, paths: captured.update(
-                {"results": len(results), "paths": len(paths)}
-            )
-            or [],
+            lambda results, paths: (
+                captured.update({"results": len(results), "paths": len(paths)}) or []
+            ),
         )
         monkeypatch.setattr(
             Extractor,

@@ -14,7 +14,7 @@ from collections.abc import Callable
 from itertools import product
 from typing import TYPE_CHECKING
 
-from evalkit.judge.stage0 import stage0
+from evalkit.judge.stage0 import Stage0Result, stage0
 from evalkit.judge.stage1 import stage1
 from evalkit.judge.stage2 import stage2
 from evalkit.judge.stage3 import stage3
@@ -51,7 +51,12 @@ class LLMJudge:
         self.embed_fn = embed_fn or _default_embed_fn
         self.snippet_context = snippet_context
 
-    def judge_run(self, task: Task, run: AgentRun) -> JudgeOutput:
+    def judge_run(
+        self,
+        task: Task,
+        run: AgentRun,
+        s0_cache: dict[tuple[str, str, int], Stage0Result] | None = None,
+    ) -> JudgeOutput:
         """Stage 0 (deterministic) + Stage 1 (grounding/faithfulness).
 
         Stage 1's ``hallucinated_paths`` is LLM-emitted and often conflates
@@ -59,17 +64,39 @@ class LLMJudge:
         We reconcile it against Stage 0's existence verdict: a flagged path
         whose file actually exists moves to ``unsupported_ranges``; only
         genuinely missing files stay as hallucinated.
+
+        When ``s0_cache`` is supplied (as ``judge_all`` does), the Stage 0
+        result is memoised into it keyed by ``(task_id, tool, seed)`` so the
+        pairwise stage can reuse the snippets without recomputing Stage 0.
         """
-        s0 = stage0(
-            run.cited_locations,
-            self.repo_root,
-            context=self.snippet_context,
-        )
+        s0 = self._compute_stage0(run, s0_cache)
         out = stage1(task, run, s0.snippets, s0.existence_rate, self.llm)
         out.hallucinated_paths, out.unsupported_ranges = _reconcile_hallucinations(
             out.hallucinated_paths, s0.existence_map, self.repo_root
         )
         return out
+
+    def _compute_stage0(
+        self,
+        run: AgentRun,
+        s0_cache: dict[tuple[str, str, int], Stage0Result] | None,
+    ) -> Stage0Result:
+        """Run Stage 0 for ``run``, memoising into ``s0_cache`` when given.
+
+        Avoids the redundant filesystem walk + snippet extraction that the
+        pairwise stage would otherwise repeat per run.
+        """
+        key = (run.task_id, run.tool, run.seed)
+        if s0_cache is not None and key in s0_cache:
+            return s0_cache[key]
+        result = stage0(
+            run.cited_locations,
+            self.repo_root,
+            context=self.snippet_context,
+        )
+        if s0_cache is not None:
+            s0_cache[key] = result
+        return result
 
     def judge_all(
         self,
@@ -78,10 +105,11 @@ class LLMJudge:
     ) -> tuple[list[JudgeOutput], list[PairwiseJudgment]]:
         """Judge every run, then consistency per group, then pairwise per task."""
         task_map = {t.task_id: t for t in tasks}
-        outputs = [self.judge_run(task_map[r.task_id], r) for r in runs]
+        s0_cache: dict[tuple[str, str, int], Stage0Result] = {}
+        outputs = [self.judge_run(task_map[r.task_id], r, s0_cache) for r in runs]
 
         self._fill_consistency(tasks, runs, outputs)
-        pairwise = self._pairwise(tasks, runs)
+        pairwise = self._pairwise(tasks, runs, s0_cache)
         return outputs, pairwise
 
     def _fill_consistency(
@@ -109,13 +137,10 @@ class LLMJudge:
         self,
         tasks: list[Task],
         runs: list[AgentRun],
+        s0_cache: dict[tuple[str, str, int], Stage0Result],
     ) -> list[PairwiseJudgment]:
         snippets_cache = {
-            (r.task_id, r.tool, r.seed): stage0(
-                r.cited_locations,
-                self.repo_root,
-                context=self.snippet_context,
-            ).snippets
+            (r.task_id, r.tool, r.seed): self._compute_stage0(r, s0_cache).snippets
             for r in runs
         }
         verdicts: list[PairwiseJudgment] = []
@@ -198,13 +223,12 @@ def _majority(task_id: str, verdicts: list[PairwiseJudgment]) -> PairwiseJudgmen
     if len(verdicts) == 1:
         verdicts[0].task_id = task_id
         return verdicts[0]
-    counts: dict[str, int] = defaultdict(int)
+    counts: dict[Winner, int] = defaultdict(int)
     for v in verdicts:
         counts[v.winner] += 1
     max_count = max(counts.values())
     leaders = [w for w, count in counts.items() if count == max_count]
-    winner_raw = leaders[0] if len(leaders) == 1 else "Tie"
-    winner: Winner = winner_raw if winner_raw in ("hybrid", "grep", "Tie") else "Tie"
+    winner: Winner = leaders[0] if len(leaders) == 1 else "Tie"
     confidence = "medium" if counts[winner] > len(verdicts) / 2 else "low"
     return PairwiseJudgment(
         task_id=task_id, winner=winner, confidence=confidence, reasoning=""

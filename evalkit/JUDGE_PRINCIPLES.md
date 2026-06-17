@@ -22,7 +22,7 @@ We do **not** optimize for correctness, and we assume **no gold answers**.
 |---|---|---|---|
 | **Grounding** | Claims are tied to *real* code at the cited locations. | Deterministic: citation existence rate (`%` of cited `file:line` that exist). LLM: does the code at that location actually support the specific claim? | `0-5` + existence `%` |
 | **Faithfulness** | Answer follows from the *collected* evidence — no overclaim beyond what was cited, no fabrication. | LLM: `%` of answer claims supported by cited snippets; flag hallucinated claims/paths. | `0-5` |
-| **Consistency** | The tool makes the agent *reproducible* — same task, multiple seeds, convergent answers. | Inter-seed: semantic agreement of final answers + Jaccard of citation sets, across `N` seeds. | agreement `%` |
+| **Consistency** | The tool makes the agent *reproducible* — same task, multiple seeds, convergent answers. | Inter-seed: semantic agreement of final answers across `N` seeds. | agreement `%` |
 | **Preference** | Head-to-head, which run is preferred on grounding + completeness + precision. | Pairwise LLM judge, double-swapped (`AB` + `BA`; disagree -> `Tie`). | win-rate `%` + CI |
 
 Grounding and faithfulness are separate because they fail differently:
@@ -44,7 +44,6 @@ Each stage maps to specific dimensions so nothing is double-scored.
 - **Stage 0 — deterministic (no LLM):**
   - Verify every cited `file:line` exists in the repo -> existence rate.
   - Extract the real code snippet at each cited location (fed to Stages 1 and 2).
-  - Compute citation-set Jaccard across seeds.
   - Compute cost: `tokens_in/out`, `search_calls`, `llm_turns`, `wall_clock_s`,
     `steps_to_first_relevant`.
 - **Stage 1 — LLM, per-run (grounding + faithfulness together, shared context):**

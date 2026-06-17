@@ -30,7 +30,7 @@ def test_index_health_returns_false_when_chroma_is_unreachable(
                 f"/repo/{required}": [
                     {"hash": f"h-{i}", "file": f"/repo/{required}"} for i in range(50)
                 ]
-                for i, required in enumerate(support.REQUIRED_INDEX_FILES)
+                for required in support.REQUIRED_INDEX_FILES
             }
         ),
         encoding="utf-8",

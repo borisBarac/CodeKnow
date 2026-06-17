@@ -42,6 +42,14 @@ from evalkit.judge.aggregate import build_profile
 from evalkit.judge.judge import LLMJudge
 from evalkit.llm import JudgeLLMConfig
 from evalkit.schemas import AgentRun, Cost, JudgeOutput, PairwiseJudgment, Task
+from langchain.agents import create_agent
+from langchain.agents.middleware import ToolCallLimitMiddleware
+from langchain.agents.middleware.file_search import FilesystemFileSearchMiddleware
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import BaseTool, tool
+from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 from support.fastify_eval_support import (
     CHROMA_COLLECTION,
     EVALS_DIR,
@@ -52,14 +60,6 @@ from support.fastify_eval_support import (
     _make_store,
     assert_prebuilt_index_ready,
 )
-from langchain.agents import create_agent
-from langchain.agents.middleware import ToolCallLimitMiddleware
-from langchain.agents.middleware.file_search import FilesystemFileSearchMiddleware
-from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.tools import BaseTool, tool
-from langchain_openai import ChatOpenAI
-from pydantic import SecretStr
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -310,7 +310,6 @@ class RunCost:
     llm_turns: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    tool_names: set[str] = field(default_factory=set)
     tool_outputs: list[str] = field(default_factory=list)
 
 
@@ -339,7 +338,6 @@ class CostCallback(BaseCallbackHandler):
         self, serialized: dict[str, Any], input_str: str, **_: Any
     ) -> None:
         name = serialized.get("name", "")
-        self.cost.tool_names.add(name)
         if name == self.search_tool_name:
             self.cost.search_calls += 1
 
@@ -351,12 +349,19 @@ class CostCallback(BaseCallbackHandler):
 
 
 # ── Part 2c: agents ────────────────────────────────────────────────────
-AGENT_SYSTEM_PROMPT = """\
+def _agent_system_prompt(budget: int) -> str:
+    """Build the agent system prompt, interpolating the current tool-call budget.
+
+    The budget is what ``ToolCallLimitMiddleware`` enforces, so the prompt's
+    "search up to N times" guidance stays consistent with the actual cap
+    (env-overridable via ``AGENT_MAX_ITERATIONS``).
+    """
+    return f"""\
 You are a senior Node.js engineer searching the Fastify codebase to \
 answer a question. You have ONE search tool.
 
 Strategy:
-- Search up to 6 times, but STOP and answer as soon as you have enough to \
+- Search up to {budget} times, but STOP and answer as soon as you have enough to \
 answer with real file:line citations. Two or three good queries usually suffice.
 - Reformulate your query if the first result misses the point, but do NOT \
 keep searching once you have enough.
@@ -428,7 +433,7 @@ def make_agent(tool_obj: Any, name: str) -> Any:
     budget = _effective_agent_max_iterations()
     logger.debug(
         "building agent: tool=%s model=%s temp=%.2f budget=%d",
-        getattr(tool_obj, "name", tool_obj),
+        name,
         _agent_model(),
         _agent_temperature(),
         budget,
@@ -436,7 +441,7 @@ def make_agent(tool_obj: Any, name: str) -> Any:
     return create_agent(
         model=llm,
         tools=[tool_obj],
-        system_prompt=AGENT_SYSTEM_PROMPT,
+        system_prompt=_agent_system_prompt(budget),
         middleware=[
             ToolCallLimitMiddleware(
                 run_limit=budget,
@@ -507,7 +512,7 @@ def run_one(
         result = agent.invoke(
             {
                 "messages": [
-                    SystemMessage(content=AGENT_SYSTEM_PROMPT),
+                    SystemMessage(content=_agent_system_prompt(budget)),
                     HumanMessage(content=item.prompt),
                 ]
             },
@@ -623,12 +628,12 @@ def run_all(items: list[Task]) -> list[AgentRun]:
         RUNS_JSONL.open("w", encoding="utf-8") as fh,
     ):
         futures = {
-            pool.submit(run_one, item, tn, factory, tool_obj, seed): (item, tn)
+            pool.submit(run_one, item, tn, factory, tool_obj, seed): (item, tn, seed)
             for item, tn, seed, factory, tool_obj in jobs
         }
         total = len(jobs)
         for i, future in enumerate(as_completed(futures), 1):
-            item, tn = futures[future]
+            item, tn, seed = futures[future]
             try:
                 run = future.result()
             except Exception:
@@ -636,7 +641,7 @@ def run_all(items: list[Task]) -> list[AgentRun]:
                 run = AgentRun(
                     task_id=item.task_id,
                     tool=tn,  # type: ignore[arg-type]
-                    seed=0,
+                    seed=seed,
                     final_answer="",
                     cited_locations=[],
                     cost=Cost(
@@ -819,7 +824,7 @@ def write_report(
         marker = " *" if val < 0.05 else ""
         return f"{val:.4f}{marker}"
 
-    md.append(f"- McNemar preference p: {_fmt_p('mcnemar_preference_p')}\n")
+    md.append(f"- Binomial preference p: {_fmt_p('binomial_preference_p')}\n")
     md.append(f"- Wilcoxon grounding p: {_fmt_p('wilcoxon_grounding_p')}\n")
     md.append(f"- Wilcoxon faithfulness p: {_fmt_p('wilcoxon_faithfulness_p')}\n")
     md.append("  (* p < 0.05)\n\n")

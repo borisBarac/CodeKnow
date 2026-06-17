@@ -14,6 +14,7 @@ def _read_mapping(store_path: Path) -> dict[str, str]:
         raise TypeError(msg)
     return {str(k): str(v) for k, v in raw.items()}
 
+
 DEFAULT_STORE_PATH = Path.home() / ".codeknow" / "repo_map.json"
 
 

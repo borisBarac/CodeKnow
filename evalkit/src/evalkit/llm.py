@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import re
-from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from pydantic import SecretStr
@@ -62,16 +61,17 @@ class JudgeLLMConfig(BaseSettings):
     def resolved_api_key(self) -> str:
         if self.api_key:
             return self.api_key
-        for var in ("JUDGE_LLM_API_KEY", "OPENROUTER_API_KEY"):
-            value = os.environ.get(var)
-            if value:
-                return value
+        value = os.environ.get("OPENROUTER_API_KEY")
+        if value:
+            return value
         msg = "Set JUDGE_LLM_API_KEY or OPENROUTER_API_KEY for the judge LLM."
         raise ValueError(msg)
 
 
-@lru_cache(maxsize=1)
 def _default_config() -> JudgeLLMConfig:
+    # Constructed fresh on each call: JudgeLLMConfig reads JUDGE_LLM_* env
+    # vars at construction, so caching here would freeze the config on first
+    # use and silently ignore later env changes within the same process.
     return JudgeLLMConfig()
 
 

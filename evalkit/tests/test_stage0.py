@@ -3,35 +3,10 @@
 from pathlib import Path
 
 from evalkit.judge.stage0 import (
-    citation_jaccard,
     extract_snippet,
     stage0,
     verify_existence,
 )
-
-
-def test_jaccard_partial_overlap():
-    sets = [{"a.py:1", "b.py:2"}, {"b.py:2", "c.py:3"}]
-    assert citation_jaccard(sets) == 1 / 3
-
-
-def test_jaccard_identical_sets_is_one():
-    sets = [{"a.py:1", "b.py:2"}, {"a.py:1", "b.py:2"}]
-    assert citation_jaccard(sets) == 1.0
-
-
-def test_jaccard_disjoint_sets_is_zero():
-    sets = [{"a.py:1"}, {"b.py:2"}]
-    assert citation_jaccard(sets) == 0.0
-
-
-def test_jaccard_single_set_is_one():
-    assert citation_jaccard([{"a.py:1"}]) == 1.0
-
-
-def test_jaccard_empty_union_is_one():
-    """No citations at all => conventionally perfectly consistent."""
-    assert citation_jaccard([set(), set()]) == 1.0
 
 
 def test_verify_existence_reports_true_for_existing_files(tmp_path: Path):

@@ -112,14 +112,17 @@ def verbosity_guard(
     }
 
 
-def _mcnemar_preference(
+def _binomial_preference_p(
     pairwise: list[PairwiseJudgment], tools: Sequence[str]
 ) -> float | None:
-    """Exact McNemar test on discordant pairwise verdicts.
+    """Two-sided sign (binomial) test on discordant pairwise verdicts.
 
     Tests whether the two tools win equally often among discordant pairs
-    (ties excluded). Returns the two-sided p-value, or ``None`` when there
-    are no discordant pairs or the comparison is not exactly two-tool.
+    (ties excluded). Each task contributes a single cross-tool verdict, so
+    this is a sign test on the win counts — not McNemar's test, which
+    operates on a 2x2 table of paired per-subject binary outcomes. Returns
+    the two-sided p-value, or ``None`` when there are no discordant pairs or
+    the comparison is not exactly two-tool.
     """
     if len(tools) != 2:
         return None
@@ -182,8 +185,8 @@ def build_profile(
 
     Each tool gets grounding/faithfulness means, consistency %, preference
     win-rate with Wilson CI, and median cost. A global ``bias_check`` covers
-    the section-9 verbosity guard. Significance tests (McNemar for preference,
-    Wilcoxon for grounding/faithfulness) are computed via scipy.
+    the section-9 verbosity guard. Significance tests (binomial sign test for
+    preference, Wilcoxon for grounding/faithfulness) are computed via scipy.
     """
     tools = sorted({o.tool for o in outputs} | {r.tool for r in runs})
     wins_by_tool: dict[str, int] = dict.fromkeys(tools, 0)
@@ -226,7 +229,7 @@ def build_profile(
     all_won = [winner_by_task.get(r.task_id) == r.tool for r in runs]
     profile["bias_check"] = verbosity_guard(all_lengths, all_won)
     profile["stats"] = {
-        "mcnemar_preference_p": _mcnemar_preference(pairwise, tools),
+        "binomial_preference_p": _binomial_preference_p(pairwise, tools),
         "wilcoxon_grounding_p": _wilcoxon_score(outputs, tools, "grounding"),
         "wilcoxon_faithfulness_p": _wilcoxon_score(outputs, tools, "faithfulness"),
     }

@@ -1,9 +1,8 @@
 """Stage 0 — deterministic citation verification (no LLM, no cost).
 
-Verifies every cited ``file:line`` exists in the repo, extracts the real code
-snippet at each location, and computes citation-set consistency (Jaccard)
-across seeds. Output feeds Stage 1 (grounding/faithfulness) and Stage 2
-(pairwise).
+Verifies every cited ``file:line`` exists in the repo and extracts the real
+code snippet at each location. Output feeds Stage 1 (grounding/faithfulness)
+and Stage 2 (pairwise).
 """
 
 from __future__ import annotations
@@ -47,22 +46,6 @@ def stage0(citations: list[str], repo_root: Path, context: int = 5) -> Stage0Res
     return Stage0Result(
         existence_rate=rate, existence_map=existence_map, snippets=snippets
     )
-
-
-def citation_jaccard(citation_sets: list[set[str]]) -> float:
-    """Jaccard similarity across two or more citation sets.
-
-    Returns ``1.0`` when there is nothing to union (all empty) — the
-    convention that "no citations" is treated as trivially consistent, so
-    the consistency axis does not penalise a tool that found nothing.
-    """
-    if not citation_sets:
-        return 1.0
-    intersection = set.intersection(*citation_sets)
-    union = set.union(*citation_sets)
-    if not union:
-        return 1.0
-    return len(intersection) / len(union)
 
 
 def verify_existence(citations: list[str], repo_root: Path) -> dict[str, bool]:
