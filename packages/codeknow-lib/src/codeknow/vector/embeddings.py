@@ -18,6 +18,7 @@ Configuration is read from a ``.env`` file in the working directory:
 - ``EMBEDDING_PROVIDER`` — ``"docker"`` (default), ``"ollama"``, or
   ``"openrouter"``
 - ``EMBEDDING_MODEL`` — model name (default ``"ai/qwen3-embedding:4B"``)
+- ``EMBEDDING_NUM_CTX`` — embedding context window (default ``4096``)
 - ``DOCKER_MODEL_RUNNER_URL``, ``OLLAMA_BASE_URL``, ``OPENROUTER_BASE_URL``,
   ``OPENROUTER_API_KEY`` — provider-specific connection details.
 """
@@ -25,14 +26,23 @@ Configuration is read from a ``.env`` file in the working directory:
 from __future__ import annotations
 
 import logging
-import math
+import os
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from codeknow.vector.embedding_errors import (
+    is_context_length_error,
+    is_rate_limit_error,
+)
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from langchain_core.embeddings import Embeddings
 
     from codeknow.schemas import Chunk, ChunkMap
@@ -40,58 +50,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _estimate_tokens(text: str) -> int:
-    """Conservative token estimate for provider-agnostic request budgeting."""
-    if not text:
-        return 0
-    return max(1, math.ceil(len(text) / 3))
+class EmbeddingContextLengthError(RuntimeError):
+    """Raised when a chunk cannot be split small enough for the provider."""
 
 
-def _batch_texts_for_embedding_requests(
-    texts: list[str],
-    *,
-    max_tokens: int,
-) -> list[list[str]]:
-    """Group existing chunk texts into embedding requests under a token budget.
-
-    This does *not* create or resize CodeKnow source chunks. Source chunks are
-    produced earlier by ``codeknow.chunking`` using line-based/AST-aware rules.
-    At this point each string in ``texts`` is already one chunk's content.
-
-    The purpose of this helper is only to avoid sending too many existing chunk
-    texts in one OpenAI-compatible ``/embeddings`` request. If one individual
-    chunk text exceeds ``max_tokens``, it is sent alone and a warning is logged;
-    this layer intentionally does not split it into smaller chunks.
-    """
-    if max_tokens < 1:
-        msg = "max_tokens must be greater than zero"
-        raise ValueError(msg)
-
-    batches: list[list[str]] = []
-    current: list[str] = []
-    current_tokens = 0
-
-    for text in texts:
-        text_tokens = _estimate_tokens(text)
-        if text_tokens > max_tokens:
-            logger.warning(
-                "Embedding text estimate exceeds token budget: %d > %d",
-                text_tokens,
-                max_tokens,
-            )
-
-        if current and current_tokens + text_tokens > max_tokens:
-            batches.append(current)
-            current = []
-            current_tokens = 0
-
-        current.append(text)
-        current_tokens += text_tokens
-
-    if current:
-        batches.append(current)
-
-    return batches
+DEFAULT_MAX_EMBEDDING_SPLIT_DEPTH = int(
+    os.environ.get("EMBEDDING_MAX_SPLIT_DEPTH", "3")
+)
 
 
 def _read_chunk_content(chunk: Chunk) -> str:
@@ -127,6 +92,7 @@ class EmbeddingConfig(BaseSettings):
         default="docker", alias="EMBEDDING_PROVIDER"
     )
     model: str = Field(default="ai/qwen3-embedding:4B", alias="EMBEDDING_MODEL")
+    num_ctx: int = Field(default=4096, alias="EMBEDDING_NUM_CTX")
     base_url: str | None = None
     api_key: str | None = None
     docker_base_url: str = Field(
@@ -143,15 +109,9 @@ class EmbeddingConfig(BaseSettings):
     request_chunk_size: int | None = Field(
         default=None, alias="EMBEDDING_REQUEST_CHUNK_SIZE"
     )
-    # Request-budgeting controls how existing chunk texts are packed into
-    # embedding requests. It does not affect source chunk size or overlap.
-    max_request_tokens: int | None = Field(
-        default=1800,
-        alias="EMBEDDING_MAX_REQUEST_TOKENS",
-    )
-    token_safety_margin: int = Field(
-        default=128,
-        alias="EMBEDDING_TOKEN_SAFETY_MARGIN",
+    max_embedding_split_depth: int = Field(
+        default=DEFAULT_MAX_EMBEDDING_SPLIT_DEPTH,
+        alias="EMBEDDING_MAX_SPLIT_DEPTH",
     )
 
     def resolved_base_url(self) -> str:
@@ -184,6 +144,7 @@ def create_embeddings(config: EmbeddingConfig) -> Embeddings:
         "model": config.model,
         "api_key": config.resolved_api_key(),
         "base_url": config.resolved_base_url(),
+        "num_ctx": config.num_ctx,
     }
     if config.provider in ("docker", "ollama"):
         kwargs["check_embedding_ctx_length"] = False
@@ -192,33 +153,303 @@ def create_embeddings(config: EmbeddingConfig) -> Embeddings:
     return OpenAIEmbeddings(**kwargs)
 
 
+def _split_text_in_half(text: str) -> tuple[str, str] | None:
+    if len(text) < 2:
+        return None
+
+    lines = text.splitlines(keepends=True)
+    if len(lines) > 1:
+        midpoint = len(text) / 2
+        best_index: int | None = None
+        best_distance: float | None = None
+        cursor = 0
+        for index, line in enumerate(lines[:-1], start=1):
+            cursor += len(line)
+            distance = abs(cursor - midpoint)
+            if best_distance is None or distance < best_distance:
+                best_index = index
+                best_distance = distance
+        if best_index is not None:
+            left = "".join(lines[:best_index])
+            right = "".join(lines[best_index:])
+            if left and right:
+                return left, right
+
+    midpoint = len(text) // 2
+    left = text[:midpoint]
+    right = text[midpoint:]
+    if not left or not right:
+        return None
+    return left, right
+
+
+def _merge_split_embedding_vectors(
+    vectors: list[list[float]],
+    text_lengths: list[int],
+) -> list[float]:
+    if not vectors:
+        return []
+    if len(vectors) != len(text_lengths):
+        msg = "vectors and text_lengths must have the same length"
+        raise ValueError(msg)
+
+    total_weight = sum(max(text_length, 1) for text_length in text_lengths)
+    dimensions = len(vectors[0])
+    merged = [0.0] * dimensions
+    for vector, raw_text_length in zip(vectors, text_lengths, strict=True):
+        weight = max(raw_text_length, 1)
+        for index, value in enumerate(vector):
+            merged[index] += value * weight
+
+    return [value / total_weight for value in merged]
+
+
+def _format_context(context: str | None) -> str:
+    return context or "unknown chunk"
+
+
+def _handle_context_length_failure(
+    message: str,
+    context_error: Exception | None,
+    *,
+    skip_context_length_errors: bool,
+) -> list[list[float]]:
+    if skip_context_length_errors:
+        logger.warning(message)
+        # Empty vector is the ingest-layer sentinel for "skip this text".
+        return [[]]
+    raise EmbeddingContextLengthError(message) from context_error
+
+
+@dataclass(frozen=True)
+class _EmbeddingRetryOptions:
+    model: str | None
+    max_split_depth: int
+    on_request: Callable[[], None] | None
+    skip_context_length_errors: bool
+
+
+@dataclass(frozen=True)
+class _EmbeddingRetryRequest:
+    texts: list[str]
+    chunk_contexts: list[str | None]
+    split_depth: int
+
+
+def _embed_documents_with_rate_limit_retry(
+    texts: list[str],
+    embeddings: Embeddings,
+    on_request: Callable[[], None] | None,
+) -> list[list[float]]:
+    while True:
+        if on_request is not None:
+            on_request()
+        try:
+            return embeddings.embed_documents(texts)
+        except Exception as exc:
+            if not is_rate_limit_error(exc):
+                raise
+            time.sleep(5)
+
+
+def _embed_split_batch_after_context_error(
+    request: _EmbeddingRetryRequest,
+    embeddings: Embeddings,
+    options: _EmbeddingRetryOptions,
+) -> list[list[float]]:
+    midpoint = len(request.texts) // 2
+    left_vectors = _embed_with_context_length_recovery(
+        _EmbeddingRetryRequest(
+            texts=request.texts[:midpoint],
+            chunk_contexts=request.chunk_contexts[:midpoint],
+            split_depth=request.split_depth,
+        ),
+        embeddings,
+        options,
+    )
+    right_vectors = _embed_with_context_length_recovery(
+        _EmbeddingRetryRequest(
+            texts=request.texts[midpoint:],
+            chunk_contexts=request.chunk_contexts[midpoint:],
+            split_depth=request.split_depth,
+        ),
+        embeddings,
+        options,
+    )
+    return left_vectors + right_vectors
+
+
+def _context_for_single_text(request: _EmbeddingRetryRequest) -> str:
+    context = request.chunk_contexts[0] if request.chunk_contexts else None
+    return _format_context(context)
+
+
+def _split_and_embed_single_text(
+    text: str,
+    request: _EmbeddingRetryRequest,
+    embeddings: Embeddings,
+    options: _EmbeddingRetryOptions,
+) -> list[list[float]]:
+    split_vectors: list[list[float]] = []
+    split_text_lengths: list[int] = []
+    for part in _split_text_in_half(text) or ():
+        split_vectors.extend(
+            _embed_with_context_length_recovery(
+                _EmbeddingRetryRequest(
+                    texts=[part],
+                    chunk_contexts=request.chunk_contexts,
+                    split_depth=request.split_depth + 1,
+                ),
+                embeddings,
+                options,
+            )
+        )
+        split_text_lengths.append(len(part))
+
+    if not split_vectors or any(not vector for vector in split_vectors):
+        # Empty vector is the ingest-layer sentinel for "skip this text".
+        return [[]]
+    return [_merge_split_embedding_vectors(split_vectors, split_text_lengths)]
+
+
+def _embed_single_text_after_context_error(
+    request: _EmbeddingRetryRequest,
+    embeddings: Embeddings,
+    options: _EmbeddingRetryOptions,
+    context_error: Exception,
+) -> list[list[float]]:
+    context = _context_for_single_text(request)
+    if request.split_depth >= options.max_split_depth:
+        msg = (
+            "Embedding context length exceeded after split retries for "
+            f"{context}; model={options.model or 'unknown'}"
+        )
+        return _handle_context_length_failure(
+            msg,
+            context_error,
+            skip_context_length_errors=options.skip_context_length_errors,
+        )
+
+    if _split_text_in_half(request.texts[0]) is None:
+        msg = (
+            "Embedding context length exceeded for an unsplittable text "
+            f"from {context}; model={options.model or 'unknown'}"
+        )
+        return _handle_context_length_failure(
+            msg,
+            context_error,
+            skip_context_length_errors=options.skip_context_length_errors,
+        )
+
+    return _split_and_embed_single_text(
+        request.texts[0],
+        request,
+        embeddings,
+        options,
+    )
+
+
+def _recover_from_context_length_error(
+    request: _EmbeddingRetryRequest,
+    embeddings: Embeddings,
+    options: _EmbeddingRetryOptions,
+    context_error: Exception,
+) -> list[list[float]]:
+    if len(request.texts) > 1:
+        return _embed_split_batch_after_context_error(request, embeddings, options)
+    return _embed_single_text_after_context_error(
+        request,
+        embeddings,
+        options,
+        context_error,
+    )
+
+
+def _embed_with_context_length_recovery(
+    request: _EmbeddingRetryRequest,
+    embeddings: Embeddings,
+    options: _EmbeddingRetryOptions,
+) -> list[list[float]]:
+    try:
+        return _embed_documents_with_rate_limit_retry(
+            request.texts,
+            embeddings,
+            options.on_request,
+        )
+    except Exception as exc:
+        if not is_context_length_error(exc):
+            raise
+        return _recover_from_context_length_error(
+            request,
+            embeddings,
+            options,
+            exc,
+        )
+
+
+def _embed_request_with_retry(
+    texts: list[str],
+    embeddings: Embeddings,
+    *,
+    model: str | None,
+    split_depth: int,
+    max_split_depth: int,
+    chunk_contexts: list[str | None],
+    on_request: Callable[[], None] | None,
+    skip_context_length_errors: bool,
+) -> list[list[float]]:
+    return _embed_with_context_length_recovery(
+        _EmbeddingRetryRequest(
+            texts=texts,
+            chunk_contexts=chunk_contexts,
+            split_depth=split_depth,
+        ),
+        embeddings,
+        _EmbeddingRetryOptions(
+            model=model,
+            max_split_depth=max_split_depth,
+            on_request=on_request,
+            skip_context_length_errors=skip_context_length_errors,
+        ),
+    )
+
+
 def embed_texts(
     texts: list[str],
     embeddings: Embeddings,
     *,
-    max_request_tokens: int | None = None,
-    token_safety_margin: int = 0,
+    model: str | None = None,
+    max_embedding_split_depth: int = DEFAULT_MAX_EMBEDDING_SPLIT_DEPTH,
+    contexts: list[str | None] | None = None,
+    on_request: Callable[[], None] | None = None,
+    skip_context_length_errors: bool = False,
 ) -> list[list[float]]:
-    """Embed existing texts, optionally splitting requests by token budget.
+    """Embed chunk contents, relying on the provider's context-length limits.
 
-    ``texts`` are already-built chunk contents. Token-budget splitting only
-    controls the size of each outbound embedding request; it does not create,
-    resize, or overlap CodeKnow chunks.
+    Requests are not pre-split by an estimated token budget. Provider context
+    limits are handled by ``_embed_request_with_retry`` via recursive retry,
+    which halves failing batches and split halves of an oversized text.
     """
     if not texts:
         return []
 
-    if max_request_tokens is None:
-        return embeddings.embed_documents(texts)
+    resolved_contexts: list[str | None] = (
+        contexts if contexts is not None else [None] * len(texts)
+    )
+    if len(resolved_contexts) != len(texts):
+        msg = "contexts must have the same length as texts"
+        raise ValueError(msg)
 
-    effective_max_tokens = max(1, max_request_tokens - token_safety_margin)
-    vectors: list[list[float]] = []
-    for batch in _batch_texts_for_embedding_requests(
+    return _embed_request_with_retry(
         texts,
-        max_tokens=effective_max_tokens,
-    ):
-        vectors.extend(embeddings.embed_documents(batch))
-    return vectors
+        embeddings,
+        model=model,
+        split_depth=0,
+        max_split_depth=max_embedding_split_depth,
+        chunk_contexts=resolved_contexts,
+        on_request=on_request,
+        skip_context_length_errors=skip_context_length_errors,
+    )
 
 
 def embed_chunks(
@@ -229,7 +460,7 @@ def embed_chunks(
         return {}
 
     texts = [_read_chunk_content(c) for c in chunks]
-    vectors = embeddings.embed_documents(texts)
+    vectors = embed_texts(texts, embeddings)
 
     return {
         chunk.hash: vector

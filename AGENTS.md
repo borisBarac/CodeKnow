@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Be extremely concise. Sacrifice grammar for the sake of concision.
+
 ## Tools
 
 - **uv** — workspace-based package manager. Always use `uv run` to execute Python commands.

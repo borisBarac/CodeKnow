@@ -31,7 +31,7 @@ def test_embed_chunk_map_only_embeds_chunks_without_graph_or_chroma(tmp_path):
     second.write_text("three\n", encoding="utf-8")
 
     embeddings = RecordingEmbeddings()
-    config = EmbeddingConfig(max_request_tokens=None)
+    config = EmbeddingConfig()
 
     stats = embed_chunk_map_only(
         {
@@ -61,7 +61,7 @@ def test_embed_chunk_batches_builds_metadata_and_vectors(tmp_path):
         embed_chunk_batches(
             [chunk],
             embeddings,  # type: ignore[arg-type]
-            EmbeddingConfig(max_request_tokens=None),
+            EmbeddingConfig(),
             slug="owner-repo",
             extra_metadata={chunk.hash: {"node_labels": "Node"}},
         )
@@ -99,7 +99,7 @@ def test_embed_chunk_map_only_skips_empty_content_and_deduplicates(tmp_path):
             str(real): [real_chunk, real_chunk],
         },
         embeddings,  # type: ignore[arg-type]
-        EmbeddingConfig(max_request_tokens=None),
+        EmbeddingConfig(),
     )
 
     assert embeddings.requests == [["content\n"]]
@@ -108,75 +108,76 @@ def test_embed_chunk_map_only_skips_empty_content_and_deduplicates(tmp_path):
     assert stats.embedding_requests == 1
 
 
-def test_embed_chunk_map_only_counts_token_budgeted_requests(tmp_path):
-    first = tmp_path / "first.py"
-    first.write_text("a" * 9, encoding="utf-8")
-    second = tmp_path / "second.py"
-    second.write_text("b" * 9, encoding="utf-8")
-    third = tmp_path / "third.py"
-    third.write_text("c" * 9, encoding="utf-8")
+def test_embed_chunk_batches_skips_context_length_failures(tmp_path):
+    class ContextLengthError(Exception):
+        status_code = 400
 
-    embeddings = RecordingEmbeddings()
-    stats = embed_chunk_map_only(
-        {
-            str(first): [_chunk(str(first), "a")],
-            str(second): [_chunk(str(second), "b")],
-            str(third): [_chunk(str(third), "c")],
-        },
-        embeddings,  # type: ignore[arg-type]
-        EmbeddingConfig(max_request_tokens=6, token_safety_margin=0),
-        batch_size=3,
+    class FailingSecondEmbeddings:
+        def __init__(self) -> None:
+            self.requests: list[list[str]] = []
+
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            self.requests.append(list(texts))
+            if "bad" in texts:
+                msg = "context length exceeded"
+                raise ContextLengthError(msg)
+            return [[float(len(text))] for text in texts]
+
+    good = tmp_path / "good.py"
+    good.write_text("good", encoding="utf-8")
+    bad = tmp_path / "bad.py"
+    bad.write_text("bad", encoding="utf-8")
+
+    embeddings = FailingSecondEmbeddings()
+    batches = list(
+        embed_chunk_batches(
+            [_chunk(str(good), "a"), _chunk(str(bad), "b")],
+            embeddings,  # type: ignore[arg-type]
+            EmbeddingConfig(
+                max_embedding_split_depth=0,
+            ),
+        )
     )
 
-    assert embeddings.requests == [["a" * 9, "b" * 9], ["c" * 9]]
-    assert stats.chunks_embedded == 3
-    assert stats.embedding_requests == 2
+    assert len(batches) == 1
+    assert batches[0].ids == ["a" * 64]
+    assert batches[0].texts == ["good"]
+    assert batches[0].vectors == [[4.0]]
 
 
-def test_embed_chunk_batches_skips_oversized_single_chunk(tmp_path, caplog):
+def test_embed_chunk_batches_reraises_non_context_bad_request(tmp_path):
+    class BadRequestError(Exception):
+        status_code = 400
+
+    class MisconfiguredEmbeddings:
+        def __init__(self) -> None:
+            self.requests: list[list[str]] = []
+
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            self.requests.append(list(texts))
+            msg = "model not found"
+            raise BadRequestError(msg)
+
     source = tmp_path / "source.py"
-    source.write_text("x" * 21, encoding="utf-8")
-    chunk = _chunk(str(source), "a")
+    source.write_text("content", encoding="utf-8")
+    embeddings = MisconfiguredEmbeddings()
 
-    embeddings = RecordingEmbeddings()
-    with caplog.at_level("WARNING", logger="codeknow.vector.ingest"):
-        batches = list(
+    with pytest.raises(BadRequestError, match="model not found"):
+        list(
             embed_chunk_batches(
-                [chunk],
+                [_chunk(str(source), "a")],
                 embeddings,  # type: ignore[arg-type]
-                EmbeddingConfig(max_request_tokens=6, token_safety_margin=0),
+                EmbeddingConfig(),
             )
         )
 
-    assert batches == []
-    assert embeddings.requests == []
-    assert "Skipping chunk" in caplog.text
-    assert "exceeds embedding request budget" in caplog.text
-
-
-def test_embed_chunk_map_only_counts_only_embedded_oversized_chunks(tmp_path):
-    valid = tmp_path / "valid.py"
-    valid.write_text("a" * 9, encoding="utf-8")
-    oversized = tmp_path / "oversized.py"
-    oversized.write_text("x" * 21, encoding="utf-8")
-
-    embeddings = RecordingEmbeddings()
-    stats = embed_chunk_map_only(
-        {
-            str(valid): [_chunk(str(valid), "a")],
-            str(oversized): [_chunk(str(oversized), "b")],
-        },
-        embeddings,  # type: ignore[arg-type]
-        EmbeddingConfig(max_request_tokens=6, token_safety_margin=0),
-        batch_size=2,
-    )
-
-    assert embeddings.requests == [["a" * 9]]
-    assert stats.chunks_seen == 2
-    assert stats.chunks_embedded == 1
-    assert stats.embedding_requests == 1
+    assert embeddings.requests == [["content"]]
 
 
 def test_embed_chunk_map_only_rejects_invalid_batch_size():
     with pytest.raises(ValueError, match="batch_size"):
-        embed_chunk_map_only({}, RecordingEmbeddings(), batch_size=0)  # type: ignore[arg-type]
+        embed_chunk_map_only(
+            {},
+            RecordingEmbeddings(),  # type: ignore[arg-type]
+            batch_size=0,
+        )

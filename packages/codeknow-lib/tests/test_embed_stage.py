@@ -4,13 +4,15 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import networkx as nx
+import pytest
 from codeknow.pipeline import PipelineConfig, PipelineResult
 from codeknow.pipeline.embed_stage import embed
 from codeknow.pipeline.metadata import build_chunk_metadata
 from codeknow.schemas import Chunk
 from codeknow.vector.embeddings import (
     EmbeddingConfig,
-    _batch_texts_for_embedding_requests,
+    EmbeddingContextLengthError,
+    _merge_split_embedding_vectors,
     embed_texts,
 )
 
@@ -316,83 +318,26 @@ class TestChromaStoreExtraMetadata:
         assert metas["file"] == "auth.py"
 
 
-class TestTokenBudgetedEmbeddings:
-    def test_batch_texts_for_embedding_requests_keeps_requests_under_limit(self):
-        batches = _batch_texts_for_embedding_requests(
-            ["a" * 9, "b" * 9, "c" * 3],
-            max_tokens=6,
-        )
+class TestEmbedTexts:
+    def test_embedding_config_defaults_split_depth_to_three(self):
+        config = EmbeddingConfig()
 
-        assert batches == [["a" * 9, "b" * 9], ["c" * 3]]
+        assert config.max_embedding_split_depth == 3
 
-    def test_embed_texts_splits_by_token_budget_and_preserves_order(self):
-        class RecordingEmbeddings:
-            def __init__(self) -> None:
-                self.requests: list[list[str]] = []
+    def test_embedding_config_reads_split_depth_from_env(self, monkeypatch):
+        monkeypatch.setenv("EMBEDDING_MAX_SPLIT_DEPTH", "5")
 
-            def embed_documents(self, texts: list[str]) -> list[list[float]]:
-                self.requests.append(list(texts))
-                return [[float(ord(text[0]))] for text in texts]
+        config = EmbeddingConfig()
 
-        embeddings = RecordingEmbeddings()
+        assert config.max_embedding_split_depth == 5
 
-        vectors = embed_texts(
-            ["a" * 9, "b" * 9, "c" * 9],
-            embeddings,  # type: ignore[arg-type]
-            max_request_tokens=6,
-        )
-
-        assert embeddings.requests == [["a" * 9, "b" * 9], ["c" * 9]]
-        assert vectors == [[97.0], [98.0], [99.0]]
-
-    def test_store_chunks_uses_token_budgeted_embedding_requests(self):
-        from codeknow.vector.chroma import ChromaStore
-
-        class RecordingEmbeddings:
-            def __init__(self) -> None:
-                self.requests: list[list[str]] = []
-
-            def embed_documents(self, texts: list[str]) -> list[list[float]]:
-                self.requests.append(list(texts))
-                return [[float(ord(text[0]))] for text in texts]
-
-        embeddings = RecordingEmbeddings()
-        mock_collection = MagicMock()
-
-        store = ChromaStore(
-            embeddings=embeddings,  # type: ignore[arg-type]
-            embedding_config=EmbeddingConfig(
-                max_request_tokens=6,
-                token_safety_margin=0,
-            ),
-        )
-        store._collection = mock_collection
-
-        chunks = [
-            Chunk(file="one.py", start_line=1, end_line=1, hash="a" * 64),
-            Chunk(file="two.py", start_line=1, end_line=1, hash="b" * 64),
-            Chunk(file="three.py", start_line=1, end_line=1, hash="c" * 64),
-        ]
-
-        with (
-            patch.object(
-                store,
-                "_get_or_create_collection",
-                return_value=mock_collection,
-            ),
-            patch(
-                "codeknow.vector.ingest._read_chunk_content",
-                side_effect=["a" * 9, "b" * 9, "c" * 9],
-            ),
-        ):
-            store.store_chunks(chunks, batch_size=3)
-
-        assert embeddings.requests == [["a" * 9, "b" * 9], ["c" * 9]]
-        assert mock_collection.upsert.call_args.kwargs["embeddings"] == [
-            [97.0],
-            [98.0],
-            [99.0],
-        ]
+    def test_embed_texts_rejects_empty_contexts_for_non_empty_texts(self):
+        with pytest.raises(ValueError, match="contexts"):
+            embed_texts(
+                ["alpha"],
+                MagicMock(),  # type: ignore[arg-type]
+                contexts=[],
+            )
 
     def test_store_chunks_invokes_on_progress_per_batch(self):
         from codeknow.vector.chroma import ChromaStore
@@ -410,10 +355,6 @@ class TestTokenBudgetedEmbeddings:
 
         store = ChromaStore(
             embeddings=embeddings,  # type: ignore[arg-type]
-            embedding_config=EmbeddingConfig(
-                max_request_tokens=10_000,
-                token_safety_margin=0,
-            ),
         )
         store._collection = mock_collection
 
@@ -444,12 +385,163 @@ class TestTokenBudgetedEmbeddings:
         # batch_size=2 over 3 chunks => two batches: [0,1] then [2].
         assert calls == [(2, 3), (3, 3)]
 
-    def test_oversized_single_text_is_sent_alone_and_warns(self, caplog):
-        with caplog.at_level("WARNING", logger="codeknow.vector.embeddings"):
-            batches = _batch_texts_for_embedding_requests(["a" * 9], max_tokens=2)
+    def test_multi_text_context_error_splits_batch_and_preserves_order(self):
+        class ContextLengthError(Exception):
+            status_code = 400
 
-        assert batches == [["a" * 9]]
-        assert "exceeds token budget" in caplog.text
+        class SplitBatchEmbeddings:
+            def __init__(self) -> None:
+                self.requests: list[list[str]] = []
+
+            def embed_documents(self, texts: list[str]) -> list[list[float]]:
+                self.requests.append(list(texts))
+                if len(texts) > 1:
+                    msg = "context length exceeded"
+                    raise ContextLengthError(msg)
+                return [[float(ord(texts[0][0]))]]
+
+        embeddings = SplitBatchEmbeddings()
+
+        vectors = embed_texts(
+            ["alpha", "beta"],
+            embeddings,  # type: ignore[arg-type]
+        )
+
+        assert embeddings.requests == [["alpha", "beta"], ["alpha"], ["beta"]]
+        assert vectors == [[97.0], [98.0]]
+
+    def test_single_text_context_error_splits_and_averages_vector(self):
+        class ContextLengthError(Exception):
+            status_code = 400
+
+        class LengthLimitedEmbeddings:
+            def __init__(self) -> None:
+                self.requests: list[list[str]] = []
+
+            def embed_documents(self, texts: list[str]) -> list[list[float]]:
+                self.requests.append(list(texts))
+                if any(len(text) > 5 for text in texts):
+                    msg = (
+                        "Error code: 400\n"
+                        "request (2189 tokens) exceeds the available context "
+                        "size (2048 tokens)"
+                    )
+                    raise ContextLengthError(msg)
+                return [[float(len(text))] for text in texts]
+
+        embeddings = LengthLimitedEmbeddings()
+
+        vectors = embed_texts(
+            ["aa\nbbbb\n"],
+            embeddings,  # type: ignore[arg-type]
+        )
+
+        assert embeddings.requests == [["aa\nbbbb\n"], ["aa\n"], ["bbbb\n"]]
+        assert vectors == [[4.25]]
+
+    def test_non_context_bad_request_reraises_even_when_skip_enabled(self):
+        class BadRequestError(Exception):
+            status_code = 400
+
+        class MisconfiguredEmbeddings:
+            def __init__(self) -> None:
+                self.requests: list[list[str]] = []
+
+            def embed_documents(self, texts: list[str]) -> list[list[float]]:
+                self.requests.append(list(texts))
+                msg = "model not found"
+                raise BadRequestError(msg)
+
+        embeddings = MisconfiguredEmbeddings()
+
+        with pytest.raises(BadRequestError, match="model not found"):
+            embed_texts(
+                ["alpha", "beta"],
+                embeddings,  # type: ignore[arg-type]
+                skip_context_length_errors=True,
+            )
+
+        assert embeddings.requests == [["alpha", "beta"]]
+
+    def test_rate_limit_error_sleeps_and_retries(self, monkeypatch):
+        class RateLimitError(Exception):
+            status_code = 429
+
+        class RetryOnceEmbeddings:
+            def __init__(self) -> None:
+                self.requests: list[list[str]] = []
+                self.calls = 0
+
+            def embed_documents(self, texts: list[str]) -> list[list[float]]:
+                self.requests.append(list(texts))
+                self.calls += 1
+                if self.calls == 1:
+                    msg = "too many requests"
+                    raise RateLimitError(msg)
+                return [[float(ord(text[0]))] for text in texts]
+
+        sleeps: list[float] = []
+        monkeypatch.setattr(
+            "codeknow.vector.embeddings.time.sleep",
+            lambda seconds: sleeps.append(seconds),
+        )
+
+        embeddings = RetryOnceEmbeddings()
+
+        vectors = embed_texts(
+            ["alpha", "beta"],
+            embeddings,  # type: ignore[arg-type]
+        )
+
+        assert sleeps == [5]
+        assert embeddings.requests == [["alpha", "beta"], ["alpha", "beta"]]
+        assert vectors == [[97.0], [98.0]]
+
+    def test_context_error_reports_chunk_when_split_depth_is_exceeded(self):
+        class ContextLengthError(Exception):
+            status_code = 400
+
+        class AlwaysFailEmbeddings:
+            def embed_documents(self, texts: list[str]) -> list[list[float]]:
+                msg = "context length exceeded"
+                raise ContextLengthError(msg)
+
+        with pytest.raises(EmbeddingContextLengthError, match="chunk=abc"):
+            embed_texts(
+                ["too long"],
+                AlwaysFailEmbeddings(),  # type: ignore[arg-type]
+                contexts=["chunk=abc file=big.py:1-20 provider=docker"],
+                max_embedding_split_depth=0,
+                model="test-model",
+            )
+
+    def test_context_error_can_be_skipped_after_split_depth_is_exceeded(
+        self,
+        caplog,
+    ):
+        class ContextLengthError(Exception):
+            status_code = 400
+
+        class AlwaysFailEmbeddings:
+            def embed_documents(self, texts: list[str]) -> list[list[float]]:
+                msg = "context length exceeded"
+                raise ContextLengthError(msg)
+
+        with caplog.at_level("WARNING", logger="codeknow.vector.embeddings"):
+            vectors = embed_texts(
+                ["too long"],
+                AlwaysFailEmbeddings(),  # type: ignore[arg-type]
+                contexts=["chunk=abc file=big.py:1-20 provider=docker"],
+                max_embedding_split_depth=0,
+                model="test-model",
+                skip_context_length_errors=True,
+            )
+
+        assert vectors == [[]]
+        assert "chunk=abc" in caplog.text
+
+    def test_merge_split_embedding_vectors_uses_text_lengths(self):
+        assert _merge_split_embedding_vectors([[1.0], [5.0]], [1, 3]) == [4.0]
 
 
 class TestDeleteBySlug:

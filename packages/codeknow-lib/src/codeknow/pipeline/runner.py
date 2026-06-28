@@ -123,7 +123,13 @@ def run_pipeline(
     G = _build(extractions)
     _progress(progress_callback, 3)
 
-    G, chunk_map = _map_chunks(G, discovery.get("files", {}))
+    if map_chunks_fn is None:
+        G, chunk_map = _map_chunks(
+            G,
+            discovery.get("files", {}),
+        )
+    else:
+        G, chunk_map = _map_chunks(G, discovery.get("files", {}))
     _progress(progress_callback, 4)
 
     communities = _cluster(G)

@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import logging
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from codeknow.vector.embeddings import (
     EmbeddingConfig,
-    _batch_texts_for_embedding_requests,
-    _estimate_tokens,
     _read_chunk_content,
     embed_texts,
 )
@@ -19,8 +16,6 @@ if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
 
     from codeknow.schemas import Chunk, ChunkMap
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -54,36 +49,6 @@ def _flatten_unique_chunks(chunk_map: ChunkMap) -> list[Chunk]:
     return chunks
 
 
-def _embedding_request_count(
-    texts: list[str],
-    embedding_config: EmbeddingConfig,
-) -> int:
-    if not texts:
-        return 0
-    if embedding_config.max_request_tokens is None:
-        return 1
-
-    effective_max_tokens = max(
-        1,
-        embedding_config.max_request_tokens - embedding_config.token_safety_margin,
-    )
-    return len(
-        _batch_texts_for_embedding_requests(
-            texts,
-            max_tokens=effective_max_tokens,
-        )
-    )
-
-
-def _effective_max_tokens(embedding_config: EmbeddingConfig) -> int | None:
-    if embedding_config.max_request_tokens is None:
-        return None
-    return max(
-        1,
-        embedding_config.max_request_tokens - embedding_config.token_safety_margin,
-    )
-
-
 def embed_chunk_batches(
     chunks: list[Chunk],
     embeddings: Embeddings,
@@ -99,7 +64,6 @@ def embed_chunk_batches(
         raise ValueError(msg)
 
     config = embedding_config or EmbeddingConfig()
-    effective_max_tokens = _effective_max_tokens(config)
     unique_chunks: list[Chunk] = []
     seen: set[str] = set()
     for chunk in chunks:
@@ -113,31 +77,20 @@ def embed_chunk_batches(
         ids: list[str] = []
         texts: list[str] = []
         metadatas: list[dict[str, Any]] = []
+        contexts: list[str | None] = []
 
         for chunk in batch:
             content = _read_chunk_content(chunk)
             if not content.strip():
                 continue
 
-            token_estimate = _estimate_tokens(content)
-            if (
-                effective_max_tokens is not None
-                and token_estimate > effective_max_tokens
-            ):
-                logger.warning(
-                    "Skipping chunk %s from %s:%d-%d: token estimate %d exceeds "
-                    "embedding request budget %d",
-                    chunk.hash,
-                    chunk.file,
-                    chunk.start_line,
-                    chunk.end_line,
-                    token_estimate,
-                    effective_max_tokens,
-                )
-                continue
-
             ids.append(chunk.hash)
             texts.append(content)
+            contexts.append(
+                f"chunk={chunk.hash} "
+                f"file={chunk.file}:{chunk.start_line}-{chunk.end_line} "
+                f"provider={config.provider}"
+            )
             meta: dict[str, Any] = {
                 "file": chunk.file,
                 "start_line": chunk.start_line,
@@ -152,18 +105,44 @@ def embed_chunk_batches(
         if not ids:
             continue
 
-        embedding_requests = _embedding_request_count(texts, config)
+        embedding_requests = 0
+
+        def _count_request() -> None:
+            nonlocal embedding_requests
+            embedding_requests += 1
+
         vectors = embed_texts(
             texts,
             embeddings,
-            max_request_tokens=config.max_request_tokens,
-            token_safety_margin=config.token_safety_margin,
+            model=config.model,
+            max_embedding_split_depth=config.max_embedding_split_depth,
+            contexts=contexts,
+            on_request=_count_request,
+            skip_context_length_errors=True,
+        )
+        embedded = [
+            (chunk_id, text, metadata, vector)
+            for chunk_id, text, metadata, vector in zip(
+                ids,
+                texts,
+                metadatas,
+                vectors,
+                strict=False,
+            )
+            if vector
+        ]
+        if not embedded:
+            continue
+
+        embedded_ids, embedded_texts, embedded_metadatas, embedded_vectors = zip(
+            *embedded,
+            strict=True,
         )
         yield EmbeddedChunkBatch(
-            ids=ids,
-            texts=texts,
-            metadatas=metadatas,
-            vectors=vectors,
+            ids=list(embedded_ids),
+            texts=list(embedded_texts),
+            metadatas=list(embedded_metadatas),
+            vectors=list(embedded_vectors),
             embedding_requests=embedding_requests,
         )
 
