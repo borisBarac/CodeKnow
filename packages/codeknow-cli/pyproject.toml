@@ -12,6 +12,9 @@ dependencies = [
     "daemonocle>=1.1",
     "rich>=13.0",
     "code-know-api-client",
+    "langchain",
+    "langchain-openai",
+    "pydantic-settings",
 ]
 
 [project.scripts]

@@ -46,6 +46,7 @@ _DelResp = _del_mod.DeleteRepoV1ReposDeleteResponseDeleteRepoV1ReposDelete
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
+
 def _env_float(name: str, default: float) -> float:
     raw = os.environ.get(name)
     if raw is None:

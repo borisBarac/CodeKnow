@@ -122,6 +122,17 @@ def search(query: str, slugs: tuple[str, ...], full: bool) -> None:
 
 
 @cli.command()
+@click.option(
+    "--slug", "slugs", multiple=True, help="Restrict search to slugs (repeatable)."
+)
+def repl(slugs: tuple[str, ...]) -> None:
+    """Interactive REPL agent for testing search (dev only)."""
+    from codeknow_cli.repl_agent import run_repl
+
+    run_repl(slugs=slugs)
+
+
+@cli.command()
 def info() -> None:
     """Show API endpoint status and available repo slugs."""
     client = Client()
@@ -286,3 +297,7 @@ def _error_label(exc: CodeknowError) -> str:
     if isinstance(exc, ApiError):
         return "API error"
     return "Error"
+
+
+if __name__ == "__main__":
+    main()
