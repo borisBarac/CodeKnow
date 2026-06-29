@@ -46,9 +46,6 @@ _DelResp = _del_mod.DeleteRepoV1ReposDeleteResponseDeleteRepoV1ReposDelete
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
-_DEFAULT_BUILD_TIMEOUT = 1800.0
-
-
 def _env_float(name: str, default: float) -> float:
     raw = os.environ.get(name)
     if raw is None:
@@ -226,12 +223,9 @@ class Client:
         ssh_url: str,
         progress_callback: Callable[[str, int, str], None] | None = None,
         poll_interval: float | None = None,
-        build_timeout: float | None = None,
     ) -> BuildStatusResult:
         if poll_interval is None:
             poll_interval = _env_float("CODEKNOW_POLL_INTERVAL", 3.0)
-        if build_timeout is None:
-            build_timeout = _env_float("CODEKNOW_BUILD_TIMEOUT", _DEFAULT_BUILD_TIMEOUT)
         try:
             submit_resp = httpx.post(
                 f"{self.base_url}/v1/build",
@@ -260,13 +254,7 @@ class Client:
         body = submit_resp.json()
         slug = body["slug"]
 
-        deadline = time.monotonic() + build_timeout
         while True:
-            if time.monotonic() >= deadline:
-                msg = (
-                    f"Build for {slug} did not finish within {build_timeout:g}s timeout"
-                )
-                raise ApiError(msg)
             time.sleep(poll_interval)
             poll_resp = httpx.get(
                 f"{self.base_url}/v1/build/{slug}",

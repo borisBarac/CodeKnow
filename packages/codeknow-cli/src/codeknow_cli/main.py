@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import shutil
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
@@ -28,7 +29,6 @@ from codeknow_cli.server import get_backend
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
 
 def _dir_size(path: Path) -> str:
@@ -111,13 +111,14 @@ def remove(slug: str) -> None:
 @click.option(
     "--slug", "slugs", multiple=True, help="Filter to specific repo slugs (repeatable)."
 )
+@click.option("--full", is_flag=True, help="Print full chunk content.")
 @requires_server
-def search(query: str, slugs: tuple[str, ...]) -> None:
+def search(query: str, slugs: tuple[str, ...], full: bool) -> None:
     """Search the code index."""
     client = Client()
     slug_list = list(slugs) if slugs else None
     result = client.search(query, slugs=slug_list)
-    format_search_results(query, result)
+    format_search_results(query, result, full=full)
 
 
 @cli.command()
@@ -164,19 +165,45 @@ def clean(yes: bool) -> None:
     """Remove cached repos, graph output, and temp files."""
     client = Client()
 
+    if client.mode in {"docker", "daemon"} and client.check_server():
+        try:
+            repos = client.list_repos().repos
+        except (ApiError, DaemonNotRunningError, ValidationError):
+            repos = []
+
+        for repo in repos:
+            slug = repo.slug
+            if not slug:
+                continue
+            if not yes and not click.confirm(f"Remove indexed repo {slug}?"):
+                click.echo(f"Skipped indexed repo: {slug}")
+                continue
+            result = client.remove_from_index(slug)
+            click.echo(f"Removed indexed repo: {result.slug}")
+
     if not client.is_remote and client.check_daemon():
         click.echo("Stopping daemon...")
         client.stop_daemon()
         click.echo("Daemon stopped.")
 
     default_input = _env_path("CODEKNOW_INPUT_DIR", _CODEKNOW_HOME / "repos")
-    default_output = _env_path("CODEKNOW_OUTPUT_DIR", _CODEKNOW_HOME / "graph")
+    default_output = _env_path(
+        "CODEKNOW_GRAPH_DIR",
+        _env_path("CODEKNOW_OUTPUT_DIR", _CODEKNOW_HOME / "graph"),
+    )
     default_temp = _env_path("CODEKNOW_TEMP_DIR", _CODEKNOW_HOME / "temp")
     targets = [
         ("repos cache", default_input),
         ("graph output", default_output),
         ("temp files", default_temp),
     ]
+    if client.mode == "docker":
+        targets.extend(
+            [
+                ("docker graph output", Path("infra/api-data/graph")),
+                ("docker temp files", Path("infra/api-data/temp")),
+            ]
+        )
 
     for label, path in targets:
         if not path.exists():

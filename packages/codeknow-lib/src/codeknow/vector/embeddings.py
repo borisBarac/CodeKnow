@@ -38,6 +38,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from codeknow.vector.embedding_errors import (
     is_context_length_error,
     is_rate_limit_error,
+    is_transient_embedding_error,
 )
 
 if TYPE_CHECKING:
@@ -144,7 +145,6 @@ def create_embeddings(config: EmbeddingConfig) -> Embeddings:
         "model": config.model,
         "api_key": config.resolved_api_key(),
         "base_url": config.resolved_base_url(),
-        "num_ctx": config.num_ctx,
     }
     if config.provider in ("docker", "ollama"):
         kwargs["check_embedding_ctx_length"] = False
@@ -236,20 +236,25 @@ class _EmbeddingRetryRequest:
     split_depth: int
 
 
-def _embed_documents_with_rate_limit_retry(
+def _embed_documents_with_retry(
     texts: list[str],
     embeddings: Embeddings,
     on_request: Callable[[], None] | None,
 ) -> list[list[float]]:
+    transient_attempts = 0
     while True:
         if on_request is not None:
             on_request()
         try:
             return embeddings.embed_documents(texts)
         except Exception as exc:
-            if not is_rate_limit_error(exc):
+            if is_rate_limit_error(exc):
+                time.sleep(5)
+                continue
+            if not is_transient_embedding_error(exc) or transient_attempts >= 3:
                 raise
-            time.sleep(5)
+            transient_attempts += 1
+            time.sleep(2 * transient_attempts)
 
 
 def _embed_split_batch_after_context_error(
@@ -371,7 +376,7 @@ def _embed_with_context_length_recovery(
     options: _EmbeddingRetryOptions,
 ) -> list[list[float]]:
     try:
-        return _embed_documents_with_rate_limit_retry(
+        return _embed_documents_with_retry(
             request.texts,
             embeddings,
             options.on_request,

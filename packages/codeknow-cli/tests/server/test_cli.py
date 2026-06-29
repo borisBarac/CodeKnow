@@ -188,6 +188,7 @@ def test_search_command_shows_help(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["search", "--help"])
     assert result.exit_code == 0
     assert "QUERY" in result.output
+    assert "--full" in result.output
 
 
 def test_search_command_in_main_help(runner: CliRunner) -> None:
@@ -214,6 +215,21 @@ def test_search_command_with_slugs(mock_search: MagicMock, runner: CliRunner) ->
     result = runner.invoke(cli, ["search", "my query", "--slug", "a", "--slug", "b"])
     assert result.exit_code == 0
     mock_search.assert_called_once_with("my query", slugs=["a", "b"])
+
+
+@patch.object(Client, "search")
+def test_search_command_with_full_flag(
+    mock_search: MagicMock, runner: CliRunner
+) -> None:
+    mock_search.return_value = SearchResult(
+        query="my query", vector_hits=0, graph_expanded=0, results=[]
+    )
+    with patch("codeknow_cli.main.format_search_results") as mock_format:
+        result = runner.invoke(cli, ["search", "my query", "--full"])
+    assert result.exit_code == 0
+    mock_search.assert_called_once_with("my query", slugs=None)
+    mock_format.assert_called_once()
+    assert mock_format.call_args.kwargs["full"] is True
 
 
 def test_info_command_shows_in_help(runner: CliRunner) -> None:
@@ -346,3 +362,85 @@ def test_info_when_daemon_running_but_api_fails(
     assert result.exit_code == 0
     assert "Daemon: running" in result.output
     assert "unavailable" in result.output.lower()
+
+
+def test_clean_removes_docker_indexed_repos_via_api(
+    runner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CODEKNOW_INPUT_DIR", str(tmp_path / "repos"))
+    monkeypatch.setenv("CODEKNOW_GRAPH_DIR", str(tmp_path / "graph"))
+    monkeypatch.setenv("CODEKNOW_TEMP_DIR", str(tmp_path / "temp"))
+    repo = RepoMetadata(
+        github_ssh_url="git@github.com:nestjs/nest.git",
+        slug="nestjs-nest",
+        commit_hash="abc123",
+        built_at="2025-01-01T00:00:00Z",
+        node_count=10,
+        edge_count=20,
+        community_count=2,
+    )
+    removed = MagicMock(
+        return_value=DeleteResult(
+            status="deleted",
+            slug="nestjs-nest",
+            chunks_deleted=3,
+        )
+    )
+    monkeypatch.setattr(
+        Client,
+        "list_repos",
+        MagicMock(
+            return_value=ListReposResponse(
+                repos=[repo],
+                total=1,
+                page=1,
+                page_size=50,
+            )
+        ),
+    )
+    monkeypatch.setattr(Client, "remove_from_index", removed)
+
+    result = runner.invoke(cli, ["clean", "-y"])
+
+    assert result.exit_code == 0
+    removed.assert_called_once_with("nestjs-nest")
+    assert "Removed indexed repo: nestjs-nest" in result.output
+
+
+def test_clean_prefers_codeknow_graph_dir(
+    runner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    graph_dir = tmp_path / "api-graph"
+    old_output_dir = tmp_path / "old-output"
+    graph_dir.mkdir()
+    old_output_dir.mkdir()
+    (graph_dir / "marker.txt").write_text("delete me", encoding="utf-8")
+    (old_output_dir / "marker.txt").write_text("keep me", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CODEKNOW_INPUT_DIR", str(tmp_path / "repos"))
+    monkeypatch.setenv("CODEKNOW_GRAPH_DIR", str(graph_dir))
+    monkeypatch.setenv("CODEKNOW_OUTPUT_DIR", str(old_output_dir))
+    monkeypatch.setenv("CODEKNOW_TEMP_DIR", str(tmp_path / "temp"))
+    monkeypatch.setattr(
+        Client,
+        "list_repos",
+        MagicMock(
+            return_value=ListReposResponse(
+                repos=[],
+                total=0,
+                page=1,
+                page_size=50,
+            )
+        ),
+    )
+
+    result = runner.invoke(cli, ["clean", "-y"])
+
+    assert result.exit_code == 0
+    assert not graph_dir.exists()
+    assert old_output_dir.exists()

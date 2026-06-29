@@ -483,7 +483,7 @@ def test_check_server_false_on_timeout(mock_get: MagicMock) -> None:
 
 @patch("codeknow_cli.client.httpx.get")
 @patch("codeknow_cli.client.httpx.post")
-def test_add_times_out_when_build_exceeds_timeout(
+def test_add_keeps_polling_until_terminal_status(
     mock_post: MagicMock,
     mock_get: MagicMock,
 ) -> None:
@@ -497,21 +497,45 @@ def test_add_times_out_when_build_exceeds_timeout(
             "progress": 0,
         },
     )
-    mock_get.return_value = _mock_post_response(
-        202,
-        {
-            "status": "running",
-            "slug": "org-repo",
-            "progress": 50,
-            "stage": "building",
-        },
-    )
+    mock_get.side_effect = [
+        _mock_post_response(
+            202,
+            {
+                "status": "running",
+                "slug": "org-repo",
+                "progress": 50,
+                "stage": "building",
+            },
+        ),
+        _mock_post_response(
+            202,
+            {
+                "status": "running",
+                "slug": "org-repo",
+                "progress": 75,
+                "stage": "building",
+            },
+        ),
+        _mock_post_response(
+            200,
+            {
+                "status": "succeeded",
+                "slug": "org-repo",
+                "progress": 100,
+                "commit_hash": "abc123",
+                "node_count": 10,
+                "edge_count": 20,
+                "community_count": 3,
+            },
+        ),
+    ]
 
-    with (
-        patch("codeknow_cli.client.time.sleep"),
-        pytest.raises(ApiError, match="did not finish within"),
-    ):
-        c.add_to_index("git@github.com:org/repo.git", build_timeout=0.0)
+    with patch("codeknow_cli.client.time.sleep"):
+        result = c.add_to_index("git@github.com:org/repo.git")
+
+    assert result.status == "succeeded"
+    assert result.commit_hash == "abc123"
+    assert mock_get.call_count == 3
 
 
 @patch("codeknow_cli.client.httpx.get")

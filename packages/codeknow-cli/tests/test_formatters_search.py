@@ -64,6 +64,16 @@ def _run_plain(query: str, result: dict) -> str:
     return buf.getvalue()
 
 
+def _run_plain_full(query: str, result: dict) -> str:
+    buf = StringIO()
+    with (
+        patch("sys.stdout.isatty", return_value=False),
+        patch("sys.stdout", buf),
+    ):
+        format_search_results(query, result, full=True)
+    return buf.getvalue()
+
+
 class TestBuildFileLabel:
     def test_with_line_range(self) -> None:
         hit = SearchHit(file="src/a.py", start_line=1, end_line=10, provenance="vector")
@@ -181,6 +191,26 @@ class TestFormatSearchResultsPlain:
         assert "Slug" not in output
         assert "Path" not in output
 
+    def test_plain_full_output_uses_full_content(self) -> None:
+        result = SearchResult(
+            vector_hits=1,
+            graph_expanded=0,
+            query="q",
+            results=[
+                SearchHit(
+                    file="a.py",
+                    start_line=None,
+                    end_line=None,
+                    provenance="vector",
+                    distance=0.1,
+                    content="x" * 250,
+                ),
+            ],
+        )
+        output = _run_plain_full("q", result)
+        assert "x" * 250 in output
+        assert "..." not in output
+
 
 class TestFormatSearchResultsRich:
     def test_rich_output_contains_file(self) -> None:
@@ -213,3 +243,29 @@ class TestFormatSearchResultsRich:
             format_search_results("q", _SAMPLE_RESULT)
         output = _strip_ansi(console.file.getvalue())  # type: ignore[union-attr]
         assert "def hello(): pass" in output
+
+    def test_rich_full_output_contains_full_content(self) -> None:
+        result = SearchResult(
+            vector_hits=1,
+            graph_expanded=0,
+            query="q",
+            results=[
+                SearchHit(
+                    file="a.py",
+                    start_line=None,
+                    end_line=None,
+                    provenance="vector",
+                    distance=0.1,
+                    content="x" * 250,
+                ),
+            ],
+        )
+        console = _make_console()
+        with patch(
+            "codeknow_cli.formatters.search.Console",
+            return_value=console,
+        ):
+            format_search_results("q", result, full=True)
+        output = _strip_ansi(console.file.getvalue())  # type: ignore[union-attr]
+        assert output.count("x") >= 250
+        assert "..." not in output

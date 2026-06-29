@@ -82,10 +82,12 @@ codeknow remove owner-repo
 ### Search the index
 
 Searches all indexed repos by default. Use `--slug` to filter (repeatable).
+Use `--full` to print full chunk content instead of a preview.
 
 ```bash
 codeknow search "how does auth work"
 codeknow search "database connection" --slug owner-repo --slug other-repo
+codeknow search "database connection" --full
 ```
 
 Results include file location, line range, provenance (vector or graph-expanded), and a content preview.

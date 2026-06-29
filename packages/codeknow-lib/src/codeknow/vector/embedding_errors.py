@@ -40,6 +40,16 @@ def is_rate_limit_error(exc: Exception) -> bool:
     return _status_code(exc) == 429
 
 
+def is_transient_embedding_error(exc: Exception) -> bool:
+    """Return whether an embedding error is likely safe to retry."""
+    status_code = _status_code(exc)
+    if status_code is not None and 500 <= status_code < 600:
+        return True
+
+    details = " ".join(_iter_error_text_parts(exc)).casefold()
+    return "llama.cpp terminated unexpectedly" in details
+
+
 def _status_code(exc: Exception) -> int | None:
     status_code = _getattr_or_none(exc, "status_code")
     if isinstance(status_code, int):

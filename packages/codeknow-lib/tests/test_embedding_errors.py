@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from codeknow.vector.embedding_errors import is_context_length_error, is_rate_limit_error
+from codeknow.vector.embedding_errors import (
+    is_context_length_error,
+    is_rate_limit_error,
+    is_transient_embedding_error,
+)
 
 
 class BadRequestError(Exception):
@@ -56,3 +60,20 @@ def test_rejects_non_rate_limit_status_code():
         status_code = 400
 
     assert not is_rate_limit_error(NotRateLimitedError("bad request"))
+
+
+def test_matches_transient_server_error():
+    class ServerError(Exception):
+        status_code = 500
+
+    assert is_transient_embedding_error(ServerError("provider failed"))
+
+
+def test_matches_dmr_llama_process_crash():
+    exc = RuntimeError("llama.cpp terminated unexpectedly: llama.cpp failed")
+
+    assert is_transient_embedding_error(exc)
+
+
+def test_rejects_non_transient_client_error():
+    assert not is_transient_embedding_error(BadRequestError("model not found"))

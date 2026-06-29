@@ -1,6 +1,7 @@
 """Tests for git_download — clone and update git repos."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 from codeknow.git_download import download, get_commit_hash, is_cloned
 from git import Repo
@@ -24,6 +25,34 @@ def test_download_clones(tmp_path: Path) -> None:
     assert result == target
     assert (target / ".git").exists()
     assert (target / "README.md").read_text() == "# hello"
+
+
+def test_download_preserves_github_ssh_url_for_clone(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "clone"
+    with patch("codeknow.git_download.downloader.Repo.clone_from") as mock_clone:
+        download("git@github.com:nestjs/nest.git", target)
+
+    mock_clone.assert_called_once_with("git@github.com:nestjs/nest.git", target)
+
+
+def test_download_preserves_github_ssh_url_for_existing_origin(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "clone"
+    repo_url = "git@github.com:nestjs/nest.git"
+    with (
+        patch("codeknow.git_download.downloader.is_cloned", return_value=True),
+        patch("codeknow.git_download.downloader.Repo") as mock_repo,
+    ):
+        origin = mock_repo.return_value.remotes.origin
+        origin.url = "https://github.com/nestjs/nest.git"
+
+        download(repo_url, target)
+
+    origin.set_url.assert_called_once_with(repo_url)
+    origin.pull.assert_called_once_with()
 
 
 def test_is_cloned_false(tmp_path: Path) -> None:

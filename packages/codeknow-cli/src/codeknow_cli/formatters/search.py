@@ -34,20 +34,27 @@ def _truncate_content(content: str) -> str:
     return content
 
 
-def format_search_results(query: str, result: SearchResult) -> None:
+def _format_content(content: str, full: bool) -> str:
+    if full:
+        return content
+    return _truncate_content(content)
+
+
+def format_search_results(query: str, result: SearchResult, full: bool = False) -> None:
     console = Console()
     is_tty = console.is_terminal
 
     if is_tty:
-        _format_rich(console, query, result)
+        _format_rich(console, query, result, full=full)
     else:
-        _format_plain(query, result)
+        _format_plain(query, result, full=full)
 
 
 def _format_rich(
     console: Console,
     query: str,
     result: SearchResult,
+    full: bool,
 ) -> None:
     console.print(f"[bold]Query:[/] {query}")
     console.print(
@@ -71,13 +78,14 @@ def _format_rich(
             console.print(f"  [magenta]Path:[/] {hit.graph_path}")
 
         if hit.content:
-            display = _truncate_content(hit.content)
+            display = _format_content(hit.content, full)
             console.print(Text(display))
 
 
 def _format_plain(
     query: str,
     result: SearchResult,
+    full: bool,
 ) -> None:
     click.echo(f"Query: {query}")
     click.echo(
@@ -100,5 +108,5 @@ def _format_plain(
             click.echo(f"  Path: {hit.graph_path}")
 
         if hit.content:
-            display = _truncate_content(hit.content)
+            display = _format_content(hit.content, full)
             click.echo(display)

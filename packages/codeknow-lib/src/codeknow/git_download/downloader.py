@@ -38,6 +38,8 @@ def download(repo_url: str, target_path: Path) -> Path:
     """
     if is_cloned(target_path):
         repo = Repo(target_path)
+        if repo.remotes.origin.url != repo_url:
+            repo.remotes.origin.set_url(repo_url)
         repo.remotes.origin.pull()
     else:
         Repo.clone_from(repo_url, target_path)

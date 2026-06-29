@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -22,6 +22,16 @@ def _env_path(key: str, default: Path) -> Path:
     return Path(raw) if raw else default
 
 
+def _env_int(key: str, default: int) -> int:
+    raw = os.environ.get(key)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class PipelineConfig:
     """Configuration for the pipeline run."""
@@ -34,7 +44,9 @@ class PipelineConfig:
     no_embed: bool = False
     embed_provider: Literal["docker", "ollama", "openrouter"] = "docker"
     embed_model: str = "ai/qwen3-embedding:4B"
-    embed_batch_size: int = 50
+    embed_batch_size: int = field(
+        default_factory=lambda: _env_int("CODEKNOW_EMBED_BATCH_SIZE", 50)
+    )
     chroma_host: str | None = None
     chroma_port: int | None = None
     chroma_collection: str | None = None

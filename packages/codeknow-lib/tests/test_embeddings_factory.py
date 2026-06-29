@@ -14,12 +14,12 @@ def test_embedding_config_loads_num_ctx_from_env(monkeypatch):
 
 
 @patch("codeknow.vector.embeddings.OpenAIEmbeddings")
-def test_create_embeddings_forwards_num_ctx(mock_openai_embeddings):
+def test_create_embeddings_does_not_forward_num_ctx(mock_openai_embeddings):
     mock_openai_embeddings.return_value = MagicMock()
 
     config = EmbeddingConfig(num_ctx=2048)
 
     create_embeddings(config)
 
-    assert mock_openai_embeddings.call_args.kwargs["num_ctx"] == 2048
+    assert "num_ctx" not in mock_openai_embeddings.call_args.kwargs
     assert mock_openai_embeddings.call_args.kwargs["model"] == config.model

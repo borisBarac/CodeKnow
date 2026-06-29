@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from codeknow_api.app import ApiConfig, create_app
-from codeknow_api.models import BuildJob
+from codeknow_api.models import BuildJob, SearchRequest
 from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
@@ -41,6 +41,14 @@ def _seed_repo(graph_dir: Path, slug: str) -> None:
 
 
 class TestSearchSlugValidation:
+    def test_duplicate_slugs_are_normalized(self) -> None:
+        request = SearchRequest(
+            query="test",
+            repos=["repo-a", " repo-b ", "repo-a", "repo-b"],
+        )
+
+        assert request.repos == ["repo-a", "repo-b"]
+
     def test_unknown_slug_returns_400(
         self, client: TestClient, graph_dir: Path
     ) -> None:

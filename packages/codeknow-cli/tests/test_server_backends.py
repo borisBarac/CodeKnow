@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import httpx
 import pytest
 from codeknow_cli.config import UserConfig
 from codeknow_cli.exceptions import CodeknowError, ConfigError
 from codeknow_cli.server import (
+    DOCKER_MODEL_NAME,
     DaemonBackend,
     DockerBackend,
     RemoteBackend,
@@ -53,10 +54,51 @@ class TestDockerBackend:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         self._patches(monkeypatch, tmp_path)
+        compose = tmp_path / "docker-compose.yml"
         run = MagicMock(return_value=_completed(0))
         monkeypatch.setattr("codeknow_cli.server.subprocess.run", run)
         DockerBackend().stop()
         assert "Docker stack stopped." in capsys.readouterr().out
+        assert run.call_args_list == [
+            call(
+                [
+                    "/usr/local/bin/docker",
+                    "compose",
+                    "-f",
+                    str(compose),
+                    "down",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            ),
+            call(
+                ["/usr/local/bin/docker", "model", "unload", DOCKER_MODEL_NAME],
+                capture_output=True,
+                text=True,
+                check=False,
+            ),
+        ]
+
+    def test_stop_warns_when_model_unload_fails(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._patches(monkeypatch, tmp_path)
+        run = MagicMock(
+            side_effect=[
+                _completed(0),
+                _completed(1, stdout="fallback"),
+            ]
+        )
+        monkeypatch.setattr("codeknow_cli.server.subprocess.run", run)
+        DockerBackend().stop()
+        captured = capsys.readouterr()
+        assert "Docker stack stopped." in captured.out
+        assert "Warning: docker model unload failed:" in captured.err
+        assert "fallback" in captured.err
 
     def test_status_shows_stdout(
         self,
@@ -78,6 +120,16 @@ class TestDockerBackend:
         monkeypatch.setattr("codeknow_cli.server.subprocess.run", run)
         with pytest.raises(CodeknowError):
             DockerBackend().start()
+
+    def test_stop_raises_on_compose_failure_without_unload(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._patches(monkeypatch, tmp_path)
+        run = MagicMock(return_value=_completed(1, stderr="boom"))
+        monkeypatch.setattr("codeknow_cli.server.subprocess.run", run)
+        with pytest.raises(CodeknowError):
+            DockerBackend().stop()
+        assert run.call_count == 1
 
     def test_raises_when_docker_not_installed(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

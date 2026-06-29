@@ -255,6 +255,22 @@ class TestEmbedStage:
 
     @patch("codeknow.pipeline.embed_stage.ChromaStore")
     @patch("codeknow.pipeline.embed_stage.create_embeddings")
+    def test_batch_size_from_env(self, mock_create_emb, mock_store_cls, monkeypatch):
+        monkeypatch.setenv("CODEKNOW_EMBED_BATCH_SIZE", "1")
+        mock_store = MagicMock()
+        mock_store.store_chunk_map.return_value = 1
+        mock_store_cls.return_value = mock_store
+
+        result = _make_result(_make_config())
+
+        out = embed(result)
+
+        assert out.embed_stats["batch_size"] == 1
+        mock_create_emb.assert_called_once()
+        assert mock_store.store_chunk_map.call_args.kwargs["batch_size"] == 1
+
+    @patch("codeknow.pipeline.embed_stage.ChromaStore")
+    @patch("codeknow.pipeline.embed_stage.create_embeddings")
     def test_forwards_on_progress_to_store(
         self,
         _mock_create_emb,  # noqa: PT019
@@ -483,7 +499,7 @@ class TestEmbedTexts:
         sleeps: list[float] = []
         monkeypatch.setattr(
             "codeknow.vector.embeddings.time.sleep",
-            lambda seconds: sleeps.append(seconds),
+            sleeps.append,
         )
 
         embeddings = RetryOnceEmbeddings()
@@ -496,6 +512,40 @@ class TestEmbedTexts:
         assert sleeps == [5]
         assert embeddings.requests == [["alpha", "beta"], ["alpha", "beta"]]
         assert vectors == [[97.0], [98.0]]
+
+    def test_transient_embedding_error_sleeps_and_retries(self, monkeypatch):
+        class TransientError(Exception):
+            status_code = 500
+
+        class RetryOnceEmbeddings:
+            def __init__(self) -> None:
+                self.requests: list[list[str]] = []
+                self.calls = 0
+
+            def embed_documents(self, texts: list[str]) -> list[list[float]]:
+                self.requests.append(list(texts))
+                self.calls += 1
+                if self.calls == 1:
+                    msg = "llama.cpp terminated unexpectedly"
+                    raise TransientError(msg)
+                return [[float(ord(text[0]))] for text in texts]
+
+        sleeps: list[float] = []
+        monkeypatch.setattr(
+            "codeknow.vector.embeddings.time.sleep",
+            sleeps.append,
+        )
+
+        embeddings = RetryOnceEmbeddings()
+
+        vectors = embed_texts(
+            ["alpha"],
+            embeddings,  # type: ignore[arg-type]
+        )
+
+        assert sleeps == [2]
+        assert embeddings.requests == [["alpha"], ["alpha"]]
+        assert vectors == [[97.0]]
 
     def test_context_error_reports_chunk_when_split_depth_is_exceeded(self):
         class ContextLengthError(Exception):

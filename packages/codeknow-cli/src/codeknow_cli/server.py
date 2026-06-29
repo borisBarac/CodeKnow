@@ -19,6 +19,7 @@ from codeknow_cli.exceptions import (
 )
 
 COMPOSE_FILE = Path("infra/docker-compose.yml")
+DOCKER_MODEL_NAME = "ai/qwen3-embedding:4B"
 
 
 class ServerBackend:
@@ -67,6 +68,11 @@ class DockerBackend(ServerBackend):
         cmd = [docker_bin, "compose", "-f", str(COMPOSE_FILE), *args]
         return subprocess.run(cmd, capture_output=True, text=True, check=False)  # noqa: S603
 
+    def _run_docker(self, args: list[str]) -> subprocess.CompletedProcess[str]:
+        docker_bin = self._preflight()
+        cmd = [docker_bin, *args]
+        return subprocess.run(cmd, capture_output=True, text=True, check=False)  # noqa: S603
+
     def start(self) -> None:
         self._preflight()
         click.echo("Starting docker stack...")
@@ -83,6 +89,10 @@ class DockerBackend(ServerBackend):
             msg = f"docker compose down failed:\n{result.stderr}"
             raise CodeknowError(msg)
         click.echo("Docker stack stopped.")
+        unload = self._run_docker(["model", "unload", DOCKER_MODEL_NAME])
+        if unload.returncode != 0:
+            detail = unload.stderr or unload.stdout
+            click.echo(f"Warning: docker model unload failed:\n{detail}", err=True)
 
     def status(self) -> None:
         result = self._run(["ps"])

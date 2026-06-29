@@ -101,7 +101,7 @@ class SearchRequest(BaseModel):
             if any(not s for s in stripped):
                 msg = "repos must contain non-empty slug strings"
                 raise ValueError(msg)
-            return stripped
+            return list(dict.fromkeys(stripped))
         return v
 
 
