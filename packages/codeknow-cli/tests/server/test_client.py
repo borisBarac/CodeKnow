@@ -182,13 +182,57 @@ def test_add_submit_and_poll_success(
     assert result.status == "succeeded"
     assert result.slug == "org-repo"
     assert result.node_count == 10
+    assert mock_post.call_args.kwargs["json"] == {
+        "github_ssh_url": "git@github.com:org/repo.git",
+        "force_rebuild": False,
+        "fetch_remote": True,
+    }
+
+
+@patch("codeknow_cli.client.httpx.get")
+@patch("codeknow_cli.client.httpx.post")
+def test_build_options_are_submitted(
+    mock_post: MagicMock,
+    mock_get: MagicMock,
+) -> None:
+    c = _unit_client()
+    mock_post.return_value = _mock_post_response(
+        202, {"status": "queued", "slug": "org-repo"}
+    )
+    mock_get.return_value = _mock_post_response(
+        200, {"status": "succeeded", "slug": "org-repo"}
+    )
+
+    with patch("codeknow_cli.client.time.sleep"):
+        c.add_to_index(
+            "git@github.com:org/repo.git",
+            force_rebuild=True,
+            fetch_remote=False,
+        )
+
+    assert mock_post.call_args.kwargs["json"] == {
+        "github_ssh_url": "git@github.com:org/repo.git",
+        "force_rebuild": True,
+        "fetch_remote": False,
+    }
 
 
 @patch("codeknow_cli.client.httpx.post")
 def test_add_raises_on_409(mock_post: MagicMock) -> None:
     c = _unit_client()
     mock_post.return_value = _mock_post_response(409, {"detail": "conflict"})
-    with pytest.raises(RepoConflictError, match="already being built"):
+    with pytest.raises(RepoConflictError, match="conflict"):
+        c.add_to_index("git@github.com:org/repo.git")
+
+
+@patch("codeknow_cli.client.httpx.post")
+def test_add_preserves_repository_limit_message(mock_post: MagicMock) -> None:
+    c = _unit_client()
+    mock_post.return_value = _mock_post_response(
+        409, {"detail": "Repository limit of 5 reached"}
+    )
+
+    with pytest.raises(RepoConflictError, match="Repository limit of 5 reached"):
         c.add_to_index("git@github.com:org/repo.git")
 
 

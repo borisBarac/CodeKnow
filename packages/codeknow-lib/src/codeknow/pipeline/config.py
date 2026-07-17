@@ -56,6 +56,7 @@ class PipelineConfig:
     embed_base_url: str | None = None
     update: bool = True
     force_rebuild: bool = False
+    fetch_remote: bool = True
     chunk_size: int = 100
     chunk_overlap: int = 20
     generation_grace_seconds: int = 3600

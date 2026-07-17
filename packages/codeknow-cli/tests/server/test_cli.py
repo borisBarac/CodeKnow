@@ -6,7 +6,7 @@ import pytest
 from click.testing import CliRunner
 from code_know_api_client.models.list_repos_response import ListReposResponse
 from code_know_api_client.models.repo_metadata import RepoMetadata
-from codeknow_cli.client import Client, DeleteResult, SearchResult
+from codeknow_cli.client import BuildStatusResult, Client, DeleteResult, SearchResult
 from codeknow_cli.config import UserConfig
 from codeknow_cli.exceptions import ApiError, CodeknowError, RepoNotFoundError
 from codeknow_cli.main import cli
@@ -112,6 +112,51 @@ def test_add_command_shows_in_help(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
     assert "add" in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "force", "extra_args", "fetch"),
+    [
+        ("reindex", False, [], True),
+        ("reindex", False, ["--no-fetch"], False),
+        ("rebuild", True, [], True),
+        ("rebuild", True, ["--no-fetch"], False),
+    ],
+)
+@patch.object(Client, "add_to_index")
+@patch.object(Client, "list_repos")
+def test_rebuild_commands_submit_expected_options(
+    mock_list: MagicMock,
+    mock_add: MagicMock,
+    command: str,
+    force: bool,
+    extra_args: list[str],
+    fetch: bool,
+    runner: CliRunner,
+) -> None:
+    repo = RepoMetadata(
+        github_ssh_url="git@github.com:org/repo.git",
+        slug="org-repo",
+        commit_hash="old",
+        built_at="2025-01-01T00:00:00Z",
+        node_count=1,
+        edge_count=2,
+        community_count=1,
+    )
+    mock_list.return_value = ListReposResponse(
+        repos=[repo], total=1, page=1, page_size=50
+    )
+    mock_add.return_value = BuildStatusResult(
+        status="succeeded", slug="org-repo", commit_hash="new"
+    )
+
+    result = runner.invoke(cli, [command, "org-repo", *extra_args])
+
+    assert result.exit_code == 0
+    assert "Commit: new" in result.output
+    assert mock_add.call_args.args == ("git@github.com:org/repo.git",)
+    assert mock_add.call_args.kwargs["force_rebuild"] is force
+    assert mock_add.call_args.kwargs["fetch_remote"] is fetch
 
 
 def test_remove_command_shows_help(runner: CliRunner) -> None:

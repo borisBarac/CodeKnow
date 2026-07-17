@@ -76,6 +76,7 @@ class AppState:
 
 
 logger = logging.getLogger(__name__)
+_MAX_REPOSITORIES = 5
 
 
 async def _recover_periodically(
@@ -108,6 +109,7 @@ async def _run_build(
     redis_service: RedisService,
     facade: PipelineFacade,
     force_rebuild: bool = False,
+    fetch_remote: bool = True,
 ) -> None:
     """Run a single build to completion, updating its :class:`BuildJob`.
 
@@ -139,6 +141,7 @@ async def _run_build(
             facade.build,
             github_ssh_url,
             clean_first=force_rebuild,
+            fetch_remote=fetch_remote,
             progress_callback=on_progress,
         )
         job.status = "succeeded"
@@ -234,6 +237,17 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=409, detail="Build already in progress for this repo"
             )
+
+        if not facade.has_slug(slug):
+            indexed_count = facade.list_repos().total
+            new_builds = sum(
+                not facade.has_slug(in_flight_slug) for in_flight_slug in in_flight
+            )
+            if indexed_count + new_builds >= _MAX_REPOSITORIES:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Repository limit of {_MAX_REPOSITORIES} reached",
+                )
         in_flight.add(slug)
 
         try:
@@ -247,6 +261,7 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
                     redis_service=redis_service,
                     facade=facade,
                     force_rebuild=body.force_rebuild,
+                    fetch_remote=body.fetch_remote,
                 )
             )
             state.build_tasks.add(task)

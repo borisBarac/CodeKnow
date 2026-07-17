@@ -3,6 +3,7 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from codeknow.git_download import (
     GitChange,
     diff_changes,
@@ -10,6 +11,8 @@ from codeknow.git_download import (
     get_commit_hash,
     is_cloned,
 )
+from codeknow.pipeline.config import PipelineConfig
+from codeknow.pipeline.stages import resolve
 from git import Repo
 
 
@@ -97,6 +100,71 @@ def test_get_commit_hash_returns_none_for_non_git_directory(tmp_path: Path) -> N
     source_snapshot.mkdir()
 
     assert get_commit_hash(source_snapshot) is None
+
+
+def test_resolve_without_fetch_uses_cached_checkout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    remote = _make_local_remote(tmp_path)
+    checkout = tmp_path / "checkout"
+    download(str(remote), checkout)
+    repo_url = "git@github.com:owner/repo.git"
+    monkeypatch.setattr(
+        "codeknow.git_download.get_path",
+        lambda url, **_kwargs: checkout if url == repo_url else None,
+    )
+
+    resolved = resolve(PipelineConfig(repo_url=repo_url, fetch_remote=False))
+
+    assert resolved == checkout
+
+
+def test_resolve_without_fetch_recovers_and_registers_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_url = "git@github.com:owner/repo.git"
+    checkout = tmp_path / "owner-repo"
+    download(str(_make_local_remote(tmp_path)), checkout)
+    monkeypatch.setattr("codeknow.git_download.get_path", lambda *_args: None)
+
+    with patch("codeknow.git_download.register") as register:
+        resolved = resolve(
+            PipelineConfig(
+                repo_url=repo_url,
+                input_dir=tmp_path,
+                fetch_remote=False,
+            )
+        )
+
+    assert resolved == checkout
+    register.assert_called_once_with(repo_url, checkout)
+
+
+def test_resolve_without_fetch_rejects_invalid_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout = tmp_path / "owner-repo"
+    checkout.mkdir()
+    monkeypatch.setattr("codeknow.git_download.get_path", lambda *_args: None)
+    config = PipelineConfig(
+        repo_url="git@github.com:owner/repo.git",
+        input_dir=tmp_path,
+        fetch_remote=False,
+    )
+
+    with pytest.raises(FileNotFoundError, match="Cached checkout not found"):
+        resolve(config)
+
+
+def test_resolve_without_fetch_requires_cached_checkout(tmp_path: Path) -> None:
+    config = PipelineConfig(
+        repo_url="git@github.com:owner/missing.git",
+        input_dir=tmp_path,
+        fetch_remote=False,
+    )
+
+    with pytest.raises(FileNotFoundError, match="Cached checkout not found"):
+        resolve(config)
 
 
 def test_diff_changes_reads_real_nul_separated_git_output(tmp_path: Path) -> None:

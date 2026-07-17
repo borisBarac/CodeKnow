@@ -30,6 +30,8 @@ from codeknow_cli.server import get_backend
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from codeknow_cli.client import BuildStatusResult
+
 
 def _dir_size(path: Path) -> str:
     total = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
@@ -64,21 +66,7 @@ def cli() -> None:
     """Codeknow — code knowledge graph toolkit."""
 
 
-@cli.command()
-@click.argument("ssh_url")
-@requires_server
-def add(ssh_url: str) -> None:
-    """Add a GitHub repo to the index (by SSH URL)."""
-    client = Client()
-
-    def _on_progress(stage: str, percent: int, message: str) -> None:
-        label = stage or "building"
-        parts = f"[{label}] {percent}%"
-        if message:
-            parts = f"{parts} — {message}"
-        click.echo(f"\r\033[K{parts}", nl=False)
-
-    result = client.add_to_index(ssh_url, progress_callback=_on_progress)
+def _show_build_result(result: BuildStatusResult) -> None:
     click.echo()
     click.echo(f"Status: {result.status}")
     if result.slug:
@@ -91,6 +79,62 @@ def add(ssh_url: str) -> None:
         click.echo(f"Edges:  {result.edge_count}")
     if result.community_count is not None:
         click.echo(f"Communities: {result.community_count}")
+
+
+def _run_build(client: Client, ssh_url: str, *, force: bool, fetch: bool) -> None:
+    def _on_progress(stage: str, percent: int, message: str) -> None:
+        label = stage or "building"
+        parts = f"[{label}] {percent}%"
+        if message:
+            parts = f"{parts} — {message}"
+        click.echo(f"\r\033[K{parts}", nl=False)
+
+    result = client.add_to_index(
+        ssh_url,
+        progress_callback=_on_progress,
+        force_rebuild=force,
+        fetch_remote=fetch,
+    )
+    _show_build_result(result)
+
+
+def _repo_url(client: Client, slug: str) -> str:
+    for repo in client.list_repos().repos:
+        if repo.slug == slug:
+            return repo.github_ssh_url
+    msg = f"Repo with slug '{slug}' not found"
+    raise RepoNotFoundError(msg)
+
+
+@cli.command()
+@click.argument("ssh_url")
+@requires_server
+def add(ssh_url: str) -> None:
+    """Add a GitHub repo to the index (by SSH URL)."""
+    _run_build(Client(), ssh_url, force=False, fetch=True)
+
+
+def _rebuild_slug(slug: str, *, force: bool, fetch: bool) -> None:
+    client = Client()
+    _run_build(client, _repo_url(client, slug), force=force, fetch=fetch)
+
+
+@cli.command()
+@click.argument("slug")
+@click.option("--no-fetch", is_flag=True, help="Build the cached checkout as-is.")
+@requires_server
+def reindex(slug: str, no_fetch: bool) -> None:
+    """Incrementally reindex an existing repo."""
+    _rebuild_slug(slug, force=False, fetch=not no_fetch)
+
+
+@cli.command()
+@click.argument("slug")
+@click.option("--no-fetch", is_flag=True, help="Build the cached checkout as-is.")
+@requires_server
+def rebuild(slug: str, no_fetch: bool) -> None:
+    """Fully rebuild an existing repo and publish it atomically."""
+    _rebuild_slug(slug, force=True, fetch=not no_fetch)
 
 
 @cli.command()

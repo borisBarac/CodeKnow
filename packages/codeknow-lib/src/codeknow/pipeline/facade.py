@@ -98,6 +98,7 @@ class PipelineFacade:
         ssh_url: str,
         *,
         clean_first: bool = False,
+        fetch_remote: bool = True,
         progress_callback: Any = None,
     ) -> BuildResult:
         from codeknow.pipeline import PipelineConfig, run_pipeline
@@ -109,6 +110,7 @@ class PipelineFacade:
             input_dir=self.temp_dir,
             output_dir=self.graph_dir / slug,
             force_rebuild=clean_first,
+            fetch_remote=fetch_remote,
         )
 
         kwargs: dict[str, Any] = {}

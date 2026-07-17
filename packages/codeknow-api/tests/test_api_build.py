@@ -73,6 +73,105 @@ class TestBuildSubmit:
         del client.app.state.codeknow.build_jobs["owner-repo"]
         client.app.state.codeknow.builds_in_flight.discard("owner-repo")
 
+    def test_first_five_distinct_repositories_are_accepted(
+        self, client: TestClient
+    ) -> None:
+        from unittest.mock import Mock, patch
+
+        def fake_create_task(coro):
+            coro.close()
+            return Mock()
+
+        with patch("asyncio.create_task", side_effect=fake_create_task):
+            responses = [
+                client.post(
+                    "/v1/build",
+                    json={"github_ssh_url": f"git@github.com:owner/repo-{i}.git"},
+                )
+                for i in range(5)
+            ]
+
+        assert [response.status_code for response in responses] == [202] * 5
+
+    def test_sixth_distinct_repository_is_rejected(self, client: TestClient) -> None:
+        from unittest.mock import Mock, patch
+
+        state = client.app.state.codeknow
+        state.builds_in_flight.update(f"owner-repo-{i}" for i in range(5))
+
+        with patch("asyncio.create_task", return_value=Mock()):
+            response = client.post(
+                "/v1/build",
+                json={"github_ssh_url": "git@github.com:owner/repo-5.git"},
+            )
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Repository limit of 5 reached"
+
+    def test_existing_build_conflict_message_is_unchanged(
+        self, client: TestClient
+    ) -> None:
+        client.app.state.codeknow.builds_in_flight.add("owner-repo")
+
+        response = client.post(
+            "/v1/build",
+            json={"github_ssh_url": "git@github.com:owner/repo.git"},
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Build already in progress for this repo"
+
+    def test_rebuild_at_repository_limit_is_accepted(
+        self, client: TestClient, graph_dir: Path
+    ) -> None:
+        from unittest.mock import Mock, patch
+
+        for i in range(5):
+            repo_dir = graph_dir / f"owner-repo-{i}"
+            repo_dir.mkdir()
+            (repo_dir / "metadata.json").write_text(
+                '{"github_ssh_url":"git@github.com:owner/repo.git",'
+                f'"slug":"owner-repo-{i}","commit_hash":"abc",'
+                '"built_at":"2026-01-01T00:00:00Z","node_count":1,'
+                '"edge_count":1,"community_count":1}',
+                encoding="utf-8",
+            )
+
+        def fake_create_task(coro):
+            coro.close()
+            return Mock()
+
+        with patch("asyncio.create_task", side_effect=fake_create_task):
+            response = client.post(
+                "/v1/build",
+                json={"github_ssh_url": "git@github.com:owner/repo-0.git"},
+            )
+
+        assert response.status_code == 202
+
+    def test_in_flight_new_repository_consumes_slot(
+        self, client: TestClient, graph_dir: Path
+    ) -> None:
+        for i in range(4):
+            repo_dir = graph_dir / f"owner-indexed-{i}"
+            repo_dir.mkdir()
+            (repo_dir / "metadata.json").write_text(
+                '{"github_ssh_url":"git@github.com:owner/repo.git",'
+                f'"slug":"owner-indexed-{i}","commit_hash":"abc",'
+                '"built_at":"2026-01-01T00:00:00Z","node_count":1,'
+                '"edge_count":1,"community_count":1}',
+                encoding="utf-8",
+            )
+        client.app.state.codeknow.builds_in_flight.add("owner-building")
+
+        response = client.post(
+            "/v1/build",
+            json={"github_ssh_url": "git@github.com:owner/new.git"},
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Repository limit of 5 reached"
+
 
 class TestBuildStatus:
     def test_not_found_returns_404(self, client: TestClient) -> None:
