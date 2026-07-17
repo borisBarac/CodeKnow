@@ -111,7 +111,7 @@ def embed(
                 metadata.update(extra_metadata.get(chunk.vector_id, {}))
                 refreshed_metadata[chunk.vector_id] = metadata
         store.update_metadata(refreshed_metadata)
-        store.validate_ids(set(refreshed_metadata))
+        store.validate_records(refreshed_metadata)
     except Exception:
         store.drop_collection()
         raise

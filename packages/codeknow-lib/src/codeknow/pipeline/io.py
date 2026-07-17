@@ -237,9 +237,16 @@ def cleanup_generations(
                     encoding="utf-8",
                 )
                 continue
-            retired_time = datetime.fromisoformat(
-                retired_at.read_text(encoding="utf-8")
-            ).timestamp()
+            try:
+                retired_time = datetime.fromisoformat(
+                    retired_at.read_text(encoding="utf-8")
+                ).timestamp()
+            except (OSError, ValueError):
+                retired_at.write_text(
+                    datetime.now(timezone.utc).isoformat(),
+                    encoding="utf-8",
+                )
+                continue
             if retired_time > cutoff:
                 continue
         shutil.rmtree(directory)

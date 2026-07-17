@@ -269,19 +269,23 @@ def run_pipeline(
         and active_metadata is not None
     ):
         from codeknow.schemas import vector_ids_digest
-        from codeknow.vector.chroma import ChromaConfig, get_collection_ids
+        from codeknow.vector.chroma import ChromaConfig, get_collection_state
 
-        active_ids = get_collection_ids(
+        collection_state = get_collection_state(
             ChromaConfig(
                 host=config.chroma_host,
                 port=config.chroma_port,
                 collection_name=active.collection_name,
             )
         )
+        active_ids, records_usable = (
+            collection_state if collection_state is not None else (None, False)
+        )
         vector_count = active_metadata.get("vector_count")
         expected_digest = active_metadata.get("vector_ids_digest")
         if (
             active_ids is None
+            or not records_usable
             or vector_count is None
             or len(active_ids) != vector_count
             or expected_digest is None
@@ -324,7 +328,7 @@ def run_pipeline(
                 branch_name=branch_name,
             )
             if managed:
-                _cleanup_abandoned_collections(config)
+                _cleanup_old_generations(config)
             return result
         logger.warning("Active vector collection is incomplete; rebuilding")
         can_reuse = False

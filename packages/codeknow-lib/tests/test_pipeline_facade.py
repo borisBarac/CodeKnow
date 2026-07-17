@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import pytest
 from codeknow.schemas import ListReposResponse
 
 if TYPE_CHECKING:
@@ -181,7 +182,13 @@ class TestDelete:
         temp_dir.mkdir(parents=True)
 
         facade = PipelineFacade(graph_dir=tmp_path, temp_dir=tmp_path / "temp")
-        with patch("codeknow.pipeline.facade.PipelineFacade._make_store") as mock_store:
+        with (
+            patch(
+                "codeknow.vector.chroma.list_collection_names",
+                return_value=set(),
+            ),
+            patch("codeknow.pipeline.facade.PipelineFacade._make_store") as mock_store,
+        ):
             mock_store.return_value.delete_by_slug.return_value = 3
             result = facade.delete("del-repo")
 
@@ -189,6 +196,73 @@ class TestDelete:
         assert not temp_dir.exists()
         assert result.slug == "del-repo"
         assert result.chunks_deleted == 3
+
+    def test_delete_discovers_collection_when_metadata_is_corrupt(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from codeknow.pipeline.facade import PipelineFacade
+
+        slug_dir = tmp_path / "del-repo"
+        generation = slug_dir / "generations" / "broken"
+        generation.mkdir(parents=True)
+        (generation / "metadata.json").write_text("broken", encoding="utf-8")
+        stores: dict[str, MagicMock] = {}
+
+        def make_store(_slug: str, collection_name: str) -> MagicMock:
+            store = MagicMock()
+            store.delete_by_slug.return_value = (
+                2 if collection_name == "custom-generation" else 0
+            )
+            store.count.return_value = 0
+            stores[collection_name] = store
+            return store
+
+        facade = PipelineFacade(graph_dir=tmp_path)
+        with (
+            patch(
+                "codeknow.vector.chroma.list_collection_names",
+                return_value={"custom-generation", "unrelated"},
+            ),
+            patch.object(facade, "_make_store", side_effect=make_store),
+        ):
+            result = facade.delete("del-repo")
+
+        assert result.chunks_deleted == 2
+        stores["custom-generation"].drop_collection.assert_called_once()
+        stores["unrelated"].drop_collection.assert_not_called()
+        assert not slug_dir.exists()
+
+    def test_delete_continues_after_collection_failure_and_preserves_state(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from codeknow.pipeline.facade import PipelineFacade
+
+        slug_dir = tmp_path / "del-repo"
+        slug_dir.mkdir()
+        stores = {name: MagicMock() for name in ("first", "second")}
+        stores["first"].delete_by_slug.side_effect = RuntimeError("offline")
+        stores["second"].delete_by_slug.return_value = 1
+        stores["second"].count.return_value = 0
+        facade = PipelineFacade(graph_dir=tmp_path)
+
+        with (
+            patch(
+                "codeknow.vector.chroma.list_collection_names",
+                return_value=set(stores),
+            ),
+            patch.object(
+                facade,
+                "_make_store",
+                side_effect=lambda _slug, name: stores.get(name, MagicMock()),
+            ),
+            pytest.raises(RuntimeError, match="1 ChromaDB collection"),
+        ):
+            facade.delete("del-repo")
+
+        stores["second"].delete_by_slug.assert_called_once_with("del-repo")
+        assert slug_dir.exists()
 
     def test_cleanup_keeps_internal_lock_directory(self, tmp_path: Path) -> None:
         from codeknow.pipeline.facade import PipelineFacade

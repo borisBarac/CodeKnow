@@ -142,6 +142,26 @@ def test_cleanup_grace_starts_when_generation_is_retired(tmp_path: Path) -> None
     assert first.directory.exists()
 
 
+def test_cleanup_resets_corrupt_retirement_marker_and_continues(
+    tmp_path: Path,
+) -> None:
+    corrupt = _generation(tmp_path, "generation-1")
+    expired = _generation(tmp_path, "generation-2")
+    current = _generation(tmp_path, "generation-3")
+    publish_generation(tmp_path, current)
+    (corrupt.directory / "retired_at").write_text("broken", encoding="utf-8")
+    (expired.directory / "retired_at").write_text(
+        "2000-01-01T00:00:00+00:00",
+        encoding="utf-8",
+    )
+
+    removed = cleanup_generations(tmp_path, grace_seconds=60, keep=1)
+
+    assert removed == [(expired.generation_id, expired.collection_name)]
+    assert corrupt.directory.exists()
+    assert (corrupt.directory / "retired_at").read_text() != "broken"
+
+
 def test_searcher_loads_active_graph_and_collection(tmp_path: Path) -> None:
     inactive = _generation(tmp_path, "generation-1", collection_name="old")
     active = _generation(tmp_path, "generation-2", collection_name="active")

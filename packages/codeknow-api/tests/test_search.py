@@ -102,7 +102,7 @@ class TestSearchQueryValidation:
 
 
 class TestSearchBuildCollision:
-    def test_building_slug_returns_409(
+    def test_building_slug_uses_active_generation(
         self, client: TestClient, graph_dir: Path
     ) -> None:
         _seed_repo(graph_dir, "building-repo")
@@ -118,8 +118,7 @@ class TestSearchBuildCollision:
                 "/v1/search",
                 json={"query": "test", "repos": ["building-repo"]},
             )
-            assert resp.status_code == 409
-            assert "building-repo" in resp.json()["detail"]
+            assert resp.status_code == 200
         finally:
             del client.app.state.codeknow.build_jobs["building-repo"]
 
@@ -137,7 +136,7 @@ class TestSearchBuildCollision:
         finally:
             del client.app.state.codeknow.build_jobs["done-repo"]
 
-    def test_mix_building_and_done_reports_only_building(
+    def test_mix_building_and_done_remains_searchable(
         self, client: TestClient, graph_dir: Path
     ) -> None:
         _seed_repo(graph_dir, "done-repo")
@@ -157,9 +156,7 @@ class TestSearchBuildCollision:
                 "/v1/search",
                 json={"query": "test", "repos": ["done-repo", "building-repo"]},
             )
-            assert resp.status_code == 409
-            assert "building-repo" in resp.json()["detail"]
-            assert "done-repo" not in resp.json()["detail"]
+            assert resp.status_code == 200
         finally:
             del client.app.state.codeknow.build_jobs["done-repo"]
             del client.app.state.codeknow.build_jobs["building-repo"]

@@ -180,7 +180,7 @@ class TestEmbedStage:
         assert out.embed_stats["chunks_embedded"] == 2
         assert out.embed_stats["chunks_copied"] == 1
         target.update_metadata.assert_called_once()
-        target.validate_ids.assert_called_once()
+        target.validate_records.assert_called_once()
         mock_create_emb.assert_called_once()
 
     @patch("codeknow.pipeline.embed_stage.ChromaStore")
@@ -373,6 +373,60 @@ class TestChromaStoreExtraMetadata:
         assert metas["community_ids"] == "1,2"
         assert metas["slug"] == "owner-repo"
         assert metas["file"] == "auth.py"
+
+
+class TestChromaStoreValidation:
+    def test_validate_records_checks_complete_records_and_lookup(self):
+        from codeknow.vector.chroma import ChromaStore
+
+        collection = MagicMock()
+        collection.get.return_value = {
+            "ids": ["vector-1"],
+            "documents": ["source"],
+            "metadatas": [
+                {
+                    "file": "a.py",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "content_hash": "hash",
+                    "slug": "owner-repo",
+                }
+            ],
+            "embeddings": [[0.1, 0.2]],
+        }
+        collection.query.return_value = {"ids": [["vector-1"]]}
+        store = ChromaStore(embeddings=MagicMock())
+        store._collection = collection
+
+        store.validate_records(
+            {
+                "vector-1": {
+                    "file": "a.py",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "content_hash": "hash",
+                    "slug": "owner-repo",
+                }
+            }
+        )
+
+        collection.query.assert_called_once()
+
+    def test_validate_records_rejects_missing_embeddings(self):
+        from codeknow.vector.chroma import ChromaStore
+
+        collection = MagicMock()
+        collection.get.return_value = {
+            "ids": ["vector-1"],
+            "documents": ["source"],
+            "metadatas": [{}],
+            "embeddings": None,
+        }
+        store = ChromaStore(embeddings=MagicMock())
+        store._collection = collection
+
+        with pytest.raises(ValueError, match="incomplete records"):
+            store.validate_records({"vector-1": {}})
 
 
 class TestEmbedTexts:

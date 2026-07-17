@@ -280,18 +280,6 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
                     detail=f"Unknown slugs: {missing}",
                 )
 
-            building = [
-                s
-                for s in repos
-                if (job := state.build_jobs.get(s))
-                and job.status in ("queued", "running")
-            ]
-            if building:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Repos being rebuilt: {building}",
-                )
-
         try:
             result = await asyncio.to_thread(
                 facade.search,

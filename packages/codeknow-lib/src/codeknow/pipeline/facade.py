@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -149,6 +150,15 @@ class PipelineFacade:
 
     def _delete_unlocked(self, slug: str) -> DeleteResult:
         collection_names: set[str] = {f"codeknow_{slug}"}
+        pointer_path = self.slug_dir(slug) / "current.json"
+        try:
+            pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+            for key in ("collection_name", "previous_collection_name"):
+                if name := pointer.get(key):
+                    collection_names.add(name)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+
         generations = self.slug_dir(slug) / "generations"
         if generations.is_dir():
             from codeknow.pipeline import load_metadata
@@ -166,19 +176,36 @@ class PipelineFacade:
                 if metadata and metadata.get("collection_name"):
                     collection_names.add(metadata["collection_name"])
 
-        shutil.rmtree(self.slug_dir(slug), ignore_errors=True)
-        shutil.rmtree(self.temp_dir / slug, ignore_errors=True)
+        from codeknow.vector.chroma import ChromaConfig, list_collection_names
+
+        listed_names = list_collection_names(ChromaConfig())
+        names_to_scan = collection_names | (listed_names or set())
 
         chunks_deleted = 0
-        try:
-            for collection_name in collection_names:
+        failures: list[str] = []
+        for collection_name in names_to_scan:
+            try:
                 store = self._make_store(slug, collection_name)
-                chunks_deleted += store.delete_by_slug(slug)
-                store.drop_collection()
-        except Exception:
-            logger.warning(
-                "ChromaDB deletion failed for slug '%s'", slug, exc_info=True
-            )
+                deleted = store.delete_by_slug(slug)
+                chunks_deleted += deleted
+                if collection_name in collection_names or (
+                    deleted and store.count() == 0
+                ):
+                    store.drop_collection()
+            except Exception:  # noqa: PERF203 - isolate each collection failure
+                failures.append(collection_name)
+                logger.warning(
+                    "ChromaDB deletion failed for slug '%s' collection '%s'",
+                    slug,
+                    collection_name,
+                    exc_info=True,
+                )
+        if failures:
+            msg = f"Failed to delete {len(failures)} ChromaDB collection(s)"
+            raise RuntimeError(msg)
+
+        shutil.rmtree(self.slug_dir(slug), ignore_errors=True)
+        shutil.rmtree(self.temp_dir / slug, ignore_errors=True)
 
         url = self.resolve_url_for_slug(slug)
         if url:
