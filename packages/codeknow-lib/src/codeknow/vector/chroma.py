@@ -101,8 +101,11 @@ def get_collection_ids(config: ChromaConfig) -> set[str] | None:
         return None
 
 
-def get_collection_state(config: ChromaConfig) -> tuple[set[str], bool] | None:
-    """Return IDs and whether every stored record is usable."""
+def validate_collection_records(
+    config: ChromaConfig,
+    expected_metadata: dict[str, dict[str, Any]],
+) -> bool:
+    """Return whether a collection exactly matches a usable vector snapshot."""
     try:
         client = chromadb.HttpClient(
             host=config.resolved_host(),
@@ -112,23 +115,58 @@ def get_collection_state(config: ChromaConfig) -> tuple[set[str], bool] | None:
             database=config.database,
         )
         collection = client.get_collection(name=config.collection_name)
-        records = collection.get(include=["documents", "metadatas", "embeddings"])
-        ids = records.get("ids", []) or []
-        documents = records.get("documents", []) or []
-        metadatas = records.get("metadatas", []) or []
-        embeddings = records.get("embeddings")
-        required = {"file", "start_line", "end_line", "content_hash", "slug"}
-        usable = len(documents) == len(ids) and len(metadatas) == len(ids)
-        usable = usable and embeddings is not None and len(embeddings) == len(ids)
-        for index in range(len(ids)):
-            metadata = metadatas[index] or {}
-            embedding = embeddings[index] if embeddings is not None else None
-            usable = usable and bool(documents[index])
-            usable = usable and required.issubset(metadata)
-            usable = usable and embedding is not None and len(embedding) > 0
-        return set(ids), usable
+        _validate_collection_records(collection, expected_metadata)
     except Exception:
-        return None
+        return False
+    return True
+
+
+def _validate_collection_records(
+    collection: Collection,
+    expected_metadata: dict[str, dict[str, Any]],
+) -> None:
+    records = collection.get(include=["documents", "metadatas", "embeddings"])
+    actual = set(records.get("ids", []) or [])
+    expected_ids = set(expected_metadata)
+    if actual != expected_ids:
+        missing = expected_ids - actual
+        extra = actual - expected_ids
+        msg = f"Vector validation failed: {len(missing)} missing, {len(extra)} extra"
+        raise ValueError(msg)
+    ids = records.get("ids", []) or []
+    documents = records.get("documents", []) or []
+    metadatas = records.get("metadatas", []) or []
+    embeddings = records.get("embeddings")
+    if (
+        len(documents) != len(ids)
+        or len(metadatas) != len(ids)
+        or embeddings is None
+        or len(embeddings) != len(ids)
+    ):
+        msg = "Vector validation failed: incomplete records"
+        raise ValueError(msg)
+    by_id = {item: index for index, item in enumerate(ids)}
+    for vector_id, expected in expected_metadata.items():
+        index = by_id[vector_id]
+        metadata = metadatas[index] or {}
+        embedding = embeddings[index]
+        if not documents[index] or embedding is None or len(embedding) == 0:
+            msg = f"Vector validation failed: unusable record {vector_id}"
+            raise ValueError(msg)
+        if metadata != expected:
+            msg = f"Vector validation failed: wrong metadata {vector_id}"
+            raise ValueError(msg)
+    if ids:
+        first_embedding: list[float] = [float(value) for value in embeddings[0]]
+        lookup = collection.query(
+            query_embeddings=[first_embedding],
+            n_results=1,
+            include=["metadatas"],
+        )
+        found = lookup.get("ids", [[]])
+        if not found or not found[0]:
+            msg = "Vector validation failed: lookup returned no records"
+            raise ValueError(msg)
 
 
 def list_collection_names(config: ChromaConfig) -> set[str] | None:
@@ -221,15 +259,20 @@ class ChromaStore:
             return False
         return True
 
-    def drop_collection(self) -> None:
+    def drop_collection(self, *, strict: bool = False) -> None:
         """Delete the underlying Chroma collection and reset cached refs.
 
         Safe to call when the collection does not exist.
         """
-        with contextlib.suppress(Exception):
+        if strict:
             self._get_client().delete_collection(  # type: ignore[attr-defined]
                 name=self._config.collection_name
             )
+        else:
+            with contextlib.suppress(Exception):
+                self._get_client().delete_collection(  # type: ignore[attr-defined]
+                    name=self._config.collection_name
+                )
         self._collection = None
 
     def copy_from(
@@ -277,51 +320,10 @@ class ChromaStore:
         expected_metadata: dict[str, dict[str, Any]],
     ) -> None:
         """Validate IDs, documents, metadata, embeddings, and vector lookup."""
-        collection = self._get_or_create_collection()
-        records = collection.get(include=["documents", "metadatas", "embeddings"])
-        actual = set(records.get("ids", []) or [])
-        expected_ids = set(expected_metadata)
-        if actual != expected_ids:
-            missing = expected_ids - actual
-            extra = actual - expected_ids
-            msg = (
-                f"Vector validation failed: {len(missing)} missing, {len(extra)} extra"
-            )
-            raise ValueError(msg)
-        ids = records.get("ids", []) or []
-        documents = records.get("documents", []) or []
-        metadatas = records.get("metadatas", []) or []
-        embeddings = records.get("embeddings")
-        if (
-            len(documents) != len(ids)
-            or len(metadatas) != len(ids)
-            or embeddings is None
-            or len(embeddings) != len(ids)
-        ):
-            msg = "Vector validation failed: incomplete records"
-            raise ValueError(msg)
-        by_id = {item: index for index, item in enumerate(ids)}
-        for vector_id, expected in expected_metadata.items():
-            index = by_id[vector_id]
-            metadata = metadatas[index] or {}
-            embedding = embeddings[index]
-            if not documents[index] or embedding is None or len(embedding) == 0:
-                msg = f"Vector validation failed: unusable record {vector_id}"
-                raise ValueError(msg)
-            if any(metadata.get(key) != value for key, value in expected.items()):
-                msg = f"Vector validation failed: wrong metadata {vector_id}"
-                raise ValueError(msg)
-        if ids:
-            first_embedding: list[float] = [float(value) for value in embeddings[0]]
-            lookup = collection.query(
-                query_embeddings=[first_embedding],
-                n_results=1,
-                include=["metadatas"],
-            )
-            found = lookup.get("ids", [[]])
-            if not found or not found[0]:
-                msg = "Vector validation failed: lookup returned no records"
-                raise ValueError(msg)
+        _validate_collection_records(
+            self._get_or_create_collection(),
+            expected_metadata,
+        )
 
     # ------------------------------------------------------------------
     # VectorStore protocol methods

@@ -118,6 +118,30 @@ class TestExtractorJS:
 
 
 class TestExtractorDiscovery:
+    def test_node_ids_do_not_depend_on_selected_file_list(self, tmp_path: Path) -> None:
+        first = tmp_path / "first.py"
+        second = tmp_path / "second.py"
+        first.write_text("class First:\n    pass\n", encoding="utf-8")
+        second.write_text("class Second:\n    pass\n", encoding="utf-8")
+        extractor = Extractor(use_cache=False)
+
+        selected = extractor.extract_from_discovery(
+            {"files": {"code": [str(first)]}},
+            repo_root=tmp_path,
+        )
+        complete = extractor.extract_from_discovery(
+            {"files": {"code": [str(first), str(second)]}},
+            repo_root=tmp_path,
+        )
+
+        selected_ids = {node["id"] for node in selected["nodes"]}
+        complete_first_ids = {
+            node["id"]
+            for node in complete["nodes"]
+            if node.get("source_file") == "first.py"
+        }
+        assert selected_ids == complete_first_ids
+
     def test_skips_sensitive_files(self, tmp_path: Path) -> None:
         (tmp_path / ".env").write_text("SECRET=abc\n")
         (tmp_path / "main.py").write_text("class Safe:\n    pass\n")

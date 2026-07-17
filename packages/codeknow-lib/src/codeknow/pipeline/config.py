@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-INDEX_SCHEMA_VERSION = 2
+INDEX_SCHEMA_VERSION = 3
 EXTRACTION_CACHE_VERSION = 2
 
 _CODEKNOW_HOME = Path.home() / ".codeknow"

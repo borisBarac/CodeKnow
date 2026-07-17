@@ -67,3 +67,18 @@ def test_vector_id_is_serialized_in_chunk_map_records() -> None:
     chunk = Chunk(file="src/main.py", start_line=1, end_line=2, hash="c" * 64)
 
     assert chunk.model_dump()["vector_id"] == chunk.vector_id
+
+
+def test_extraction_cache_version_changes_file_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import codeknow.cache.hash as cache_hash
+
+    source = tmp_path / "main.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    original = cache_hash.file_hash(source, tmp_path)
+
+    monkeypatch.setattr(cache_hash, "EXTRACTION_CACHE_VERSION", 999)
+
+    assert cache_hash.file_hash(source, tmp_path) != original

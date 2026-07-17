@@ -8,6 +8,35 @@ if TYPE_CHECKING:
     from codeknow.pipeline import PipelineResult
 
 
+def build_vector_metadata(
+    result: PipelineResult,
+    *,
+    check_content: bool = True,
+) -> dict[str, dict[str, Any]]:
+    """Return the complete expected metadata for every embedded chunk."""
+    from codeknow.vector.embeddings import read_chunk_content
+
+    extra_metadata = build_chunk_metadata(result)
+    metadata: dict[str, dict[str, Any]] = {}
+    for chunks in result.chunk_map.values():
+        for chunk in chunks:
+            if (
+                check_content
+                and not read_chunk_content(chunk, result.repo_root).strip()
+            ):
+                continue
+            record = {
+                "file": chunk.file,
+                "start_line": chunk.start_line,
+                "end_line": chunk.end_line,
+                "content_hash": chunk.hash,
+                "slug": result.config.slug,
+            }
+            record.update(extra_metadata.get(chunk.vector_id, {}))
+            metadata[chunk.vector_id] = record
+    return metadata
+
+
 def build_chunk_metadata(result: PipelineResult) -> dict[str, dict[str, Any]]:
     reverse = build_reverse_index(result.graph)
 

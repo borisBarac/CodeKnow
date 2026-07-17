@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from networkx.readwrite import json_graph as _jg
 
+from codeknow.pipeline.config import INDEX_SCHEMA_VERSION
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -90,7 +92,7 @@ def save_metadata(result: PipelineResult) -> Path:
         "node_count": result.graph.number_of_nodes(),
         "edge_count": result.graph.number_of_edges(),
         "community_count": len(result.communities),
-        "schema_version": 2,
+        "schema_version": INDEX_SCHEMA_VERSION,
         "build_fingerprint": cfg.build_fingerprint(),
         "branch": result.branch_name,
         "generation_id": result.generation_id,
@@ -99,10 +101,10 @@ def save_metadata(result: PipelineResult) -> Path:
         "chunk_map_filename": cfg.chunk_map_filename,
     }
     if result.embed_stats is not None:
-        metadata["vector_count"] = result.embed_stats.get(
-            "chunks_embedded", 0
-        ) + result.embed_stats.get("chunks_copied", 0)
+        vector_ids = result.embed_stats.get("vector_ids", [])
+        metadata["vector_count"] = len(vector_ids)
         metadata["vector_ids_digest"] = result.embed_stats.get("vector_ids_digest")
+        metadata["vector_ids"] = vector_ids
     path = out / "metadata.json"
     path.write_text(
         json.dumps(metadata, indent=2, ensure_ascii=False),

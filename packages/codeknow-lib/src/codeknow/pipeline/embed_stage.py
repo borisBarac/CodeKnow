@@ -5,13 +5,12 @@ import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from codeknow.pipeline.metadata import build_chunk_metadata
+from codeknow.pipeline.metadata import build_chunk_metadata, build_vector_metadata
 from codeknow.schemas import vector_ids_digest
 from codeknow.vector.chroma import ChromaConfig, ChromaStore
 from codeknow.vector.embeddings import (
     EmbeddingConfig,
     create_embeddings,
-    read_chunk_content,
 )
 
 if TYPE_CHECKING:
@@ -96,20 +95,7 @@ def embed(
             on_progress=on_progress,
             repo_root=result.repo_root,
         )
-        refreshed_metadata: dict[str, dict[str, Any]] = {}
-        for chunks in result.chunk_map.values():
-            for chunk in chunks:
-                if not read_chunk_content(chunk, result.repo_root).strip():
-                    continue
-                metadata = {
-                    "file": chunk.file,
-                    "start_line": chunk.start_line,
-                    "end_line": chunk.end_line,
-                    "content_hash": chunk.hash,
-                    "slug": slug,
-                }
-                metadata.update(extra_metadata.get(chunk.vector_id, {}))
-                refreshed_metadata[chunk.vector_id] = metadata
+        refreshed_metadata = build_vector_metadata(result)
         store.update_metadata(refreshed_metadata)
         store.validate_records(refreshed_metadata)
     except Exception:
@@ -121,6 +107,7 @@ def embed(
         "chunks_embedded": stored,
         "chunks_copied": copied,
         "vector_ids_digest": vector_ids_digest(set(refreshed_metadata)),
+        "vector_ids": sorted(refreshed_metadata),
         "provider": config.embed_provider,
         "model": config.embed_model,
         "batch_size": config.embed_batch_size,

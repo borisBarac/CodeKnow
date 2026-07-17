@@ -150,6 +150,7 @@ class PipelineFacade:
 
     def _delete_unlocked(self, slug: str) -> DeleteResult:
         collection_names: set[str] = {f"codeknow_{slug}"}
+        generation_ids: set[str] = set()
         pointer_path = self.slug_dir(slug) / "current.json"
         try:
             pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
@@ -164,6 +165,7 @@ class PipelineFacade:
             from codeknow.pipeline import load_metadata
 
             for generation in generations.iterdir():
+                generation_ids.add(generation.name)
                 try:
                     metadata = load_metadata(generation)
                 except Exception:
@@ -179,10 +181,19 @@ class PipelineFacade:
         from codeknow.vector.chroma import ChromaConfig, list_collection_names
 
         listed_names = list_collection_names(ChromaConfig())
-        names_to_scan = collection_names | (listed_names or set())
+        if listed_names is None:
+            msg = "Could not enumerate ChromaDB collections"
+            raise RuntimeError(msg)
+        for name in listed_names:
+            if any(
+                name.endswith(f"_{generation_id}") for generation_id in generation_ids
+            ):
+                collection_names.add(name)
+        names_to_scan = listed_names
 
         chunks_deleted = 0
         failures: list[str] = []
+        dropped_names: set[str] = set()
         for collection_name in names_to_scan:
             try:
                 store = self._make_store(slug, collection_name)
@@ -191,7 +202,8 @@ class PipelineFacade:
                 if collection_name in collection_names or (
                     deleted and store.count() == 0
                 ):
-                    store.drop_collection()
+                    store.drop_collection(strict=True)
+                    dropped_names.add(collection_name)
             except Exception:  # noqa: PERF203 - isolate each collection failure
                 failures.append(collection_name)
                 logger.warning(
@@ -200,6 +212,11 @@ class PipelineFacade:
                     collection_name,
                     exc_info=True,
                 )
+        remaining_names = list_collection_names(ChromaConfig())
+        if remaining_names is None:
+            failures.append("<collection verification>")
+        else:
+            failures.extend(sorted(dropped_names & remaining_names))
         if failures:
             msg = f"Failed to delete {len(failures)} ChromaDB collection(s)"
             raise RuntimeError(msg)
@@ -236,6 +253,50 @@ class PipelineFacade:
                 if child.is_dir() and not child.name.startswith("."):
                     results.append(self.delete(child.name))
         return results
+
+    def recover(self) -> None:
+        """Clean abandoned generations and collections for every known slug."""
+        if not self.graph_dir.is_dir():
+            return
+        from codeknow.pipeline import PipelineConfig, load_metadata
+        from codeknow.pipeline.runner import _cleanup_old_generations
+
+        for directory in sorted(self.graph_dir.iterdir()):
+            if not directory.is_dir() or directory.name.startswith("."):
+                continue
+            try:
+                metadata = load_metadata(directory) or {}
+            except Exception:
+                metadata = {}
+            if not metadata.get("collection_name"):
+                generations = directory / "generations"
+                if generations.is_dir():
+                    for candidate in sorted(generations.iterdir(), reverse=True):
+                        try:
+                            candidate_metadata = json.loads(
+                                (candidate / "metadata.json").read_text(
+                                    encoding="utf-8"
+                                )
+                            )
+                        except (FileNotFoundError, json.JSONDecodeError):
+                            continue
+                        if candidate_metadata.get("collection_name"):
+                            metadata = candidate_metadata
+                            break
+            generation_id = metadata.get("generation_id")
+            collection_name = metadata.get("collection_name")
+            collection_base = None
+            if generation_id and collection_name:
+                suffix = f"_{generation_id}"
+                if collection_name.endswith(suffix):
+                    collection_base = collection_name.removesuffix(suffix)
+            config = PipelineConfig(
+                repo_url=metadata.get("github_ssh_url", directory.name),
+                output_dir=directory,
+                chroma_collection=collection_base,
+            )
+            with self._build_lock(directory.name):
+                _cleanup_old_generations(config)
 
     def list_repos(
         self,

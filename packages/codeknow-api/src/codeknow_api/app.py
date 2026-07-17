@@ -158,6 +158,7 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        await asyncio.to_thread(facade.recover)
         yield
         await redis_service.close()
 

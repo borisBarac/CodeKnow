@@ -166,31 +166,6 @@ def _cleanup_abandoned_collections(config: PipelineConfig) -> None:
         delete_collection(chroma.model_copy(update={"collection_name": name}))
 
 
-def _collection_matches(
-    config: PipelineConfig,
-    collection_name: str,
-    chunk_map: dict,
-    root: Path,
-) -> bool:
-    from codeknow.vector.chroma import ChromaConfig, get_collection_ids
-    from codeknow.vector.embeddings import read_chunk_content
-
-    expected = {
-        chunk.vector_id
-        for chunks in chunk_map.values()
-        for chunk in chunks
-        if read_chunk_content(chunk, root).strip()
-    }
-    actual = get_collection_ids(
-        ChromaConfig(
-            host=config.chroma_host,
-            port=config.chroma_port,
-            collection_name=collection_name,
-        )
-    )
-    return actual == expected
-
-
 def run_pipeline(
     config: PipelineConfig,
     *,
@@ -262,48 +237,76 @@ def run_pipeline(
         and commit_hash
         and commit_exists(root, old_commit)
     )
+    active_graph = None
+    prior_chunk_map = None
     if (
         can_reuse
         and not config.no_embed
         and active is not None
         and active_metadata is not None
     ):
+        from codeknow.pipeline.metadata import build_vector_metadata
         from codeknow.schemas import vector_ids_digest
-        from codeknow.vector.chroma import ChromaConfig, get_collection_state
-
-        collection_state = get_collection_state(
-            ChromaConfig(
-                host=config.chroma_host,
-                port=config.chroma_port,
-                collection_name=active.collection_name,
-            )
+        from codeknow.vector.chroma import (
+            ChromaConfig,
+            validate_collection_records,
         )
-        active_ids, records_usable = (
-            collection_state if collection_state is not None else (None, False)
+
+        try:
+            active_graph = load_graph(active.directory / active.graph_filename)
+            prior_chunk_map = load_chunk_map(
+                active.directory / active.chunk_map_filename
+            )
+            active_communities = communities_from_graph(active_graph)
+            prior_result = PipelineResult(
+                graph=active_graph,
+                communities=active_communities,
+                chunk_map=prior_chunk_map,
+                discovery={},
+                stats={},
+                config=config,
+                commit_hash=old_commit,
+                repo_root=root,
+            )
+            all_metadata = build_vector_metadata(
+                prior_result,
+                check_content=False,
+            )
+            stored_ids = active_metadata.get("vector_ids")
+            if not isinstance(stored_ids, list) or any(
+                not isinstance(item, str) for item in stored_ids
+            ):
+                expected_metadata = {}
+                can_reuse = False
+            else:
+                expected_metadata = {
+                    vector_id: all_metadata[vector_id] for vector_id in stored_ids
+                }
+        except (FileNotFoundError, KeyError, ValueError):
+            expected_metadata = {}
+            can_reuse = False
+        chroma_config = ChromaConfig(
+            host=config.chroma_host,
+            port=config.chroma_port,
+            collection_name=active.collection_name,
         )
         vector_count = active_metadata.get("vector_count")
         expected_digest = active_metadata.get("vector_ids_digest")
-        if (
-            active_ids is None
-            or not records_usable
-            or vector_count is None
-            or len(active_ids) != vector_count
-            or expected_digest is None
-            or vector_ids_digest(active_ids) != expected_digest
+        expected_ids = set(expected_metadata)
+        if can_reuse and (
+            vector_count != len(expected_ids)
+            or expected_digest != vector_ids_digest(expected_ids)
+            or not validate_collection_records(chroma_config, expected_metadata)
         ):
             logger.warning("Active vector collection is incomplete; rebuilding")
             can_reuse = False
 
     if can_reuse and old_commit == commit_hash and active is not None:
-        graph = load_graph(active.directory / active.graph_filename)
-        chunk_map = load_chunk_map(active.directory / active.chunk_map_filename)
-        collection_ok = config.no_embed or _collection_matches(
-            config,
-            active.collection_name,
-            chunk_map,
-            root,
+        graph = active_graph or load_graph(active.directory / active.graph_filename)
+        chunk_map = prior_chunk_map or load_chunk_map(
+            active.directory / active.chunk_map_filename
         )
-        if collection_ok:
+        if config.no_embed or active_graph is not None:
             communities = communities_from_graph(graph)
             stats = {
                 "nodes": graph.number_of_nodes(),
@@ -330,8 +333,6 @@ def run_pipeline(
             if managed:
                 _cleanup_old_generations(config)
             return result
-        logger.warning("Active vector collection is incomplete; rebuilding")
-        can_reuse = False
 
     if managed:
         _cleanup_old_generations(config)
@@ -356,11 +357,8 @@ def run_pipeline(
     G = _build(extractions)
     _progress(progress_callback, 3)
 
-    prior_chunk_map = (
-        load_chunk_map(active.directory / active.chunk_map_filename)
-        if can_reuse and active
-        else None
-    )
+    if prior_chunk_map is None and can_reuse and active:
+        prior_chunk_map = load_chunk_map(active.directory / active.chunk_map_filename)
     changed_paths: frozenset[str] | None = None
     if can_reuse and old_commit and commit_hash and prior_chunk_map is not None:
         git_changed: set[str] = set()

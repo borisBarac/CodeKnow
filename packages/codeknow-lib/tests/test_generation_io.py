@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import TYPE_CHECKING
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import networkx as nx
@@ -18,9 +18,6 @@ from codeknow.pipeline.io import (
 from codeknow.pipeline.runner import _cleanup_abandoned_collections
 from codeknow.vector.search import GraphSearcher
 from networkx.readwrite import json_graph
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _generation(
@@ -89,6 +86,22 @@ def test_failed_publish_keeps_old_pointer(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match="Incomplete generation"):
         publish_generation(tmp_path, incomplete)
+
+    assert (tmp_path / "current.json").read_bytes() == pointer_before
+    assert load_current(tmp_path) == current
+
+
+def test_pointer_replace_failure_keeps_old_complete_generation(tmp_path: Path) -> None:
+    current = _generation(tmp_path, "generation-1")
+    staging = _generation(tmp_path, "generation-2")
+    publish_generation(tmp_path, current)
+    pointer_before = (tmp_path / "current.json").read_bytes()
+
+    with (
+        patch.object(Path, "replace", side_effect=OSError("replace failed")),
+        pytest.raises(OSError, match="replace failed"),
+    ):
+        publish_generation(tmp_path, staging)
 
     assert (tmp_path / "current.json").read_bytes() == pointer_before
     assert load_current(tmp_path) == current

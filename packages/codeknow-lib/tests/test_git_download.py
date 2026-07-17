@@ -3,7 +3,13 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from codeknow.git_download import diff_changes, download, get_commit_hash, is_cloned
+from codeknow.git_download import (
+    GitChange,
+    diff_changes,
+    download,
+    get_commit_hash,
+    is_cloned,
+)
 from git import Repo
 
 
@@ -80,6 +86,10 @@ def test_download_pulls_existing(tmp_path: Path) -> None:
     repo.index.commit("add file")
     download(str(remote), target)
     assert (target / "new.txt").exists()
+    clone = Repo(target)
+    assert clone.head.is_detached
+    assert clone.head.commit.hexsha == repo.head.commit.hexsha
+    assert len(clone.head.commit.parents) == 1
 
 
 def test_get_commit_hash_returns_none_for_non_git_directory(tmp_path: Path) -> None:
@@ -118,6 +128,29 @@ def test_diff_changes_reads_real_nul_separated_git_output(tmp_path: Path) -> Non
     assert any(
         change.status == "M" and change.path == modified.name for change in changes
     )
+
+
+def test_diff_changes_supports_diverged_forced_push_history(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = root / "main.py"
+    source.write_text("base\n", encoding="utf-8")
+    repo = Repo.init(root)
+    repo.index.add([source.name])
+    base = repo.index.commit("base")
+
+    source.write_text("old history\n", encoding="utf-8")
+    repo.index.add([source.name])
+    old_sha = repo.index.commit("old head").hexsha
+
+    repo.git.checkout("--detach", base.hexsha)
+    source.write_text("rewritten history\n", encoding="utf-8")
+    repo.index.add([source.name])
+    new_sha = repo.index.commit("new forced head").hexsha
+
+    changes = diff_changes(root, old_sha, new_sha)
+
+    assert changes == [GitChange("M", "main.py")]
 
 
 def test_fetch_refreshes_changed_remote_default_branch(tmp_path: Path) -> None:

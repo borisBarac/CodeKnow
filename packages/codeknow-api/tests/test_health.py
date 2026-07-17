@@ -17,6 +17,15 @@ def client() -> TestClient:
 
 
 class TestHealthEndpoint:
+    def test_startup_recovers_abandoned_generations(self) -> None:
+        with (
+            patch("codeknow.pipeline.facade.PipelineFacade.recover") as recover,
+            TestClient(create_app()),
+        ):
+            pass
+
+        recover.assert_called_once_with()
+
     def test_returns_200_when_imports_succeed(self, client: TestClient) -> None:
         resp = client.get("/health")
         assert resp.status_code == 200
