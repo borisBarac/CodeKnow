@@ -235,6 +235,45 @@ def test_rename_drops_old_path_and_adds_new_path(tmp_path: Path) -> None:
     assert result.changed_paths == frozenset({"old.py", "new.py"})
 
 
+def test_copy_only_marks_destination_as_changed(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    output = tmp_path / "graph"
+    root.mkdir()
+    source = root / "source.py"
+    copied = root / "copied.py"
+    source.write_text("value\n", encoding="utf-8")
+    config = PipelineConfig(
+        repo_url="https://github.com/owner/repo",
+        output_dir=output,
+        no_embed=True,
+    )
+    with (
+        patch("codeknow.pipeline.runner.get_commit_hash", return_value="old"),
+        patch("codeknow.pipeline.runner.get_remote_branch", return_value="main"),
+    ):
+        _run(config, root, _discovery(source), _extraction({"source.py": ["value"]}))
+
+    copied.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    with (
+        patch("codeknow.pipeline.runner.get_commit_hash", return_value="new"),
+        patch("codeknow.pipeline.runner.get_remote_branch", return_value="main"),
+        patch("codeknow.pipeline.runner.commit_exists", return_value=True),
+        patch(
+            "codeknow.pipeline.runner.diff_changes",
+            return_value=[GitChange("C", "copied.py", "source.py")],
+        ),
+    ):
+        result = _run(
+            config,
+            root,
+            _discovery(source, copied),
+            _extraction({"source.py": ["value"], "copied.py": ["value"]}),
+        )
+
+    assert set(result.chunk_map) == {"source.py", "copied.py"}
+    assert result.changed_paths == frozenset({"copied.py"})
+
+
 def test_changed_import_rebuilds_edges_to_unchanged_files(tmp_path: Path) -> None:
     def build_with_edges(extractions: list[dict]) -> nx.Graph:
         graph = _build(extractions)
@@ -333,6 +372,44 @@ def test_same_commit_returns_active_generation_without_pipeline_writes(
     assert (output / "current.json").read_bytes() == pointer_before
     detect.assert_not_called()
     cleanup.assert_not_called()
+
+
+def test_successful_build_cleans_generations_after_publish(tmp_path: Path) -> None:
+    from codeknow.pipeline.io import save_pipeline_result
+
+    root = tmp_path / "repo"
+    output = tmp_path / "graph"
+    root.mkdir()
+    source = root / "main.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    config = PipelineConfig(
+        repo_url="https://github.com/owner/repo",
+        output_dir=output,
+        no_embed=True,
+    )
+    events: list[str] = []
+
+    def save(result):
+        events.append("publish")
+        return save_pipeline_result(result)
+
+    with (
+        patch("codeknow.pipeline.runner.get_commit_hash", return_value="commit"),
+        patch("codeknow.pipeline.runner.get_remote_branch", return_value="main"),
+        patch(
+            "codeknow.pipeline.runner._cleanup_old_generations",
+            side_effect=lambda _config: events.append("cleanup"),
+        ),
+        patch("codeknow.pipeline.runner.save_pipeline_result", side_effect=save),
+    ):
+        _run(
+            config,
+            root,
+            _discovery(source),
+            _extraction({"main.py": ["value"]}),
+        )
+
+    assert events == ["cleanup", "publish", "cleanup"]
 
 
 def test_failed_incremental_embedding_keeps_active_generation(tmp_path: Path) -> None:

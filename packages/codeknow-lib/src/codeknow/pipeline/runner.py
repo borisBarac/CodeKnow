@@ -361,7 +361,7 @@ def _run_pipeline_unlocked(
         git_changed: set[str] = set()
         for change in diff_changes(root, old_commit, commit_hash):
             git_changed.add(repository_path(change.path, root))
-            if change.old_path is not None:
+            if change.status == "R" and change.old_path is not None:
                 git_changed.add(repository_path(change.old_path, root))
         discovered_paths = {
             repository_path(path, root)
