@@ -166,7 +166,7 @@ def _cleanup_abandoned_collections(config: PipelineConfig) -> None:
         delete_collection(chroma.model_copy(update={"collection_name": name}))
 
 
-def run_pipeline(
+def _run_pipeline_unlocked(
     config: PipelineConfig,
     *,
     resolve_fn: ResolveFn | None = None,
@@ -456,3 +456,35 @@ def run_pipeline(
             )
         _cleanup_old_generations(config)
     return replace(result, graph_path=graph_path)
+
+
+def run_pipeline(
+    config: PipelineConfig,
+    *,
+    resolve_fn: ResolveFn | None = None,
+    detect_fn: DetectFn | None = None,
+    extract_ast_fn: ExtractAstFn | None = None,
+    build_graph_fn: BuildGraphFn | None = None,
+    map_chunks_fn: MapChunksFn | None = None,
+    cluster_fn: ClusterFn | None = None,
+    embed_fn: EmbedFn | None = None,
+    progress_callback: Callable[[str, int, str], None] | None = None,
+    **kwargs: Any,
+) -> PipelineResult:
+    """Run one pipeline build while holding the repository slug lock."""
+    from codeknow.pipeline.locking import slug_build_lock
+
+    output_dir = config.resolved_output_dir()
+    with slug_build_lock(output_dir.parent, config.slug):
+        return _run_pipeline_unlocked(
+            config,
+            resolve_fn=resolve_fn,
+            detect_fn=detect_fn,
+            extract_ast_fn=extract_ast_fn,
+            build_graph_fn=build_graph_fn,
+            map_chunks_fn=map_chunks_fn,
+            cluster_fn=cluster_fn,
+            embed_fn=embed_fn,
+            progress_callback=progress_callback,
+            **kwargs,
+        )

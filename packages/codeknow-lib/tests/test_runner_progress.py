@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 from codeknow.pipeline.runner import _STAGES, run_pipeline
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_fake_graph() -> MagicMock:
@@ -16,10 +20,11 @@ def _make_fake_graph() -> MagicMock:
 
 
 @pytest.fixture
-def fake_config() -> MagicMock:
+def fake_config(tmp_path: Path) -> MagicMock:
     config = MagicMock()
     config.repo_url = "git@github.com:test/repo.git"
     config.slug = "test-repo"
+    config.resolved_output_dir.return_value = tmp_path / "graph" / config.slug
     return config
 
 

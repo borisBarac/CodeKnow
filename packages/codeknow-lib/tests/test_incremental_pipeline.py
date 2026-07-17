@@ -66,6 +66,27 @@ def _run(
     )
 
 
+def test_public_pipeline_boundary_acquires_slug_lock(tmp_path: Path) -> None:
+    config = PipelineConfig(
+        repo_url="https://github.com/owner/repo",
+        output_dir=tmp_path / "graph" / "owner-repo",
+    )
+    expected = MagicMock()
+
+    with (
+        patch("codeknow.pipeline.locking.slug_build_lock") as lock,
+        patch(
+            "codeknow.pipeline.runner._run_pipeline_unlocked",
+            return_value=expected,
+        ) as unlocked,
+    ):
+        result = run_pipeline(config)
+
+    assert result is expected
+    lock.assert_called_once_with(config.resolved_output_dir().parent, config.slug)
+    unlocked.assert_called_once()
+
+
 def test_incremental_build_reuses_unchanged_chunks_and_removes_stale_nodes(
     tmp_path: Path,
 ) -> None:

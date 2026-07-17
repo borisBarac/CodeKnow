@@ -115,8 +115,7 @@ class PipelineFacade:
         if progress_callback is not None:
             kwargs["progress_callback"] = progress_callback
 
-        with self._build_lock(slug):
-            result = run_pipeline(config, **kwargs)
+        result = run_pipeline(config, **kwargs)
 
         return BuildResult(
             slug=slug,
@@ -129,17 +128,10 @@ class PipelineFacade:
     @contextmanager
     def _build_lock(self, slug: str) -> Iterator[None]:
         """Allow one build process per slug."""
-        import fcntl
+        from codeknow.pipeline.locking import slug_build_lock
 
-        lock_dir = self.graph_dir / ".locks"
-        lock_dir.mkdir(parents=True, exist_ok=True)
-        path = lock_dir / f"{slug}.lock"
-        with path.open("a", encoding="utf-8") as lock_file:
-            fcntl.flock(lock_file, fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock_file, fcntl.LOCK_UN)
+        with slug_build_lock(self.graph_dir, slug):
+            yield
 
     def delete(self, slug: str) -> DeleteResult:
         if slug.startswith("."):

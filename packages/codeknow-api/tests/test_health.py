@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from codeknow_api.app import create_app
+from codeknow_api.app import _recover_periodically, create_app
 from fastapi.testclient import TestClient
 
 
@@ -17,6 +18,19 @@ def client() -> TestClient:
 
 
 class TestHealthEndpoint:
+    @pytest.mark.anyio
+    async def test_periodic_recovery_repeats_after_interval(self) -> None:
+        facade = MagicMock()
+        sleep = AsyncMock(side_effect=[None, asyncio.CancelledError()])
+
+        with (
+            patch("codeknow_api.app.asyncio.sleep", sleep),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await _recover_periodically(facade, 60)
+
+        facade.recover.assert_called_once_with()
+
     def test_startup_recovers_abandoned_generations(self) -> None:
         with (
             patch("codeknow.pipeline.facade.PipelineFacade.recover") as recover,

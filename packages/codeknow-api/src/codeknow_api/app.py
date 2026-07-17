@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -47,6 +47,7 @@ class ApiConfig:
     temp_dir: Path
     job_ttl: timedelta
     cache_ttl: int
+    recovery_interval: float = 300.0
 
     @classmethod
     def from_env(cls) -> ApiConfig:
@@ -58,6 +59,9 @@ class ApiConfig:
                 seconds=int(os.getenv("CODEKNOW_JOB_TTL_SECONDS", str(60 * 60)))
             ),
             cache_ttl=int(os.getenv("CODEKNOW_CACHE_TTL", "300")),
+            recovery_interval=float(
+                os.getenv("CODEKNOW_RECOVERY_INTERVAL_SECONDS", "300")
+            ),
         )
 
 
@@ -72,6 +76,15 @@ class AppState:
 
 
 logger = logging.getLogger(__name__)
+
+
+async def _recover_periodically(
+    facade: PipelineFacade,
+    interval: float,
+) -> None:
+    while True:
+        await asyncio.sleep(interval)
+        await asyncio.to_thread(facade.recover)
 
 
 def _evict_completed_jobs(jobs: dict[str, BuildJob], job_ttl: timedelta) -> None:
@@ -159,8 +172,16 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
     @asynccontextmanager
     async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(facade.recover)
-        yield
-        await redis_service.close()
+        recovery_task = asyncio.create_task(
+            _recover_periodically(facade, config.recovery_interval)
+        )
+        try:
+            yield
+        finally:
+            recovery_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await recovery_task
+            await redis_service.close()
 
     app = FastAPI(
         title="CodeKnow API",
