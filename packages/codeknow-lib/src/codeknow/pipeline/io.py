@@ -23,6 +23,8 @@ class GenerationRef:
     generation_id: str
     collection_name: str
     directory: Path
+    graph_filename: str = "graph.json"
+    chunk_map_filename: str = "chunk_map.json"
 
 
 def new_generation_id() -> str:
@@ -40,14 +42,24 @@ def load_current(output_dir: Path) -> GenerationRef | None:
     generation_id = data["generation_id"]
     collection_name = data["collection_name"]
     directory = output_dir / "generations" / generation_id
-    ref = GenerationRef(generation_id, collection_name, directory)
+    ref = GenerationRef(
+        generation_id,
+        collection_name,
+        directory,
+        data.get("graph_filename", "graph.json"),
+        data.get("chunk_map_filename", "chunk_map.json"),
+    )
     validate_generation(ref)
     return ref
 
 
 def validate_generation(ref: GenerationRef) -> None:
     """Raise when any required generation file is missing or invalid."""
-    for filename in ("graph.json", "chunk_map.json", "metadata.json"):
+    for filename in (
+        ref.graph_filename,
+        ref.chunk_map_filename,
+        "metadata.json",
+    ):
         path = ref.directory / filename
         if not path.is_file():
             msg = f"Incomplete generation {ref.generation_id}: missing {filename}"
@@ -83,6 +95,8 @@ def save_metadata(result: PipelineResult) -> Path:
         "branch": result.branch_name,
         "generation_id": result.generation_id,
         "collection_name": result.collection_name,
+        "graph_filename": cfg.graph_filename,
+        "chunk_map_filename": cfg.chunk_map_filename,
     }
     path = out / "metadata.json"
     path.write_text(
@@ -124,6 +138,8 @@ def publish_generation(output_dir: Path, ref: GenerationRef) -> None:
                 old["generation_id"],
                 old["collection_name"],
                 output_dir / "generations" / old["generation_id"],
+                old.get("graph_filename", "graph.json"),
+                old.get("chunk_map_filename", "chunk_map.json"),
             )
             validate_generation(old_ref)
             previous = {
@@ -133,13 +149,18 @@ def publish_generation(output_dir: Path, ref: GenerationRef) -> None:
         except (json.JSONDecodeError, KeyError, FileNotFoundError, ValueError):
             previous = {}
     temp = output_dir / f".current-{uuid4().hex}.tmp"
+    pointer_data = {
+        "generation_id": ref.generation_id,
+        "collection_name": ref.collection_name,
+        **previous,
+    }
+    if ref.graph_filename != "graph.json":
+        pointer_data["graph_filename"] = ref.graph_filename
+    if ref.chunk_map_filename != "chunk_map.json":
+        pointer_data["chunk_map_filename"] = ref.chunk_map_filename
     temp.write_text(
         json.dumps(
-            {
-                "generation_id": ref.generation_id,
-                "collection_name": ref.collection_name,
-                **previous,
-            },
+            pointer_data,
             indent=2,
         ),
         encoding="utf-8",
@@ -185,9 +206,14 @@ def cleanup_generations(
         metadata_path = directory / "metadata.json"
         complete = True
         try:
-            for filename in ("graph.json", "chunk_map.json", "metadata.json"):
-                json.loads((directory / filename).read_text(encoding="utf-8"))
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            filenames = (
+                metadata.get("graph_filename", "graph.json"),
+                metadata.get("chunk_map_filename", "chunk_map.json"),
+                "metadata.json",
+            )
+            for filename in filenames:
+                json.loads((directory / filename).read_text(encoding="utf-8"))
             collection_name = metadata.get("collection_name")
         except (FileNotFoundError, json.JSONDecodeError):
             complete = False
@@ -262,7 +288,13 @@ def save_pipeline_result(
     save_metadata(result)
 
     if result.generation_id is not None and result.collection_name is not None:
-        ref = GenerationRef(result.generation_id, result.collection_name, out)
+        ref = GenerationRef(
+            result.generation_id,
+            result.collection_name,
+            out,
+            cfg.graph_filename,
+            cfg.chunk_map_filename,
+        )
         publish_generation(cfg.resolved_output_dir(), ref)
 
     return graph_path

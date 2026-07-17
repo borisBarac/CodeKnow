@@ -67,8 +67,14 @@ class Extractor:
         ".tsx": _extract_js,
     }
 
-    def __init__(self, *, cache_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        cache_dir: Path | None = None,
+        use_cache: bool = True,
+    ) -> None:
         self._cache_dir = cache_dir
+        self._use_cache = use_cache
         _check_tree_sitter_version()
 
     def extract(self, repo_path: Path) -> dict[str, Any]:
@@ -140,7 +146,9 @@ class Extractor:
             extractor = self._DISPATCH.get(path.suffix)
             if extractor is None:
                 continue
-            cached = load_cached(path, self._cache_dir or root)
+            cached = (
+                load_cached(path, self._cache_dir or root) if self._use_cache else None
+            )
             if cached is not None:
                 stale_nid = _stale_file_nid(cached)
                 current_nid = _make_id(str(path))

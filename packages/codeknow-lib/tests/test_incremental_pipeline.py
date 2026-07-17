@@ -215,3 +215,84 @@ def test_failed_incremental_embedding_keeps_active_generation(tmp_path: Path) ->
 
     assert (output / "current.json").read_bytes() == pointer_before
     assert set((output / "generations").iterdir()) == generations_before
+
+
+def test_missing_active_collection_forces_same_commit_rebuild(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    output = tmp_path / "graph"
+    root.mkdir()
+    source = root / "main.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    config = PipelineConfig(
+        repo_url="https://github.com/owner/repo",
+        output_dir=output,
+    )
+    common_patches = (
+        patch("codeknow.pipeline.runner.get_commit_hash", return_value="same"),
+        patch("codeknow.pipeline.runner.get_remote_branch", return_value="main"),
+        patch("codeknow.pipeline.runner._cleanup_old_generations"),
+    )
+    with common_patches[0], common_patches[1], common_patches[2]:
+        first = _run(
+            config,
+            root,
+            _discovery(source),
+            _extraction({"main.py": ["value"]}),
+        )
+
+    detect = MagicMock(return_value=_discovery(source))
+    with (
+        patch("codeknow.pipeline.runner.get_commit_hash", return_value="same"),
+        patch("codeknow.pipeline.runner.get_remote_branch", return_value="main"),
+        patch("codeknow.pipeline.runner.commit_exists", return_value=True),
+        patch("codeknow.pipeline.runner._collection_matches", return_value=False),
+        patch("codeknow.pipeline.runner._cleanup_old_generations"),
+    ):
+        rebuilt = run_pipeline(
+            config,
+            resolve_fn=lambda _config: root,
+            detect_fn=detect,
+            extract_ast_fn=lambda _discovery: _extraction({"main.py": ["value"]}),
+            build_graph_fn=_build,
+            cluster_fn=lambda graph: {0: list(graph.nodes)},
+            embed_fn=lambda result, **_kwargs: result,
+        )
+
+    assert rebuilt.generation_id != first.generation_id
+    detect.assert_called_once()
+
+
+def test_custom_collection_base_is_published_with_generation_suffix(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = root / "main.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    config = PipelineConfig(
+        repo_url="https://github.com/owner/repo",
+        output_dir=tmp_path / "graph",
+        no_embed=True,
+        chroma_collection="custom-base",
+        graph_filename="custom-graph.json",
+        chunk_map_filename="custom-chunks.json",
+    )
+    with (
+        patch("codeknow.pipeline.runner.get_commit_hash", return_value="commit"),
+        patch("codeknow.pipeline.runner.get_remote_branch", return_value="main"),
+    ):
+        result = _run(
+            config,
+            root,
+            _discovery(source),
+            _extraction({"main.py": ["value"]}),
+        )
+
+    current = load_current(config.resolved_output_dir())
+    assert current is not None
+    assert result.collection_name == current.collection_name
+    assert current.collection_name.startswith("custom-base_")
+    assert current.graph_filename == "custom-graph.json"
+    assert current.chunk_map_filename == "custom-chunks.json"
+    assert (current.directory / current.graph_filename).exists()
+    assert (current.directory / current.chunk_map_filename).exists()

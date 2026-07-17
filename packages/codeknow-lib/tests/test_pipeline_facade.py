@@ -157,6 +157,17 @@ class TestDelete:
         assert result.slug == "del-repo"
         assert result.chunks_deleted == 3
 
+    def test_cleanup_keeps_internal_lock_directory(self, tmp_path: Path) -> None:
+        from codeknow.pipeline.facade import PipelineFacade
+
+        locks = tmp_path / ".locks"
+        locks.mkdir()
+        (locks / "repo.lock").touch()
+        facade = PipelineFacade(graph_dir=tmp_path)
+
+        assert facade.cleanup() == []
+        assert locks.exists()
+
 
 class TestSearch:
     def test_search_delegates_to_graph_searcher(self, tmp_path: Path) -> None:

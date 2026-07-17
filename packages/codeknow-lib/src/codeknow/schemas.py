@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 from enum import Enum
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, computed_field, field_validator
 
 
 class ConfidenceLabel(str, Enum):
@@ -35,6 +35,7 @@ class Chunk(BaseModel):
     end_line: int = Field(ge=1)
     hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
 
+    @computed_field
     @property
     def vector_id(self) -> str:
         """Return the stable vector identity for this file range and content."""

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import shutil
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -110,8 +111,77 @@ def _cleanup_old_generations(config: PipelineConfig) -> None:
                         collection_name=old_collection,
                     )
                 )
+        _cleanup_abandoned_collections(config)
     except Exception:
         logger.warning("Old generation cleanup failed", exc_info=True)
+
+
+def _cleanup_abandoned_collections(config: PipelineConfig) -> None:
+    import json
+
+    from codeknow.vector.chroma import (
+        ChromaConfig,
+        delete_collection,
+        list_collection_names,
+    )
+
+    base = config.chroma_collection or f"codeknow_{config.slug}"
+    chroma = ChromaConfig(
+        host=config.chroma_host,
+        port=config.chroma_port,
+        collection_name=base,
+    )
+    names = list_collection_names(chroma)
+    if names is None:
+        return
+    protected: set[str] = set()
+    pointer = config.resolved_output_dir() / "current.json"
+    if pointer.exists():
+        data = json.loads(pointer.read_text(encoding="utf-8"))
+        for key in ("collection_name", "previous_collection_name"):
+            if data.get(key):
+                protected.add(data[key])
+    prefix = f"{base}_"
+    cutoff = datetime.now(timezone.utc).timestamp() - config.generation_grace_seconds
+    for name in names:
+        if name in protected or not name.startswith(prefix):
+            continue
+        generation_id = name.removeprefix(prefix)
+        try:
+            stamp = generation_id.split("-", 1)[0]
+            created = datetime.strptime(stamp, "%Y%m%dT%H%M%S%fZ").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            continue
+        if created.timestamp() > cutoff:
+            continue
+        delete_collection(chroma.model_copy(update={"collection_name": name}))
+
+
+def _collection_matches(
+    config: PipelineConfig,
+    collection_name: str,
+    chunk_map: dict,
+    root: Path,
+) -> bool:
+    from codeknow.vector.chroma import ChromaConfig, get_collection_ids
+    from codeknow.vector.embeddings import read_chunk_content
+
+    expected = {
+        chunk.vector_id
+        for chunks in chunk_map.values()
+        for chunk in chunks
+        if read_chunk_content(chunk, root).strip()
+    }
+    actual = get_collection_ids(
+        ChromaConfig(
+            host=config.chroma_host,
+            port=config.chroma_port,
+            collection_name=collection_name,
+        )
+    )
+    return actual == expected
 
 
 def run_pipeline(
@@ -138,8 +208,8 @@ def run_pipeline(
     from codeknow.pipeline.chunk_stage import map_chunks as _default_map_chunks
     from codeknow.pipeline.embed_stage import embed as _default_embed
 
-    _extractor = Extractor()
     managed = isinstance(config, PipelineConfig)
+    _extractor = Extractor(use_cache=not (managed and config.force_rebuild))
     active = None
     active_metadata = None
     if managed:
@@ -151,6 +221,11 @@ def run_pipeline(
                 "Active generation is incomplete; running a full build",
                 exc_info=True,
             )
+    legacy_collection = (
+        (config.chroma_collection or f"codeknow_{config.slug}")
+        if active is None and active_metadata is not None
+        else None
+    )
 
     _resolve = resolve_fn or resolve
     _detect = detect_fn or _extractor.discover
@@ -183,33 +258,52 @@ def run_pipeline(
     )
 
     if can_reuse and old_commit == commit_hash and active is not None:
-        graph = load_graph(active.directory / config.graph_filename)
-        chunk_map = load_chunk_map(active.directory)
-        communities = communities_from_graph(graph)
-        stats = {
-            "nodes": graph.number_of_nodes(),
-            "edges": graph.number_of_edges(),
-            "communities": len(communities),
-            "files": len(chunk_map),
-            "words": 0,
-        }
-        return PipelineResult(
-            graph=graph,
-            communities=communities,
-            chunk_map=chunk_map,
-            discovery={},
-            stats=stats,
-            config=config,
-            commit_hash=commit_hash,
-            graph_path=active.directory / config.graph_filename,
-            repo_root=root,
-            generation_id=active.generation_id,
-            collection_name=active.collection_name,
-            changed_paths=frozenset(),
-            branch_name=branch_name,
+        graph = load_graph(active.directory / active.graph_filename)
+        chunk_map = load_chunk_map(active.directory / active.chunk_map_filename)
+        collection_ok = config.no_embed or _collection_matches(
+            config,
+            active.collection_name,
+            chunk_map,
+            root,
         )
+        if collection_ok:
+            communities = communities_from_graph(graph)
+            stats = {
+                "nodes": graph.number_of_nodes(),
+                "edges": graph.number_of_edges(),
+                "communities": len(communities),
+                "files": len(chunk_map),
+                "words": 0,
+            }
+            return PipelineResult(
+                graph=graph,
+                communities=communities,
+                chunk_map=chunk_map,
+                discovery={},
+                stats=stats,
+                config=config,
+                commit_hash=commit_hash,
+                graph_path=active.directory / active.graph_filename,
+                repo_root=root,
+                generation_id=active.generation_id,
+                collection_name=active.collection_name,
+                changed_paths=frozenset(),
+                branch_name=branch_name,
+            )
+        logger.warning("Active vector collection is incomplete; rebuilding")
+        can_reuse = False
 
     if managed:
+        if legacy_collection is not None and not config.no_embed:
+            from codeknow.vector.chroma import ChromaConfig, delete_collection
+
+            delete_collection(
+                ChromaConfig(
+                    host=config.chroma_host,
+                    port=config.chroma_port,
+                    collection_name=legacy_collection,
+                )
+            )
         _cleanup_old_generations(config)
 
     raw = _detect(root)
@@ -230,7 +324,11 @@ def run_pipeline(
     G = _build(extractions)
     _progress(progress_callback, 3)
 
-    prior_chunk_map = load_chunk_map(active.directory) if can_reuse and active else None
+    prior_chunk_map = (
+        load_chunk_map(active.directory / active.chunk_map_filename)
+        if can_reuse and active
+        else None
+    )
     changed_paths: frozenset[str] | None = None
     if can_reuse and old_commit and commit_hash and prior_chunk_map is not None:
         git_changed: set[str] = set()
@@ -277,9 +375,8 @@ def run_pipeline(
     }
 
     generation_id = new_generation_id() if managed else None
-    collection_name = (
-        f"codeknow_{config.slug}_{generation_id}" if generation_id else None
-    )
+    collection_base = config.chroma_collection or f"codeknow_{config.slug}"
+    collection_name = f"{collection_base}_{generation_id}" if generation_id else None
     result = PipelineResult(
         graph=G,
         communities=communities,

@@ -141,6 +141,9 @@ class PipelineFacade:
                 fcntl.flock(lock_file, fcntl.LOCK_UN)
 
     def delete(self, slug: str) -> DeleteResult:
+        if slug.startswith("."):
+            msg = f"Refusing to delete internal directory: {slug}"
+            raise ValueError(msg)
         collection_names: set[str] = {f"codeknow_{slug}"}
         generations = self.slug_dir(slug) / "generations"
         if generations.is_dir():
@@ -199,7 +202,7 @@ class PipelineFacade:
         results: list[DeleteResult] = []
         if self.graph_dir.is_dir():
             for child in sorted(self.graph_dir.iterdir()):
-                if child.is_dir():
+                if child.is_dir() and not child.name.startswith("."):
                     results.append(self.delete(child.name))
         return results
 

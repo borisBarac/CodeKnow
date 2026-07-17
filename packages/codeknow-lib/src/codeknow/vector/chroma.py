@@ -12,7 +12,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel
 
@@ -85,6 +85,38 @@ class ChromaConfig(BaseModel):
         return int(os.environ.get("CHROMA_PORT", str(DEFAULT_CHROMA_PORT)))
 
 
+def get_collection_ids(config: ChromaConfig) -> set[str] | None:
+    """Return collection IDs, or None when the collection is unavailable."""
+    try:
+        client = chromadb.HttpClient(
+            host=config.resolved_host(),
+            port=config.resolved_port(),
+            ssl=config.ssl,
+            tenant=config.tenant,
+            database=config.database,
+        )
+        collection = client.get_collection(name=config.collection_name)
+        return set(collection.get(include=[]).get("ids", []) or [])
+    except Exception:
+        return None
+
+
+def list_collection_names(config: ChromaConfig) -> set[str] | None:
+    """Return collection names, or None when Chroma is unavailable."""
+    try:
+        client = chromadb.HttpClient(
+            host=config.resolved_host(),
+            port=config.resolved_port(),
+            ssl=config.ssl,
+            tenant=config.tenant,
+            database=config.database,
+        )
+        collections = client.list_collections()
+        return {item if isinstance(item, str) else item.name for item in collections}
+    except Exception:
+        return None
+
+
 class ChromaStore:
     """ChromaDB-backed implementation of the ``VectorStore`` protocol.
 
@@ -103,6 +135,8 @@ class ChromaStore:
         config: ChromaConfig | None = None,
         embeddings: Embeddings | None = None,
         embedding_config: EmbeddingConfig | None = None,
+        *,
+        create_collection: bool = True,
     ) -> None:
         if embeddings is None:
             msg = (
@@ -113,6 +147,7 @@ class ChromaStore:
         self._config = config or ChromaConfig()
         self._embeddings = embeddings
         self._embedding_config = embedding_config or EmbeddingConfig()
+        self._create_collection = create_collection
         self._client: chromadb.HttpClient | None = None  # type: ignore[valid-type]
         self._collection: Collection | None = None
 
@@ -133,11 +168,16 @@ class ChromaStore:
 
     def _get_or_create_collection(self) -> Collection:
         if self._collection is None:
-            self._collection = self._get_client().get_or_create_collection(  # type: ignore[attr-defined]
-                name=self._config.collection_name,
-                metadata={"hnsw:space": "cosine"},
-            )
-        return self._collection
+            if self._create_collection:
+                self._collection = self._get_client().get_or_create_collection(  # type: ignore[attr-defined]
+                    name=self._config.collection_name,
+                    metadata={"hnsw:space": "cosine"},
+                )
+            else:
+                self._collection = self._get_client().get_collection(  # type: ignore[attr-defined]
+                    name=self._config.collection_name
+                )
+        return cast("Collection", self._collection)
 
     def reset(self) -> None:
         """Drop cached client/collection so they are re-created on next use."""

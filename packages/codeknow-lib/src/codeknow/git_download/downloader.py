@@ -62,6 +62,24 @@ def _remote_branch(repo: Repo, preferred: str | None = None) -> str:
         return refs[0]
 
 
+def _refresh_remote_head(repo: Repo) -> str | None:
+    """Read the remote HEAD and refresh the local origin/HEAD reference."""
+    try:
+        output = repo.git.ls_remote("--symref", "origin", "HEAD")
+        for line in output.splitlines():
+            if not line.startswith("ref: refs/heads/"):
+                continue
+            branch = line.split("\t", 1)[0].removeprefix("ref: refs/heads/")
+            repo.git.symbolic_ref(
+                "refs/remotes/origin/HEAD",
+                f"refs/remotes/origin/{branch}",
+            )
+            return branch
+    except Exception:
+        return None
+    return None
+
+
 def fetch_and_checkout(
     target_path: Path,
     *,
@@ -70,7 +88,7 @@ def fetch_and_checkout(
     """Fetch origin and check out its branch commit without merging."""
     repo = Repo(target_path)
     repo.remotes.origin.fetch(prune=True)
-    resolved_branch = _remote_branch(repo, branch)
+    resolved_branch = branch or _refresh_remote_head(repo) or _remote_branch(repo)
     commit = repo.commit(f"origin/{resolved_branch}")
     repo.git.checkout("--detach", commit.hexsha)
     return resolved_branch, commit.hexsha

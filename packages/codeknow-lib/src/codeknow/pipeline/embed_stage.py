@@ -42,7 +42,7 @@ def embed(
     embeddings = create_embeddings(embed_config)
 
     collection_name = (
-        config.chroma_collection or result.collection_name or f"codeknow_{slug}"
+        result.collection_name or config.chroma_collection or f"codeknow_{slug}"
     )
     chroma_config = ChromaConfig(
         host=config.chroma_host,

@@ -118,3 +118,21 @@ def test_diff_changes_reads_real_nul_separated_git_output(tmp_path: Path) -> Non
     assert any(
         change.status == "M" and change.path == modified.name for change in changes
     )
+
+
+def test_fetch_refreshes_changed_remote_default_branch(tmp_path: Path) -> None:
+    from codeknow.git_download.downloader import fetch_and_checkout
+
+    with patch("codeknow.git_download.downloader.Repo") as repo_class:
+        repo = repo_class.return_value
+        repo.git.ls_remote.return_value = "ref: refs/heads/new-default\tHEAD\nabc\tHEAD"
+        repo.commit.return_value.hexsha = "abc"
+
+        branch, commit = fetch_and_checkout(tmp_path)
+
+    assert (branch, commit) == ("new-default", "abc")
+    repo.git.symbolic_ref.assert_called_once_with(
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/new-default",
+    )
+    repo.git.checkout.assert_called_once_with("--detach", "abc")

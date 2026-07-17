@@ -61,3 +61,9 @@ def test_vector_id_is_stable_for_same_file_range_and_content() -> None:
     values = {"file": "src/main.py", "start_line": 4, "end_line": 9, "hash": "b" * 64}
 
     assert Chunk(**values).vector_id == Chunk(**values).vector_id
+
+
+def test_vector_id_is_serialized_in_chunk_map_records() -> None:
+    chunk = Chunk(file="src/main.py", start_line=1, end_line=2, hash="c" * 64)
+
+    assert chunk.model_dump()["vector_id"] == chunk.vector_id

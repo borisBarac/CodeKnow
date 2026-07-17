@@ -4,16 +4,18 @@ import json
 import os
 import time
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import networkx as nx
 import pytest
+from codeknow.pipeline.config import PipelineConfig
 from codeknow.pipeline.io import (
     GenerationRef,
     cleanup_generations,
     load_current,
     publish_generation,
 )
+from codeknow.pipeline.runner import _cleanup_abandoned_collections
 from codeknow.vector.search import GraphSearcher
 from networkx.readwrite import json_graph
 
@@ -149,3 +151,54 @@ def test_search_discovery_accepts_generation_managed_repo(tmp_path: Path) -> Non
         ("legacy", legacy),
         ("managed", managed),
     ]
+
+
+def test_custom_generation_filenames_publish_and_load(tmp_path: Path) -> None:
+    directory = tmp_path / "generations" / "custom"
+    directory.mkdir(parents=True)
+    (directory / "custom-graph.json").write_text(
+        json.dumps(json_graph.node_link_data(nx.Graph(), edges="links")),
+        encoding="utf-8",
+    )
+    (directory / "custom-chunks.json").write_text("{}", encoding="utf-8")
+    (directory / "metadata.json").write_text("{}", encoding="utf-8")
+    ref = GenerationRef(
+        "custom",
+        "custom-collection",
+        directory,
+        "custom-graph.json",
+        "custom-chunks.json",
+    )
+
+    publish_generation(tmp_path, ref)
+
+    assert load_current(tmp_path) == ref
+    searcher = GraphSearcher(tmp_path, store=MagicMock())
+    assert searcher._graph is not None
+
+
+def test_cleanup_removes_expired_crashed_staging_collection(tmp_path: Path) -> None:
+    config = PipelineConfig(
+        repo_url="https://github.com/owner/repo",
+        output_dir=tmp_path,
+        generation_grace_seconds=60,
+    )
+    active = "codeknow_owner-repo_20990101T000000000000Z-active"
+    expired = "codeknow_owner-repo_20000101T000000000000Z-expired"
+    fresh = "codeknow_owner-repo_20990101T000000000000Z-fresh"
+    (tmp_path / "current.json").write_text(
+        json.dumps({"generation_id": "active", "collection_name": active}),
+        encoding="utf-8",
+    )
+
+    with (
+        patch(
+            "codeknow.vector.chroma.list_collection_names",
+            return_value={active, expired, fresh},
+        ),
+        patch("codeknow.vector.chroma.delete_collection") as delete,
+    ):
+        _cleanup_abandoned_collections(config)
+
+    assert delete.call_count == 1
+    assert delete.call_args.args[0].collection_name == expired

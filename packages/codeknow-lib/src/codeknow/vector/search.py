@@ -92,6 +92,7 @@ class GraphSearcher:
         if current is not None:
             graph_dir = current.directory
             collection_name = current.collection_name
+            graph_filename = current.graph_filename
         self._traversal_depth = traversal_depth
         self._collection_name = collection_name
         self._embed_config = embed_config
@@ -130,7 +131,11 @@ class GraphSearcher:
                     tenant=c_config.tenant,
                     database=c_config.database,
                 )
-            self._store = ChromaStore(config=c_config, embeddings=embeddings)
+            self._store = ChromaStore(
+                config=c_config,
+                embeddings=embeddings,
+                create_collection=False,
+            )
         return self._store
 
     def _classify_query_intent(self, query: str) -> dict[str, float]:

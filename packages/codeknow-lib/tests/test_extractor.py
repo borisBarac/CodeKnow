@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from codeknow.extract.extractor import Extractor
 
@@ -172,6 +173,20 @@ class TestExtractorPythonRationale:
 
 
 class TestExtractorCaching:
+    def test_cache_can_be_bypassed_for_forced_rebuild(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        source = tmp_path / "main.py"
+        source.write_text("value = 1\n", encoding="utf-8")
+        dispatch = MagicMock(return_value={"nodes": [], "edges": []})
+        monkeypatch.setattr(Extractor, "_DISPATCH", {".py": dispatch})
+
+        with patch("codeknow.extract.extractor.load_cached") as load_cached:
+            Extractor(use_cache=False).extract(tmp_path)
+
+        load_cached.assert_not_called()
+        dispatch.assert_called_once_with(source)
+
     def test_second_call_returns_same_result(self, tmp_path: Path) -> None:
         (tmp_path / "main.py").write_text("class Foo:\n    pass\n")
         cache_dir = tmp_path / "cache"
