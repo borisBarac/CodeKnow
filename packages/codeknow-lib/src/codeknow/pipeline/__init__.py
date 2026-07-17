@@ -3,7 +3,15 @@
 from .config import PipelineConfig
 from .embed_stage import embed
 from .facade import BuildResult, DeleteResult, PipelineFacade
-from .io import communities_from_graph, load_graph, load_metadata, save_pipeline_result
+from .io import (
+    GenerationRef,
+    communities_from_graph,
+    load_chunk_map,
+    load_current,
+    load_graph,
+    load_metadata,
+    save_pipeline_result,
+)
 from .metadata import build_chunk_metadata
 from .runner import run_pipeline
 from .stages import resolve
@@ -15,6 +23,7 @@ __all__ = [
     "BuildResult",
     "DeleteResult",
     "EmbedFn",
+    "GenerationRef",
     "PipelineConfig",
     "PipelineFacade",
     "PipelineResult",
@@ -22,6 +31,8 @@ __all__ = [
     "build_chunk_metadata",
     "communities_from_graph",
     "embed",
+    "load_chunk_map",
+    "load_current",
     "load_graph",
     "load_metadata",
     "resolve",

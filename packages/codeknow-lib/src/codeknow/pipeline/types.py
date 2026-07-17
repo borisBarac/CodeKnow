@@ -25,6 +25,12 @@ class PipelineResult:
     commit_hash: str | None = None
     embed_stats: dict | None = None
     graph_path: Path | None = None
+    repo_root: Path | None = None
+    generation_id: str | None = None
+    collection_name: str | None = None
+    changed_paths: frozenset[str] | None = None
+    branch_name: str | None = None
+    prior_collection_name: str | None = None
 
 
 class ResolveFn(Protocol):

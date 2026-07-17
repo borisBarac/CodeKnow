@@ -13,6 +13,7 @@ from codeknow.extract.ast import (
     _resolve_cross_file_imports,
 )
 from codeknow.extract.detect import detect
+from codeknow.paths import repository_path
 
 
 def _reanchor_paths(cached: dict, current_path: str) -> None:
@@ -77,9 +78,14 @@ class Extractor:
         ``input_tokens``, ``output_tokens``.
         """
         discovery = self._discover_files(repo_path)
-        return self.extract_from_discovery(discovery)
+        return self.extract_from_discovery(discovery, repo_root=repo_path)
 
-    def extract_from_discovery(self, discovery: dict[str, Any]) -> dict[str, Any]:
+    def extract_from_discovery(
+        self,
+        discovery: dict[str, Any],
+        *,
+        repo_root: Path | None = None,
+    ) -> dict[str, Any]:
         """Extract AST from pre-discovered file lists.
 
         Args:
@@ -99,7 +105,8 @@ class Extractor:
                 "input_tokens": 0,
                 "output_tokens": 0,
             }
-        return self._extract(code_paths)
+        root = repo_root or self._common_root(code_paths)
+        return self._extract(code_paths, root)
 
     def discover(self, repo_path: Path) -> dict[str, Any]:
         """Return the file discovery dict without extracting."""
@@ -108,7 +115,18 @@ class Extractor:
     def _discover_files(self, repo_path: Path) -> dict[str, Any]:
         return detect(repo_path)
 
-    def _extract(self, paths: list[Path]) -> dict[str, Any]:
+    @staticmethod
+    def _common_root(paths: list[Path]) -> Path:
+        """Infer a root for compatibility with old direct callers."""
+        if not paths:
+            return Path.cwd()
+        if len(paths) == 1:
+            return paths[0].resolve().parent
+        import os
+
+        return Path(os.path.commonpath([str(path.resolve()) for path in paths]))
+
+    def _extract(self, paths: list[Path], root: Path) -> dict[str, Any]:
         """Multi-file extraction orchestrator.
 
         Per-file dispatch → cache → merge → ID remap → cross-file resolution.
@@ -116,22 +134,6 @@ class Extractor:
         per_file: list[tuple[Path, dict]] = []
         stale_id_remap: dict[str, str] = {}
 
-        try:
-            if not paths:
-                root = Path()
-            elif len(paths) == 1:
-                root = paths[0].parent
-            else:
-                min_parts = min(len(p.parts) for p in paths)
-                common_len = 0
-                for i in range(min_parts):
-                    if len({p.parts[i] for p in paths}) == 1:
-                        common_len += 1
-                    else:
-                        break
-                root = Path(*paths[0].parts[:common_len]) if common_len else Path()
-        except Exception:
-            root = Path()
         root = root.resolve()
 
         for path in paths:
@@ -229,6 +231,11 @@ class Extractor:
                             "weight": 1.0,
                         }
                     )
+
+        for item in [*all_nodes, *all_edges]:
+            source_file = item.get("source_file")
+            if source_file:
+                item["source_file"] = repository_path(source_file, root)
 
         return {
             "nodes": all_nodes,

@@ -11,6 +11,7 @@ parse without error.
 
 from __future__ import annotations
 
+import hashlib
 from enum import Enum
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
@@ -34,6 +35,12 @@ class Chunk(BaseModel):
     end_line: int = Field(ge=1)
     hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
 
+    @property
+    def vector_id(self) -> str:
+        """Return the stable vector identity for this file range and content."""
+        identity = f"{self.file}\0{self.start_line}\0{self.end_line}\0{self.hash}"
+        return hashlib.sha256(identity.encode()).hexdigest()
+
     @field_validator("end_line")
     @classmethod
     def end_after_start(cls, v: int, info: ValidationInfo) -> int:
@@ -47,6 +54,12 @@ class ChunkRef(BaseModel):
     """A lightweight chunk reference stored inside a node — just the hash."""
 
     hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    vector_id: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
 
 
 class Node(BaseModel):
@@ -124,6 +137,7 @@ CommunityMap = dict[int, list[str]]
 
 class HybridSearchResult(BaseModel):
     chunk_hash: str
+    vector_id: str | None = None
     file: str
     start_line: int
     end_line: int

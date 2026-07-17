@@ -5,8 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from codeknow.chunking.chunker import build_chunk_map
+from codeknow.paths import repository_path
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import networkx as nx
 
     from codeknow.schemas import ChunkMap
@@ -44,7 +47,7 @@ def resolve_node_chunks(
     overlapping: list[str] = []
     for chunk in chunks:
         if chunk.start_line <= end_line and chunk.end_line >= start_line:
-            overlapping.append(chunk.hash)
+            overlapping.append(chunk.vector_id)
     return overlapping
 
 
@@ -54,6 +57,9 @@ def map_chunks(
     *,
     chunk_size: int = 100,
     overlap: int = 20,
+    repo_root: Path | None = None,
+    prior_chunk_map: ChunkMap | None = None,
+    changed_paths: set[str] | frozenset[str] | None = None,
 ) -> tuple[nx.Graph, ChunkMap]:
     """Pipeline stage: link graph nodes to code chunk hashes.
 
@@ -63,10 +69,36 @@ def map_chunks(
 
     Returns the enriched graph and the chunk_map.
     """
-    chunk_map = build_chunk_map(files, chunk_size, overlap)
+    root = repo_root
+    if prior_chunk_map is None or changed_paths is None or root is None:
+        chunk_map = build_chunk_map(files, chunk_size, overlap, repo_root=root)
+    else:
+        discovered = {
+            repository_path(path, root) for paths in files.values() for path in paths
+        }
+        chunk_map = {
+            path: chunks
+            for path, chunks in prior_chunk_map.items()
+            if path in discovered and path not in changed_paths
+        }
+        changed_files = {
+            category: [
+                path for path in paths if repository_path(path, root) in changed_paths
+            ]
+            for category, paths in files.items()
+        }
+        chunk_map.update(
+            build_chunk_map(changed_files, chunk_size, overlap, repo_root=root)
+        )
 
     for _nid, data in graph.nodes(data=True):
-        hashes = resolve_node_chunks(data, chunk_map)
-        data["chunks"] = [{"hash": h} for h in hashes]
+        vector_ids = resolve_node_chunks(data, chunk_map)
+        chunks_by_id = {
+            chunk.vector_id: chunk for chunks in chunk_map.values() for chunk in chunks
+        }
+        data["chunks"] = [
+            {"hash": chunks_by_id[vector_id].hash, "vector_id": vector_id}
+            for vector_id in vector_ids
+        ]
 
     return graph, chunk_map

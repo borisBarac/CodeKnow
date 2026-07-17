@@ -94,6 +94,7 @@ async def _run_build(
     github_ssh_url: str,
     redis_service: RedisService,
     facade: PipelineFacade,
+    force_rebuild: bool = False,
 ) -> None:
     """Run a single build to completion, updating its :class:`BuildJob`.
 
@@ -124,7 +125,7 @@ async def _run_build(
         result = await asyncio.to_thread(
             facade.build,
             github_ssh_url,
-            clean_first=True,
+            clean_first=force_rebuild,
             progress_callback=on_progress,
         )
         job.status = "succeeded"
@@ -223,6 +224,7 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
                     github_ssh_url=body.github_ssh_url,
                     redis_service=redis_service,
                     facade=facade,
+                    force_rebuild=body.force_rebuild,
                 )
             )
             state.build_tasks.add(task)

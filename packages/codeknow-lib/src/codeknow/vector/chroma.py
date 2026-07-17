@@ -22,6 +22,7 @@ from .store import SearchResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from chromadb.api.models.Collection import Collection
     from langchain_core.embeddings import Embeddings
@@ -52,6 +53,19 @@ logger = logging.getLogger(__name__)
 DEFAULT_CHROMA_HOST = "localhost"
 DEFAULT_CHROMA_PORT = 8018
 DEFAULT_COLLECTION_NAME = "codeknow_chunks"
+
+
+def delete_collection(config: ChromaConfig) -> None:
+    """Delete one named collection without creating an embedding client."""
+    with contextlib.suppress(Exception):
+        client = chromadb.HttpClient(
+            host=config.resolved_host(),
+            port=config.resolved_port(),
+            ssl=config.ssl,
+            tenant=config.tenant,
+            database=config.database,
+        )
+        client.delete_collection(name=config.collection_name)
 
 
 class ChromaConfig(BaseModel):
@@ -129,6 +143,14 @@ class ChromaStore:
         """Drop cached client/collection so they are re-created on next use."""
         self._collection = None
 
+    def collection_exists(self) -> bool:
+        """Return whether the configured collection already exists."""
+        try:
+            self._get_client().get_collection(name=self._config.collection_name)  # type: ignore[attr-defined]
+        except Exception:
+            return False
+        return True
+
     def drop_collection(self) -> None:
         """Delete the underlying Chroma collection and reset cached refs.
 
@@ -139,6 +161,58 @@ class ChromaStore:
                 name=self._config.collection_name
             )
         self._collection = None
+
+    def copy_from(
+        self,
+        source: ChromaStore,
+        ids: list[str],
+        *,
+        batch_size: int = 500,
+    ) -> int:
+        """Copy records and embeddings without calling the embedding provider."""
+        if not ids:
+            return 0
+        target = self._get_or_create_collection()
+        source_collection = source._get_or_create_collection()
+        copied = 0
+        for offset in range(0, len(ids), batch_size):
+            batch_ids = ids[offset : offset + batch_size]
+            records = source_collection.get(
+                ids=batch_ids,
+                include=["embeddings", "documents", "metadatas"],
+            )
+            found_ids = records.get("ids", []) or []
+            if not found_ids:
+                continue
+            target.upsert(
+                ids=found_ids,
+                embeddings=records.get("embeddings"),
+                documents=records.get("documents"),
+                metadatas=records.get("metadatas"),
+            )
+            copied += len(found_ids)
+        return copied
+
+    def update_metadata(self, metadata: dict[str, dict[str, Any]]) -> int:
+        """Update metadata without regenerating embeddings."""
+        if not metadata:
+            return 0
+        collection = self._get_or_create_collection()
+        ids = list(metadata)
+        collection.update(ids=ids, metadatas=[metadata[item] for item in ids])
+        return len(ids)
+
+    def validate_ids(self, expected_ids: set[str]) -> None:
+        """Raise when the collection does not contain the expected records."""
+        records = self._get_or_create_collection().get(include=[])
+        actual = set(records.get("ids", []) or [])
+        if actual != expected_ids:
+            missing = expected_ids - actual
+            extra = actual - expected_ids
+            msg = (
+                f"Vector validation failed: {len(missing)} missing, {len(extra)} extra"
+            )
+            raise ValueError(msg)
 
     # ------------------------------------------------------------------
     # VectorStore protocol methods
@@ -152,6 +226,7 @@ class ChromaStore:
         slug: str | None = None,
         extra_metadata: dict[str, dict] | None = None,
         on_progress: Callable[[int, int], None] | None = None,
+        repo_root: Path | None = None,
     ) -> int:
         if not chunks:
             return 0
@@ -166,6 +241,7 @@ class ChromaStore:
             batch_size=batch_size,
             slug=slug,
             extra_metadata=extra_metadata,
+            repo_root=repo_root,
         ):
             collection.upsert(
                 ids=batch.ids,
@@ -192,6 +268,7 @@ class ChromaStore:
         slug: str | None = None,
         extra_metadata: dict[str, dict] | None = None,
         on_progress: Callable[[int, int], None] | None = None,
+        repo_root: Path | None = None,
     ) -> int:
         all_chunks: list[Chunk] = []
         for file_chunks in chunk_map.values():
@@ -202,6 +279,7 @@ class ChromaStore:
             slug=slug,
             extra_metadata=extra_metadata,
             on_progress=on_progress,
+            repo_root=repo_root,
         )
 
     def search(

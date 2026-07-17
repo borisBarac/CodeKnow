@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -10,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 from codeknow.schemas import HybridSearchResponse, ListReposResponse, RepoMetadata
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from codeknow.vector.chroma import ChromaStore
 
 logger = logging.getLogger(__name__)
@@ -62,15 +65,18 @@ class PipelineFacade:
         return self.graph_dir / slug
 
     def has_slug(self, slug: str) -> bool:
-        return (self.slug_dir(slug) / "metadata.json").exists()
+        directory = self.slug_dir(slug)
+        return (directory / "current.json").exists() or (
+            directory / "metadata.json"
+        ).exists()
 
-    def _make_store(self, slug: str) -> ChromaStore:
+    def _make_store(self, slug: str, collection_name: str | None = None) -> ChromaStore:
         from codeknow.vector.chroma import ChromaConfig, ChromaStore
         from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
 
         embeddings = create_embeddings(EmbeddingConfig())
         return ChromaStore(
-            config=ChromaConfig(collection_name=f"codeknow_{slug}"),
+            config=ChromaConfig(collection_name=collection_name or f"codeknow_{slug}"),
             embeddings=embeddings,
         )
 
@@ -97,21 +103,19 @@ class PipelineFacade:
 
         slug = PipelineConfig(repo_url=ssh_url).slug
 
-        if clean_first and self.slug_dir(slug).exists():
-            self.delete(slug)
-
         config = PipelineConfig(
             repo_url=ssh_url,
             input_dir=self.temp_dir,
             output_dir=self.graph_dir / slug,
+            force_rebuild=clean_first,
         )
 
         kwargs: dict[str, Any] = {}
         if progress_callback is not None:
             kwargs["progress_callback"] = progress_callback
 
-        result = run_pipeline(config, **kwargs)
-        shutil.rmtree(self.temp_dir / slug, ignore_errors=True)
+        with self._build_lock(slug):
+            result = run_pipeline(config, **kwargs)
 
         return BuildResult(
             slug=slug,
@@ -121,14 +125,49 @@ class PipelineFacade:
             community_count=result.stats.get("communities"),
         )
 
+    @contextmanager
+    def _build_lock(self, slug: str) -> Iterator[None]:
+        """Allow one build process per slug."""
+        import fcntl
+
+        lock_dir = self.graph_dir / ".locks"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        path = lock_dir / f"{slug}.lock"
+        with path.open("a", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+
     def delete(self, slug: str) -> DeleteResult:
+        collection_names: set[str] = {f"codeknow_{slug}"}
+        generations = self.slug_dir(slug) / "generations"
+        if generations.is_dir():
+            from codeknow.pipeline import load_metadata
+
+            for generation in generations.iterdir():
+                try:
+                    metadata = load_metadata(generation)
+                except Exception:
+                    logger.warning(
+                        "Could not read generation metadata at %s",
+                        generation,
+                        exc_info=True,
+                    )
+                    continue
+                if metadata and metadata.get("collection_name"):
+                    collection_names.add(metadata["collection_name"])
+
         shutil.rmtree(self.slug_dir(slug), ignore_errors=True)
         shutil.rmtree(self.temp_dir / slug, ignore_errors=True)
 
         chunks_deleted = 0
         try:
-            store = self._make_store(slug)
-            chunks_deleted = store.delete_by_slug(slug)
+            for collection_name in collection_names:
+                store = self._make_store(slug, collection_name)
+                chunks_deleted += store.delete_by_slug(slug)
+                store.drop_collection()
         except Exception:
             logger.warning(
                 "ChromaDB deletion failed for slug '%s'", slug, exc_info=True
@@ -197,9 +236,11 @@ class PipelineFacade:
 
                 if health_check:
                     try:
-                        from codeknow.pipeline.io import load_graph
+                        from codeknow.pipeline.io import load_current, load_graph
 
-                        load_graph(child / "graph.json")
+                        current = load_current(child)
+                        graph_dir = current.directory if current else child
+                        load_graph(graph_dir / "graph.json")
                         meta["health"] = "ok"
                     except FileNotFoundError:
                         meta["health"] = "missing_graph"

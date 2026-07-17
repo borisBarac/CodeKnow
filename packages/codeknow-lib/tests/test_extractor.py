@@ -83,7 +83,10 @@ class TestExtractorCrossFile:
         )
 
         extractor = Extractor()
-        extractor._extract([tmp_path / "a.py", tmp_path / "b.md", tmp_path / "c.py"])
+        extractor._extract(
+            [tmp_path / "a.py", tmp_path / "b.md", tmp_path / "c.py"],
+            tmp_path,
+        )
 
         assert captured == {"results": 2, "paths": 2}
 
@@ -186,7 +189,7 @@ class TestExtractorCaching:
         1. Extract in dir A (populating cache at a/graph-out/cache/).
         2. Copy dir A (including cache) to dir B.
         3. Extract from B — every file hits stale cache from A.
-        4. Assert source_file references B, not A.
+        4. Assert source_file is stable and repository relative.
         """
         import shutil
 
@@ -203,10 +206,7 @@ class TestExtractorCaching:
         for node in result_b["nodes"]:
             src = node.get("source_file", "")
             if src:
-                assert str(dir_b) in src, (
-                    f"source_file {src!r} should reference dir_b, not dir_a"
-                )
-                assert str(dir_a) not in src
+                assert src == "main.py"
 
     def test_cache_hit_remaps_stale_file_node_id(self, tmp_path: Path) -> None:
         """Cached file node IDs (location-dependent) must be remapped so

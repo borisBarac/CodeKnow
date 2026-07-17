@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+INDEX_SCHEMA_VERSION = 2
+EXTRACTION_CACHE_VERSION = 2
+
 _CODEKNOW_HOME = Path.home() / ".codeknow"
 
 _GITHUB_RE = re.compile(
@@ -51,6 +54,28 @@ class PipelineConfig:
     chroma_port: int | None = None
     chroma_collection: str | None = None
     embed_base_url: str | None = None
+    update: bool = True
+    force_rebuild: bool = False
+    chunk_size: int = 100
+    chunk_overlap: int = 20
+    generation_grace_seconds: int = 3600
+
+    def build_fingerprint(self) -> str:
+        """Return settings that decide whether prior work can be reused."""
+        import hashlib
+        import json
+
+        settings = {
+            "schema_version": INDEX_SCHEMA_VERSION,
+            "extraction_version": EXTRACTION_CACHE_VERSION,
+            "embed_provider": self.embed_provider,
+            "embed_model": self.embed_model,
+            "chunk_size": self.chunk_size,
+            "chunk_overlap": self.chunk_overlap,
+            "discovery_version": 1,
+        }
+        encoded = json.dumps(settings, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode()).hexdigest()
 
     @property
     def slug(self) -> str:

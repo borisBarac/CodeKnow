@@ -60,8 +60,10 @@ DEFAULT_MAX_EMBEDDING_SPLIT_DEPTH = int(
 )
 
 
-def _read_chunk_content(chunk: Chunk) -> str:
+def _read_chunk_content(chunk: Chunk, repo_root: Path | None = None) -> str:
     p = Path(chunk.file)
+    if repo_root is not None and not p.is_absolute():
+        p = repo_root / p
     try:
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines(
             keepends=True
@@ -72,6 +74,9 @@ def _read_chunk_content(chunk: Chunk) -> str:
     start = max(chunk.start_line - 1, 0)
     end = min(chunk.end_line, len(lines))
     return "".join(lines[start:end])
+
+
+read_chunk_content = _read_chunk_content
 
 
 try:

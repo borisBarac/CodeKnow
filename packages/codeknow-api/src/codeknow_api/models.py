@@ -31,6 +31,7 @@ class BuildJob:
 
 class BuildRequest(BaseModel):
     github_ssh_url: str
+    force_rebuild: bool = False
 
     @field_validator("github_ssh_url")
     @classmethod

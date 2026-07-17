@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import shutil
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from networkx.readwrite import json_graph as _jg
 
@@ -14,8 +18,50 @@ if TYPE_CHECKING:
     from codeknow.pipeline.types import PipelineResult
 
 
+@dataclass(frozen=True)
+class GenerationRef:
+    generation_id: str
+    collection_name: str
+    directory: Path
+
+
+def new_generation_id() -> str:
+    """Return a sortable unique generation ID."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    return f"{stamp}-{uuid4().hex[:8]}"
+
+
+def load_current(output_dir: Path) -> GenerationRef | None:
+    """Read and validate the active generation pointer once."""
+    pointer = output_dir / "current.json"
+    if not pointer.exists():
+        return None
+    data = json.loads(pointer.read_text(encoding="utf-8"))
+    generation_id = data["generation_id"]
+    collection_name = data["collection_name"]
+    directory = output_dir / "generations" / generation_id
+    ref = GenerationRef(generation_id, collection_name, directory)
+    validate_generation(ref)
+    return ref
+
+
+def validate_generation(ref: GenerationRef) -> None:
+    """Raise when any required generation file is missing or invalid."""
+    for filename in ("graph.json", "chunk_map.json", "metadata.json"):
+        path = ref.directory / filename
+        if not path.is_file():
+            msg = f"Incomplete generation {ref.generation_id}: missing {filename}"
+            raise FileNotFoundError(msg)
+        json.loads(path.read_text(encoding="utf-8"))
+
+
 def load_metadata(output_dir: Path) -> dict | None:
-    path = output_dir / "metadata.json"
+    current = load_current(output_dir)
+    path = (
+        current.directory / "metadata.json"
+        if current is not None
+        else output_dir / "metadata.json"
+    )
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
@@ -23,7 +69,7 @@ def load_metadata(output_dir: Path) -> dict | None:
 
 def save_metadata(result: PipelineResult) -> Path:
     cfg = result.config
-    out = cfg.resolved_output_dir()
+    out = _result_directory(result)
     metadata = {
         "github_ssh_url": cfg.repo_url,
         "slug": cfg.slug,
@@ -32,6 +78,11 @@ def save_metadata(result: PipelineResult) -> Path:
         "node_count": result.graph.number_of_nodes(),
         "edge_count": result.graph.number_of_edges(),
         "community_count": len(result.communities),
+        "schema_version": 2,
+        "build_fingerprint": cfg.build_fingerprint(),
+        "branch": result.branch_name,
+        "generation_id": result.generation_id,
+        "collection_name": result.collection_name,
     }
     path = out / "metadata.json"
     path.write_text(
@@ -39,6 +90,112 @@ def save_metadata(result: PipelineResult) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def load_chunk_map(path: Path) -> dict:
+    """Load a chunk map from a generation directory or file."""
+    from codeknow.schemas import Chunk
+
+    source = path / "chunk_map.json" if path.is_dir() else path
+    data = json.loads(source.read_text(encoding="utf-8"))
+    return {
+        file: [Chunk.model_validate(chunk) for chunk in chunks]
+        for file, chunks in data.items()
+    }
+
+
+def _result_directory(result: PipelineResult) -> Path:
+    out = result.config.resolved_output_dir()
+    if result.generation_id is None:
+        return out
+    return out / "generations" / result.generation_id
+
+
+def publish_generation(output_dir: Path, ref: GenerationRef) -> None:
+    """Atomically replace the active generation pointer."""
+    validate_generation(ref)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pointer = output_dir / "current.json"
+    previous: dict[str, str] = {}
+    if pointer.exists():
+        try:
+            old = json.loads(pointer.read_text(encoding="utf-8"))
+            old_ref = GenerationRef(
+                old["generation_id"],
+                old["collection_name"],
+                output_dir / "generations" / old["generation_id"],
+            )
+            validate_generation(old_ref)
+            previous = {
+                "previous_generation_id": old["generation_id"],
+                "previous_collection_name": old["collection_name"],
+            }
+        except (json.JSONDecodeError, KeyError, FileNotFoundError, ValueError):
+            previous = {}
+    temp = output_dir / f".current-{uuid4().hex}.tmp"
+    temp.write_text(
+        json.dumps(
+            {
+                "generation_id": ref.generation_id,
+                "collection_name": ref.collection_name,
+                **previous,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    temp.replace(pointer)
+
+
+def cleanup_generations(
+    output_dir: Path,
+    *,
+    grace_seconds: int,
+    keep: int = 2,
+) -> list[tuple[str, str | None]]:
+    """Remove expired generations except the newest retained generations."""
+    current = load_current(output_dir)
+    pointer_data: dict = {}
+    pointer = output_dir / "current.json"
+    if pointer.exists():
+        pointer_data = json.loads(pointer.read_text(encoding="utf-8"))
+    generations_dir = output_dir / "generations"
+    if not generations_dir.is_dir():
+        return []
+    directories = sorted(
+        (path for path in generations_dir.iterdir() if path.is_dir()),
+        key=lambda path: path.name,
+        reverse=True,
+    )
+    if keep < 1:
+        msg = "keep must be at least one"
+        raise ValueError(msg)
+    protected: set[str] = set()
+    if current is not None:
+        protected.add(current.generation_id)
+    previous_id = pointer_data.get("previous_generation_id")
+    if previous_id:
+        protected.add(previous_id)
+    cutoff = time.time() - grace_seconds
+    removed: list[tuple[str, str | None]] = []
+    for directory in directories:
+        if directory.name in protected:
+            continue
+        collection_name: str | None = None
+        metadata_path = directory / "metadata.json"
+        complete = True
+        try:
+            for filename in ("graph.json", "chunk_map.json", "metadata.json"):
+                json.loads((directory / filename).read_text(encoding="utf-8"))
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            collection_name = metadata.get("collection_name")
+        except (FileNotFoundError, json.JSONDecodeError):
+            complete = False
+        if complete and directory.stat().st_mtime > cutoff:
+            continue
+        shutil.rmtree(directory)
+        removed.append((directory.name, collection_name))
+    return removed
 
 
 def load_graph(path: Path) -> nx.Graph:
@@ -79,7 +236,7 @@ def save_pipeline_result(
     Returns the resolved path to the saved graph file.
     """
     cfg = result.config
-    out = cfg.resolved_output_dir()
+    out = _result_directory(result)
     out.mkdir(parents=True, exist_ok=True)
 
     graph_data = _jg.node_link_data(result.graph, edges="links")
@@ -103,5 +260,9 @@ def save_pipeline_result(
         )
 
     save_metadata(result)
+
+    if result.generation_id is not None and result.collection_name is not None:
+        ref = GenerationRef(result.generation_id, result.collection_name, out)
+        publish_generation(cfg.resolved_output_dir(), ref)
 
     return graph_path

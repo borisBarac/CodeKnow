@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -56,9 +57,9 @@ def _make_result(config: PipelineConfig | None = None) -> PipelineResult:
     chunk_b = Chunk(file="auth.py", start_line=31, end_line=60, hash="b" * 64)
     chunk_c = Chunk(file="util.py", start_line=1, end_line=10, hash="c" * 64)
 
-    G.nodes["n1"]["chunks"] = [{"hash": chunk_a.hash}]
-    G.nodes["n2"]["chunks"] = [{"hash": chunk_b.hash}]
-    G.nodes["n3"]["chunks"] = [{"hash": chunk_c.hash}]
+    G.nodes["n1"]["chunks"] = [{"hash": chunk_a.hash, "vector_id": chunk_a.vector_id}]
+    G.nodes["n2"]["chunks"] = [{"hash": chunk_b.hash, "vector_id": chunk_b.vector_id}]
+    G.nodes["n3"]["chunks"] = [{"hash": chunk_c.hash, "vector_id": chunk_c.vector_id}]
 
     communities = {1: ["n1", "n2"], 2: ["n3"]}
     chunk_map = {"auth.py": [chunk_a, chunk_b], "util.py": [chunk_c]}
@@ -78,14 +79,17 @@ class TestBuildChunkMetadata:
         result = _make_result()
         meta = build_chunk_metadata(result)
 
-        assert meta["a" * 64]["node_labels"] == "Authenticate"
-        assert meta["a" * 64]["community_ids"] == "1"
+        chunk_a = result.chunk_map["auth.py"][0]
+        chunk_b = result.chunk_map["auth.py"][1]
+        chunk_c = result.chunk_map["util.py"][0]
+        assert meta[chunk_a.vector_id]["node_labels"] == "Authenticate"
+        assert meta[chunk_a.vector_id]["community_ids"] == "1"
 
-        assert meta["b" * 64]["node_labels"] == "ValidateToken"
-        assert meta["b" * 64]["community_ids"] == "1"
+        assert meta[chunk_b.vector_id]["node_labels"] == "ValidateToken"
+        assert meta[chunk_b.vector_id]["community_ids"] == "1"
 
-        assert meta["c" * 64]["node_labels"] == "Helper"
-        assert meta["c" * 64]["community_ids"] == "2"
+        assert meta[chunk_c.vector_id]["node_labels"] == "Helper"
+        assert meta[chunk_c.vector_id]["community_ids"] == "2"
 
     def test_omits_keys_for_chunks_with_no_nodes(self):
         config = _make_config()
@@ -102,7 +106,7 @@ class TestBuildChunkMetadata:
         )
 
         meta = build_chunk_metadata(result)
-        assert "d" * 64 not in meta
+        assert chunk_x.vector_id not in meta
 
 
 class TestEmbedStage:
@@ -141,6 +145,43 @@ class TestEmbedStage:
 
         assert out.embed_stats is None
         assert out is result
+
+    @patch("codeknow.pipeline.embed_stage.ChromaStore")
+    @patch("codeknow.pipeline.embed_stage.create_embeddings")
+    def test_incremental_embed_copies_unchanged_and_embeds_changed(
+        self,
+        mock_create_emb,
+        mock_store_cls,
+        tmp_path,
+    ):
+        (tmp_path / "auth.py").write_text("\n" * 60, encoding="utf-8")
+        (tmp_path / "util.py").write_text("\n" * 9 + "helper\n", encoding="utf-8")
+        target = MagicMock()
+        source = MagicMock()
+        target.store_chunk_map.return_value = 2
+        target.copy_from.return_value = 1
+        mock_store_cls.side_effect = [target, source]
+        result = replace(
+            _make_result(),
+            repo_root=tmp_path,
+            collection_name="new-generation",
+            prior_collection_name="old-generation",
+            changed_paths=frozenset({"auth.py"}),
+        )
+
+        out = embed(result)
+
+        target.copy_from.assert_called_once_with(
+            source,
+            [result.chunk_map["util.py"][0].vector_id],
+        )
+        changed_map = target.store_chunk_map.call_args.args[0]
+        assert set(changed_map) == {"auth.py"}
+        assert out.embed_stats["chunks_embedded"] == 2
+        assert out.embed_stats["chunks_copied"] == 1
+        target.update_metadata.assert_called_once()
+        target.validate_ids.assert_called_once()
+        mock_create_emb.assert_called_once()
 
     @patch("codeknow.pipeline.embed_stage.ChromaStore")
     @patch("codeknow.pipeline.embed_stage.create_embeddings")
@@ -307,7 +348,7 @@ class TestChromaStoreExtraMetadata:
 
         chunk = Chunk(file="auth.py", start_line=1, end_line=10, hash="a" * 64)
         extra = {
-            "a" * 64: {
+            chunk.vector_id: {
                 "node_labels": "Auth|Login",
                 "community_ids": "1,2",
             }

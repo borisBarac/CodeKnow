@@ -16,7 +16,7 @@ def build_reverse_index(graph: nx.Graph) -> dict[str, list[str]]:
     index: dict[str, list[str]] = {}
     for nid, data in graph.nodes(data=True):
         for chunk in data.get("chunks", []):
-            h = chunk.get("hash")
-            if h:
-                index.setdefault(h, []).append(nid)
+            chunk_id = chunk.get("vector_id") or chunk.get("hash")
+            if chunk_id:
+                index.setdefault(chunk_id, []).append(nid)
     return index

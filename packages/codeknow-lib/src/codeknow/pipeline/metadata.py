@@ -19,8 +19,8 @@ def build_chunk_metadata(result: PipelineResult) -> dict[str, dict[str, Any]]:
     metadata: dict[str, dict[str, Any]] = {}
     for file_chunks in result.chunk_map.values():
         for chunk in file_chunks:
-            chunk_hash = chunk.hash
-            node_ids = reverse.get(chunk_hash, [])
+            vector_id = chunk.vector_id
+            node_ids = reverse.get(vector_id, [])
             if not node_ids:
                 continue
 
@@ -43,6 +43,6 @@ def build_chunk_metadata(result: PipelineResult) -> dict[str, dict[str, Any]]:
             if community_ids:
                 extra["community_ids"] = ",".join(str(c) for c in sorted(community_ids))
             if extra:
-                metadata[chunk_hash] = extra
+                metadata[vector_id] = extra
 
     return metadata
