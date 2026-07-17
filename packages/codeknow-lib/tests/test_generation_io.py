@@ -106,6 +106,10 @@ def test_cleanup_removes_only_expired_unprotected_generations(
     os.utime(expired.directory, (old_time, old_time))
     os.utime(previous.directory, (old_time, old_time))
     os.utime(current.directory, (old_time, old_time))
+    (expired.directory / "retired_at").write_text(
+        "2000-01-01T00:00:00+00:00",
+        encoding="utf-8",
+    )
 
     removed = cleanup_generations(tmp_path, grace_seconds=60, keep=1)
 
@@ -122,6 +126,20 @@ def test_cleanup_keeps_unexpired_abandoned_generation(tmp_path: Path) -> None:
 
     assert cleanup_generations(tmp_path, grace_seconds=60, keep=1) == []
     assert abandoned.directory.exists()
+
+
+def test_cleanup_grace_starts_when_generation_is_retired(tmp_path: Path) -> None:
+    first = _generation(tmp_path, "generation-1")
+    second = _generation(tmp_path, "generation-2")
+    third = _generation(tmp_path, "generation-3")
+    old_time = time.time() - 3600
+    os.utime(first.directory, (old_time, old_time))
+    publish_generation(tmp_path, first)
+    publish_generation(tmp_path, second)
+    publish_generation(tmp_path, third)
+
+    assert cleanup_generations(tmp_path, grace_seconds=60) == []
+    assert first.directory.exists()
 
 
 def test_searcher_loads_active_graph_and_collection(tmp_path: Path) -> None:
@@ -186,6 +204,7 @@ def test_cleanup_removes_expired_crashed_staging_collection(tmp_path: Path) -> N
     active = "codeknow_owner-repo_20990101T000000000000Z-active"
     expired = "codeknow_owner-repo_20000101T000000000000Z-expired"
     fresh = "codeknow_owner-repo_20990101T000000000000Z-fresh"
+    legacy = "codeknow_owner-repo"
     (tmp_path / "current.json").write_text(
         json.dumps({"generation_id": "active", "collection_name": active}),
         encoding="utf-8",
@@ -194,11 +213,13 @@ def test_cleanup_removes_expired_crashed_staging_collection(tmp_path: Path) -> N
     with (
         patch(
             "codeknow.vector.chroma.list_collection_names",
-            return_value={active, expired, fresh},
+            return_value={active, expired, fresh, legacy},
         ),
         patch("codeknow.vector.chroma.delete_collection") as delete,
     ):
         _cleanup_abandoned_collections(config)
 
-    assert delete.call_count == 1
-    assert delete.call_args.args[0].collection_name == expired
+    assert {call.args[0].collection_name for call in delete.call_args_list} == {
+        expired,
+        legacy,
+    }

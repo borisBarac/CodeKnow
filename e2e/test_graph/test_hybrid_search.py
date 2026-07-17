@@ -53,7 +53,10 @@ def search_env(tmp_path_factory):
     cache_dir = tmp_path_factory.mktemp("hybrid_cache")
     extractor = Extractor(cache_dir=cache_dir)
     discovery = extractor.discover(CODE_TEST_SMALL)
-    extraction = extractor.extract_from_discovery(discovery)
+    extraction = extractor.extract_from_discovery(
+        discovery,
+        repo_root=CODE_TEST_SMALL,
+    )
     g = build([extraction])
     communities = cluster(g)
     g_enriched, chunk_map = map_chunks(g, discovery["files"])

@@ -23,6 +23,12 @@ class ConfidenceLabel(str, Enum):
     AMBIGUOUS = "AMBIGUOUS"
 
 
+def vector_ids_digest(vector_ids: set[str]) -> str:
+    """Return a stable digest for an exact set of vector IDs."""
+    encoded = "\0".join(sorted(vector_ids)).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 class Chunk(BaseModel):
     """A contiguous range of lines in a source file, identified by SHA-256 hash.
 

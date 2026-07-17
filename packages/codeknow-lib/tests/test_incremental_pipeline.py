@@ -8,6 +8,7 @@ import networkx as nx
 import pytest
 from codeknow.git_download import GitChange
 from codeknow.pipeline import PipelineConfig, load_current, run_pipeline
+from codeknow.schemas import vector_ids_digest
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -296,3 +297,118 @@ def test_custom_collection_base_is_published_with_generation_suffix(
     assert current.chunk_map_filename == "custom-chunks.json"
     assert (current.directory / current.graph_filename).exists()
     assert (current.directory / current.chunk_map_filename).exists()
+
+
+def test_wrong_active_vector_ids_with_same_count_force_full_rebuild(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    output = tmp_path / "graph"
+    root.mkdir()
+    source = root / "main.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    config = PipelineConfig(
+        repo_url="https://github.com/owner/repo",
+        output_dir=output,
+    )
+    with (
+        patch("codeknow.pipeline.runner.get_commit_hash", return_value="same"),
+        patch("codeknow.pipeline.runner.get_remote_branch", return_value="main"),
+        patch("codeknow.pipeline.runner._cleanup_old_generations"),
+    ):
+        initial = _run(
+            config,
+            root,
+            _discovery(source),
+            _extraction({"main.py": ["value"]}),
+        )
+    current = load_current(output)
+    assert current is not None
+    expected_ids = {
+        chunk.vector_id for chunks in initial.chunk_map.values() for chunk in chunks
+    }
+    metadata_path = current.directory / "metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["vector_count"] = len(expected_ids)
+    metadata["vector_ids_digest"] = vector_ids_digest(expected_ids)
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    detect = MagicMock(return_value=_discovery(source))
+
+    with (
+        patch("codeknow.pipeline.runner.get_commit_hash", return_value="same"),
+        patch("codeknow.pipeline.runner.get_remote_branch", return_value="main"),
+        patch("codeknow.pipeline.runner.commit_exists", return_value=True),
+        patch(
+            "codeknow.vector.chroma.get_collection_ids",
+            return_value={"f" * 64},
+        ),
+        patch("codeknow.pipeline.runner._cleanup_old_generations"),
+    ):
+        rebuilt = run_pipeline(
+            config,
+            resolve_fn=lambda _config: root,
+            detect_fn=detect,
+            extract_ast_fn=lambda _discovery: _extraction({"main.py": ["value"]}),
+            build_graph_fn=_build,
+            cluster_fn=lambda graph: {0: list(graph.nodes)},
+            embed_fn=lambda result, **_kwargs: result,
+        )
+
+    assert rebuilt.generation_id != initial.generation_id
+    detect.assert_called_once()
+
+
+def test_legacy_collection_is_deleted_only_after_successful_publish(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    output = tmp_path / "graph"
+    root.mkdir()
+    output.mkdir()
+    source = root / "main.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    (output / "metadata.json").write_text(
+        json.dumps({"commit_hash": None}),
+        encoding="utf-8",
+    )
+    config = PipelineConfig(
+        repo_url="https://github.com/owner/repo",
+        output_dir=output,
+    )
+    legacy_name = "codeknow_owner-repo"
+
+    with (
+        patch("codeknow.pipeline.runner.get_commit_hash", return_value="commit"),
+        patch("codeknow.pipeline.runner.get_remote_branch", return_value="main"),
+        patch("codeknow.pipeline.runner._cleanup_old_generations"),
+        patch("codeknow.vector.chroma.delete_collection") as delete,
+        pytest.raises(RuntimeError, match="build failed"),
+    ):
+        _run(
+            config,
+            root,
+            _discovery(source),
+            _extraction({"main.py": ["value"]}),
+            embed_fn=MagicMock(side_effect=RuntimeError("build failed")),
+        )
+
+    assert legacy_name not in {
+        call.args[0].collection_name for call in delete.call_args_list
+    }
+
+    with (
+        patch("codeknow.pipeline.runner.get_commit_hash", return_value="commit"),
+        patch("codeknow.pipeline.runner.get_remote_branch", return_value="main"),
+        patch("codeknow.pipeline.runner._cleanup_old_generations"),
+        patch("codeknow.vector.chroma.delete_collection") as delete,
+    ):
+        _run(
+            config,
+            root,
+            _discovery(source),
+            _extraction({"main.py": ["value"]}),
+        )
+
+    assert legacy_name in {
+        call.args[0].collection_name for call in delete.call_args_list
+    }

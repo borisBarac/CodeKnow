@@ -98,6 +98,11 @@ def save_metadata(result: PipelineResult) -> Path:
         "graph_filename": cfg.graph_filename,
         "chunk_map_filename": cfg.chunk_map_filename,
     }
+    if result.embed_stats is not None:
+        metadata["vector_count"] = result.embed_stats.get(
+            "chunks_embedded", 0
+        ) + result.embed_stats.get("chunks_copied", 0)
+        metadata["vector_ids_digest"] = result.embed_stats.get("vector_ids_digest")
     path = out / "metadata.json"
     path.write_text(
         json.dumps(metadata, indent=2, ensure_ascii=False),
@@ -146,6 +151,13 @@ def publish_generation(output_dir: Path, ref: GenerationRef) -> None:
                 "previous_generation_id": old["generation_id"],
                 "previous_collection_name": old["collection_name"],
             }
+            retired_at = old_ref.directory / "retired_at"
+            retired_temp = old_ref.directory / f".retired-{uuid4().hex}.tmp"
+            retired_temp.write_text(
+                datetime.now(timezone.utc).isoformat(),
+                encoding="utf-8",
+            )
+            retired_temp.replace(retired_at)
         except (json.JSONDecodeError, KeyError, FileNotFoundError, ValueError):
             previous = {}
     temp = output_dir / f".current-{uuid4().hex}.tmp"
@@ -217,8 +229,19 @@ def cleanup_generations(
             collection_name = metadata.get("collection_name")
         except (FileNotFoundError, json.JSONDecodeError):
             complete = False
-        if complete and directory.stat().st_mtime > cutoff:
-            continue
+        if complete:
+            retired_at = directory / "retired_at"
+            if not retired_at.exists():
+                retired_at.write_text(
+                    datetime.now(timezone.utc).isoformat(),
+                    encoding="utf-8",
+                )
+                continue
+            retired_time = datetime.fromisoformat(
+                retired_at.read_text(encoding="utf-8")
+            ).timestamp()
+            if retired_time > cutoff:
+                continue
         shutil.rmtree(directory)
         removed.append((directory.name, collection_name))
     return removed

@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from codeknow.pipeline.metadata import build_chunk_metadata
+from codeknow.schemas import vector_ids_digest
 from codeknow.vector.chroma import ChromaConfig, ChromaStore
 from codeknow.vector.embeddings import (
     EmbeddingConfig,
@@ -119,6 +120,7 @@ def embed(
     embed_stats: dict[str, Any] = {
         "chunks_embedded": stored,
         "chunks_copied": copied,
+        "vector_ids_digest": vector_ids_digest(set(refreshed_metadata)),
         "provider": config.embed_provider,
         "model": config.embed_model,
         "batch_size": config.embed_batch_size,

@@ -317,6 +317,11 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
 
         if not facade.has_slug(slug):
             raise HTTPException(status_code=404, detail=f"Repo not found: {slug}")
+        if slug in state.builds_in_flight:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Build already in progress for repo: {slug}",
+            )
 
         result = await asyncio.to_thread(facade.delete, slug)
 

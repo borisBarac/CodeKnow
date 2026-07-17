@@ -151,6 +151,26 @@ class TestBuildStatus:
             del client.app.state.codeknow.build_jobs["test-repo"]
 
 
+def test_delete_rejects_repo_with_build_in_flight(
+    client: TestClient,
+    graph_dir: Path,
+) -> None:
+    slug_dir = graph_dir / "owner-repo"
+    slug_dir.mkdir()
+    (slug_dir / "metadata.json").write_text("{}", encoding="utf-8")
+    client.app.state.codeknow.builds_in_flight.add("owner-repo")
+    try:
+        response = client.request(
+            "DELETE",
+            "/v1/repos",
+            json={"slug": "owner-repo"},
+        )
+    finally:
+        client.app.state.codeknow.builds_in_flight.discard("owner-repo")
+
+    assert response.status_code == 409
+
+
 class TestJobEviction:
     def test_expired_terminal_jobs_are_evicted(self) -> None:
         old = datetime.now(tz=timezone.utc) - timedelta(hours=2)

@@ -136,6 +136,39 @@ class TestListRepos:
         result = facade.list_repos(health_check=True)
         assert result.repos[0].health == "ok"
 
+    def test_health_check_uses_custom_generation_graph_name(
+        self, tmp_path: Path
+    ) -> None:
+        import networkx as nx
+        from codeknow.pipeline.facade import PipelineFacade
+        from codeknow.pipeline.io import GenerationRef, publish_generation
+        from networkx.readwrite import json_graph as _jg
+
+        slug_dir = tmp_path / "custom-repo"
+        generation = slug_dir / "generations" / "one"
+        generation.mkdir(parents=True)
+        _write_metadata(generation.parent, "one", {"slug": "custom-repo"})
+        graph = nx.Graph()
+        graph.add_node("n1", label="A")
+        (generation / "custom.json").write_text(
+            json.dumps(_jg.node_link_data(graph, edges="links")),
+            encoding="utf-8",
+        )
+        (generation / "chunk_map.json").write_text("{}", encoding="utf-8")
+        publish_generation(
+            slug_dir,
+            GenerationRef(
+                "one",
+                "collection-one",
+                generation,
+                graph_filename="custom.json",
+            ),
+        )
+
+        result = PipelineFacade(graph_dir=tmp_path).list_repos(health_check=True)
+
+        assert result.repos[0].health == "ok"
+
 
 class TestDelete:
     def test_delete_removes_dirs(self, tmp_path: Path) -> None:

@@ -90,7 +90,7 @@ class Extractor:
         self,
         discovery: dict[str, Any],
         *,
-        repo_root: Path | None = None,
+        repo_root: Path,
     ) -> dict[str, Any]:
         """Extract AST from pre-discovered file lists.
 
@@ -111,8 +111,7 @@ class Extractor:
                 "input_tokens": 0,
                 "output_tokens": 0,
             }
-        root = repo_root or self._common_root(code_paths)
-        return self._extract(code_paths, root)
+        return self._extract(code_paths, repo_root)
 
     def discover(self, repo_path: Path) -> dict[str, Any]:
         """Return the file discovery dict without extracting."""
@@ -120,17 +119,6 @@ class Extractor:
 
     def _discover_files(self, repo_path: Path) -> dict[str, Any]:
         return detect(repo_path)
-
-    @staticmethod
-    def _common_root(paths: list[Path]) -> Path:
-        """Infer a root for compatibility with old direct callers."""
-        if not paths:
-            return Path.cwd()
-        if len(paths) == 1:
-            return paths[0].resolve().parent
-        import os
-
-        return Path(os.path.commonpath([str(path.resolve()) for path in paths]))
 
     def _extract(self, paths: list[Path], root: Path) -> dict[str, Any]:
         """Multi-file extraction orchestrator.

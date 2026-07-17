@@ -144,6 +144,10 @@ class PipelineFacade:
         if slug.startswith("."):
             msg = f"Refusing to delete internal directory: {slug}"
             raise ValueError(msg)
+        with self._build_lock(slug):
+            return self._delete_unlocked(slug)
+
+    def _delete_unlocked(self, slug: str) -> DeleteResult:
         collection_names: set[str] = {f"codeknow_{slug}"}
         generations = self.slug_dir(slug) / "generations"
         if generations.is_dir():
@@ -243,7 +247,10 @@ class PipelineFacade:
 
                         current = load_current(child)
                         graph_dir = current.directory if current else child
-                        load_graph(graph_dir / "graph.json")
+                        graph_filename = (
+                            current.graph_filename if current else "graph.json"
+                        )
+                        load_graph(graph_dir / graph_filename)
                         meta["health"] = "ok"
                     except FileNotFoundError:
                         meta["health"] = "missing_graph"
