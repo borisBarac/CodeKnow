@@ -40,6 +40,7 @@ class Chunk(BaseModel):
     start_line: int = Field(ge=1)
     end_line: int = Field(ge=1)
     hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    embeddable: bool = True
 
     @computed_field
     @property

@@ -279,9 +279,9 @@ def run_pipeline(
                 expected_metadata = {}
                 can_reuse = False
             else:
-                expected_metadata = {
-                    vector_id: all_metadata[vector_id] for vector_id in stored_ids
-                }
+                expected_metadata = all_metadata
+                if set(stored_ids) != set(expected_metadata):
+                    can_reuse = False
         except (FileNotFoundError, KeyError, ValueError):
             expected_metadata = {}
             can_reuse = False
@@ -315,7 +315,7 @@ def run_pipeline(
                 "files": len(chunk_map),
                 "words": 0,
             }
-            result = PipelineResult(
+            return PipelineResult(
                 graph=graph,
                 communities=communities,
                 chunk_map=chunk_map,
@@ -330,9 +330,6 @@ def run_pipeline(
                 changed_paths=frozenset(),
                 branch_name=branch_name,
             )
-            if managed:
-                _cleanup_old_generations(config)
-            return result
 
     if managed:
         _cleanup_old_generations(config)

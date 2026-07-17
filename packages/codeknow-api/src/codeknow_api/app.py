@@ -269,7 +269,10 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
         return JSONResponse(content=resp_data, status_code=200)
 
     @app.post("/v1/search")
-    @cache_search(ttl=config.cache_ttl)
+    @cache_search(
+        ttl=config.cache_ttl,
+        version_fn=lambda body: facade.generation_token(body.repos),
+    )
     async def search(body: SearchRequest) -> SearchResponse:
         repos = body.repos
 

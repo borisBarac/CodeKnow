@@ -20,6 +20,8 @@ def build_vector_metadata(
     metadata: dict[str, dict[str, Any]] = {}
     for chunks in result.chunk_map.values():
         for chunk in chunks:
+            if not chunk.embeddable:
+                continue
             if (
                 check_content
                 and not read_chunk_content(chunk, result.repo_root).strip()

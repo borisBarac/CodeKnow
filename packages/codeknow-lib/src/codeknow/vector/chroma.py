@@ -10,6 +10,7 @@ to pass it per-call.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
 import os
 from typing import TYPE_CHECKING, Any, cast
@@ -150,11 +151,15 @@ def _validate_collection_records(
         index = by_id[vector_id]
         metadata = metadatas[index] or {}
         embedding = embeddings[index]
-        if not documents[index] or embedding is None or len(embedding) == 0:
+        document = documents[index]
+        if not document or embedding is None or len(embedding) == 0:
             msg = f"Vector validation failed: unusable record {vector_id}"
             raise ValueError(msg)
         if metadata != expected:
             msg = f"Vector validation failed: wrong metadata {vector_id}"
+            raise ValueError(msg)
+        if hashlib.sha256(document.encode()).hexdigest() != expected["content_hash"]:
+            msg = f"Vector validation failed: wrong document {vector_id}"
             raise ValueError(msg)
     if ids:
         first_embedding: list[float] = [float(value) for value in embeddings[0]]
@@ -164,7 +169,7 @@ def _validate_collection_records(
             include=["metadatas"],
         )
         found = lookup.get("ids", [[]])
-        if not found or not found[0]:
+        if not found or not found[0] or not set(found[0]).issubset(expected_ids):
             msg = "Vector validation failed: lookup returned no records"
             raise ValueError(msg)
 

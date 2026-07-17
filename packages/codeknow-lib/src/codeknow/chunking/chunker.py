@@ -154,6 +154,7 @@ def chunk_file_ast(
                 start_line=1,
                 end_line=1,
                 hash=_hash_content(""),
+                embeddable=False,
             )
         ]
 
@@ -186,6 +187,7 @@ def chunk_file_ast(
                     start_line=s_start,
                     end_line=s_end,
                     hash=_hash_content(content),
+                    embeddable=bool(content.strip()),
                 )
             )
         else:
@@ -199,6 +201,7 @@ def chunk_file_ast(
                         start_line=pos,
                         end_line=end,
                         hash=_hash_content(content),
+                        embeddable=bool(content.strip()),
                     )
                 )
                 if end >= s_end:
@@ -242,6 +245,7 @@ def chunk_file_linear(
                 start_line=1,
                 end_line=1,
                 hash=_hash_content(""),
+                embeddable=False,
             )
         ]
 
@@ -256,6 +260,7 @@ def chunk_file_linear(
                 start_line=start + 1,
                 end_line=end,
                 hash=_hash_content(content),
+                embeddable=bool(content.strip()),
             )
         )
         if end >= total:

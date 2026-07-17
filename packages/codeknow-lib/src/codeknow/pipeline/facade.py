@@ -245,6 +245,36 @@ class PipelineFacade:
             self.graph_dir, query, top_k=top_k, slugs=slugs
         )
 
+    def generation_token(self, slugs: list[str] | None = None) -> str:
+        """Return a stable token for the exact active generations searched."""
+        selected = (
+            sorted(set(slugs))
+            if slugs is not None
+            else sorted(
+                child.name
+                for child in self.graph_dir.iterdir()
+                if child.is_dir() and not child.name.startswith(".")
+            )
+            if self.graph_dir.is_dir()
+            else []
+        )
+        generations: list[tuple[str, str | None, str | None]] = []
+        for slug in selected:
+            try:
+                pointer = json.loads(
+                    (self.slug_dir(slug) / "current.json").read_text(encoding="utf-8")
+                )
+            except (FileNotFoundError, json.JSONDecodeError):
+                pointer = {}
+            generations.append(
+                (
+                    slug,
+                    pointer.get("generation_id"),
+                    pointer.get("collection_name"),
+                )
+            )
+        return json.dumps(generations, separators=(",", ":"))
+
     def cleanup(self) -> list[DeleteResult]:
         """Delete all slugs: graph dirs, temp dirs, ChromaDB collections, repo_map."""
         results: list[DeleteResult] = []

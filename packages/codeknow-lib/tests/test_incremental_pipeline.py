@@ -299,6 +299,7 @@ def test_same_commit_returns_active_generation_without_pipeline_writes(
         patch("codeknow.pipeline.runner.get_commit_hash", return_value="same"),
         patch("codeknow.pipeline.runner.get_remote_branch", return_value="main"),
         patch("codeknow.pipeline.runner.commit_exists", return_value=True),
+        patch("codeknow.pipeline.runner._cleanup_old_generations") as cleanup,
     ):
         second = run_pipeline(
             config,
@@ -310,6 +311,7 @@ def test_same_commit_returns_active_generation_without_pipeline_writes(
     assert second.changed_paths == frozenset()
     assert (output / "current.json").read_bytes() == pointer_before
     detect.assert_not_called()
+    cleanup.assert_not_called()
 
 
 def test_failed_incremental_embedding_keeps_active_generation(tmp_path: Path) -> None:
@@ -626,6 +628,71 @@ def test_wrong_active_vector_ids_with_same_count_force_full_rebuild(
             resolve_fn=lambda _config: root,
             detect_fn=detect,
             extract_ast_fn=lambda _discovery: _extraction({"main.py": ["value"]}),
+            build_graph_fn=_build,
+            cluster_fn=lambda graph: {0: list(graph.nodes)},
+            embed_fn=lambda result, **_kwargs: result,
+        )
+
+    assert rebuilt.generation_id != initial.generation_id
+    detect.assert_called_once()
+
+
+def test_missing_vector_from_metadata_and_collection_forces_full_rebuild(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    output = tmp_path / "graph"
+    root.mkdir()
+    first = root / "first.py"
+    second = root / "second.py"
+    first.write_text("first\n", encoding="utf-8")
+    second.write_text("second\n", encoding="utf-8")
+    config = PipelineConfig(
+        repo_url="https://github.com/owner/repo",
+        output_dir=output,
+    )
+    with (
+        patch("codeknow.pipeline.runner.get_commit_hash", return_value="same"),
+        patch("codeknow.pipeline.runner.get_remote_branch", return_value="main"),
+        patch("codeknow.pipeline.runner._cleanup_old_generations"),
+    ):
+        initial = _run(
+            config,
+            root,
+            _discovery(first, second),
+            _extraction({"first.py": ["first"], "second.py": ["second"]}),
+        )
+    current = load_current(output)
+    assert current is not None
+    all_ids = sorted(
+        chunk.vector_id for chunks in initial.chunk_map.values() for chunk in chunks
+    )
+    missing_snapshot = {all_ids[0]}
+    metadata_path = current.directory / "metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["vector_ids"] = sorted(missing_snapshot)
+    metadata["vector_count"] = len(missing_snapshot)
+    metadata["vector_ids_digest"] = vector_ids_digest(missing_snapshot)
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    detect = MagicMock(return_value=_discovery(first, second))
+
+    with (
+        patch("codeknow.pipeline.runner.get_commit_hash", return_value="same"),
+        patch("codeknow.pipeline.runner.get_remote_branch", return_value="main"),
+        patch("codeknow.pipeline.runner.commit_exists", return_value=True),
+        patch(
+            "codeknow.vector.chroma.validate_collection_records",
+            return_value=True,
+        ),
+        patch("codeknow.pipeline.runner._cleanup_old_generations"),
+    ):
+        rebuilt = run_pipeline(
+            config,
+            resolve_fn=lambda _config: root,
+            detect_fn=detect,
+            extract_ast_fn=lambda _discovery: _extraction(
+                {"first.py": ["first"], "second.py": ["second"]}
+            ),
             build_graph_fn=_build,
             cluster_fn=lambda graph: {0: list(graph.nodes)},
             embed_fn=lambda result, **_kwargs: result,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -397,7 +398,7 @@ class TestChromaStoreValidation:
                     "file": "a.py",
                     "start_line": 1,
                     "end_line": 2,
-                    "content_hash": "hash",
+                    "content_hash": hashlib.sha256(b"source").hexdigest(),
                     "slug": "owner-repo",
                 }
             ],
@@ -413,7 +414,7 @@ class TestChromaStoreValidation:
                     "file": "a.py",
                     "start_line": 1,
                     "end_line": 2,
-                    "content_hash": "hash",
+                    "content_hash": hashlib.sha256(b"source").hexdigest(),
                     "slug": "owner-repo",
                 }
             }
@@ -460,7 +461,12 @@ class TestChromaStoreValidation:
         collection.get.return_value = {
             "ids": ["vector-1"],
             "documents": ["source"],
-            "metadatas": [{"file": "a.py"}],
+            "metadatas": [
+                {
+                    "file": "a.py",
+                    "content_hash": hashlib.sha256(b"source").hexdigest(),
+                }
+            ],
             "embeddings": [[0.1]],
         }
         collection.query.side_effect = RuntimeError("index unavailable")
@@ -468,7 +474,51 @@ class TestChromaStoreValidation:
         store._collection = collection
 
         with pytest.raises(RuntimeError, match="index unavailable"):
-            store.validate_records({"vector-1": {"file": "a.py"}})
+            store.validate_records(
+                {
+                    "vector-1": {
+                        "file": "a.py",
+                        "content_hash": hashlib.sha256(b"source").hexdigest(),
+                    }
+                }
+            )
+
+    def test_validate_records_rejects_corrupted_document(self):
+        from codeknow.vector.chroma import ChromaStore
+
+        expected_hash = hashlib.sha256(b"expected").hexdigest()
+        metadata = {"file": "a.py", "content_hash": expected_hash}
+        collection = MagicMock()
+        collection.get.return_value = {
+            "ids": ["vector-1"],
+            "documents": ["corrupt"],
+            "metadatas": [metadata],
+            "embeddings": [[0.1]],
+        }
+        store = ChromaStore(embeddings=MagicMock())
+        store._collection = collection
+
+        with pytest.raises(ValueError, match="wrong document"):
+            store.validate_records({"vector-1": metadata})
+
+    def test_validate_records_rejects_lookup_of_unknown_id(self):
+        from codeknow.vector.chroma import ChromaStore
+
+        content_hash = hashlib.sha256(b"source").hexdigest()
+        metadata = {"file": "a.py", "content_hash": content_hash}
+        collection = MagicMock()
+        collection.get.return_value = {
+            "ids": ["vector-1"],
+            "documents": ["source"],
+            "metadatas": [metadata],
+            "embeddings": [[0.1]],
+        }
+        collection.query.return_value = {"ids": [["unknown"]]}
+        store = ChromaStore(embeddings=MagicMock())
+        store._collection = collection
+
+        with pytest.raises(ValueError, match="lookup returned no records"):
+            store.validate_records({"vector-1": metadata})
 
 
 class TestEmbedTexts:
