@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -184,6 +185,34 @@ class TestCacheSearch:
 
         keys = await with_fake_service.keys("ck:search:*")
         assert len(keys) == 2
+
+    @pytest.mark.anyio
+    async def test_does_not_cache_search_when_generation_changes(
+        self,
+        with_fake_service: fakeredis.aioredis.FakeRedis,
+    ) -> None:
+        generation = "old"
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        @cache.cache_search(
+            ttl=60,
+            version_fn=lambda _body: generation,
+        )
+        async def handler(body: Any) -> dict[str, Any]:
+            started.set()
+            await release.wait()
+            return {"results": [{"text": body.query}]}
+
+        task = asyncio.create_task(
+            handler(body=SimpleNamespace(query="test", repos=None, top_k=10))
+        )
+        await started.wait()
+        generation = "new"
+        release.set()
+        await task
+
+        assert await with_fake_service.keys("ck:search:*") == []
 
 
 class TestInvalidateForSlug:

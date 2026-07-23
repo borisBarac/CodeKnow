@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -47,6 +47,7 @@ class ApiConfig:
     temp_dir: Path
     job_ttl: timedelta
     cache_ttl: int
+    recovery_interval: float = 300.0
 
     @classmethod
     def from_env(cls) -> ApiConfig:
@@ -58,6 +59,9 @@ class ApiConfig:
                 seconds=int(os.getenv("CODEKNOW_JOB_TTL_SECONDS", str(60 * 60)))
             ),
             cache_ttl=int(os.getenv("CODEKNOW_CACHE_TTL", "300")),
+            recovery_interval=float(
+                os.getenv("CODEKNOW_RECOVERY_INTERVAL_SECONDS", "300")
+            ),
         )
 
 
@@ -72,6 +76,16 @@ class AppState:
 
 
 logger = logging.getLogger(__name__)
+_MAX_REPOSITORIES = 5
+
+
+async def _recover_periodically(
+    facade: PipelineFacade,
+    interval: float,
+) -> None:
+    while True:
+        await asyncio.sleep(interval)
+        await asyncio.to_thread(facade.recover)
 
 
 def _evict_completed_jobs(jobs: dict[str, BuildJob], job_ttl: timedelta) -> None:
@@ -94,6 +108,8 @@ async def _run_build(
     github_ssh_url: str,
     redis_service: RedisService,
     facade: PipelineFacade,
+    force_rebuild: bool = False,
+    fetch_remote: bool = True,
 ) -> None:
     """Run a single build to completion, updating its :class:`BuildJob`.
 
@@ -124,7 +140,8 @@ async def _run_build(
         result = await asyncio.to_thread(
             facade.build,
             github_ssh_url,
-            clean_first=True,
+            clean_first=force_rebuild,
+            fetch_remote=fetch_remote,
             progress_callback=on_progress,
         )
         job.status = "succeeded"
@@ -157,8 +174,17 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        yield
-        await redis_service.close()
+        await asyncio.to_thread(facade.recover)
+        recovery_task = asyncio.create_task(
+            _recover_periodically(facade, config.recovery_interval)
+        )
+        try:
+            yield
+        finally:
+            recovery_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await recovery_task
+            await redis_service.close()
 
     app = FastAPI(
         title="CodeKnow API",
@@ -211,6 +237,17 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=409, detail="Build already in progress for this repo"
             )
+
+        if not facade.has_slug(slug):
+            indexed_count = facade.list_repos().total
+            new_builds = sum(
+                not facade.has_slug(in_flight_slug) for in_flight_slug in in_flight
+            )
+            if indexed_count + new_builds >= _MAX_REPOSITORIES:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Repository limit of {_MAX_REPOSITORIES} reached",
+                )
         in_flight.add(slug)
 
         try:
@@ -223,6 +260,8 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
                     github_ssh_url=body.github_ssh_url,
                     redis_service=redis_service,
                     facade=facade,
+                    force_rebuild=body.force_rebuild,
+                    fetch_remote=body.fetch_remote,
                 )
             )
             state.build_tasks.add(task)
@@ -266,7 +305,10 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
         return JSONResponse(content=resp_data, status_code=200)
 
     @app.post("/v1/search")
-    @cache_search(ttl=config.cache_ttl)
+    @cache_search(
+        ttl=config.cache_ttl,
+        version_fn=lambda body: facade.generation_token(body.repos),
+    )
     async def search(body: SearchRequest) -> SearchResponse:
         repos = body.repos
 
@@ -276,18 +318,6 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Unknown slugs: {missing}",
-                )
-
-            building = [
-                s
-                for s in repos
-                if (job := state.build_jobs.get(s))
-                and job.status in ("queued", "running")
-            ]
-            if building:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Repos being rebuilt: {building}",
                 )
 
         try:
@@ -315,6 +345,11 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
 
         if not facade.has_slug(slug):
             raise HTTPException(status_code=404, detail=f"Repo not found: {slug}")
+        if slug in state.builds_in_flight:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Build already in progress for repo: {slug}",
+            )
 
         result = await asyncio.to_thread(facade.delete, slug)
 

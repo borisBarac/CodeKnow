@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from codeknow.schemas import Chunk, ChunkMap
 
@@ -43,6 +44,7 @@ class VectorStore(Protocol):
         slug: str | None = None,
         extra_metadata: dict[str, dict] | None = None,
         on_progress: Callable[[int, int], None] | None = None,
+        repo_root: Path | None = None,
     ) -> int:
         """Persist chunk embeddings.  Returns the number of chunks stored.
 
@@ -59,6 +61,7 @@ class VectorStore(Protocol):
         slug: str | None = None,
         extra_metadata: dict[str, dict] | None = None,
         on_progress: Callable[[int, int], None] | None = None,
+        repo_root: Path | None = None,
     ) -> int:
         """Flatten *chunk_map* and persist all chunks.  Returns count stored."""
         ...

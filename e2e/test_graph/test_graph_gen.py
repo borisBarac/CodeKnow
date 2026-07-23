@@ -30,7 +30,7 @@ def _run_pipeline(cache_dir: Path):
         len(discovery["files"].get("code", [])),
         discovery.get("total_files", 0),
     )
-    extraction = extractor.extract_from_discovery(discovery)
+    extraction = extractor.extract_from_discovery(discovery, repo_root=root)
     logger.info(
         "extract_from_discovery(): %d nodes, %d edges",
         len(extraction["nodes"]),

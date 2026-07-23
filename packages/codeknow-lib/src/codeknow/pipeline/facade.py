@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -10,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 from codeknow.schemas import HybridSearchResponse, ListReposResponse, RepoMetadata
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from codeknow.vector.chroma import ChromaStore
 
 logger = logging.getLogger(__name__)
@@ -62,15 +66,18 @@ class PipelineFacade:
         return self.graph_dir / slug
 
     def has_slug(self, slug: str) -> bool:
-        return (self.slug_dir(slug) / "metadata.json").exists()
+        directory = self.slug_dir(slug)
+        return (directory / "current.json").exists() or (
+            directory / "metadata.json"
+        ).exists()
 
-    def _make_store(self, slug: str) -> ChromaStore:
+    def _make_store(self, slug: str, collection_name: str | None = None) -> ChromaStore:
         from codeknow.vector.chroma import ChromaConfig, ChromaStore
         from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
 
         embeddings = create_embeddings(EmbeddingConfig())
         return ChromaStore(
-            config=ChromaConfig(collection_name=f"codeknow_{slug}"),
+            config=ChromaConfig(collection_name=collection_name or f"codeknow_{slug}"),
             embeddings=embeddings,
         )
 
@@ -91,19 +98,19 @@ class PipelineFacade:
         ssh_url: str,
         *,
         clean_first: bool = False,
+        fetch_remote: bool = True,
         progress_callback: Any = None,
     ) -> BuildResult:
         from codeknow.pipeline import PipelineConfig, run_pipeline
 
         slug = PipelineConfig(repo_url=ssh_url).slug
 
-        if clean_first and self.slug_dir(slug).exists():
-            self.delete(slug)
-
         config = PipelineConfig(
             repo_url=ssh_url,
             input_dir=self.temp_dir,
             output_dir=self.graph_dir / slug,
+            force_rebuild=clean_first,
+            fetch_remote=fetch_remote,
         )
 
         kwargs: dict[str, Any] = {}
@@ -111,7 +118,6 @@ class PipelineFacade:
             kwargs["progress_callback"] = progress_callback
 
         result = run_pipeline(config, **kwargs)
-        shutil.rmtree(self.temp_dir / slug, ignore_errors=True)
 
         return BuildResult(
             slug=slug,
@@ -121,18 +127,96 @@ class PipelineFacade:
             community_count=result.stats.get("communities"),
         )
 
+    @contextmanager
+    def _build_lock(self, slug: str) -> Iterator[None]:
+        """Allow one build process per slug."""
+        from codeknow.pipeline.locking import slug_build_lock
+
+        with slug_build_lock(self.graph_dir, slug):
+            yield
+
     def delete(self, slug: str) -> DeleteResult:
-        shutil.rmtree(self.slug_dir(slug), ignore_errors=True)
-        shutil.rmtree(self.temp_dir / slug, ignore_errors=True)
+        if slug.startswith("."):
+            msg = f"Refusing to delete internal directory: {slug}"
+            raise ValueError(msg)
+        with self._build_lock(slug):
+            return self._delete_unlocked(slug)
+
+    def _delete_unlocked(self, slug: str) -> DeleteResult:
+        collection_names: set[str] = {f"codeknow_{slug}"}
+        generation_ids: set[str] = set()
+        pointer_path = self.slug_dir(slug) / "current.json"
+        try:
+            pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+            for key in ("collection_name", "previous_collection_name"):
+                if name := pointer.get(key):
+                    collection_names.add(name)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+
+        generations = self.slug_dir(slug) / "generations"
+        if generations.is_dir():
+            from codeknow.pipeline import load_metadata
+
+            for generation in generations.iterdir():
+                generation_ids.add(generation.name)
+                try:
+                    metadata = load_metadata(generation)
+                except Exception:
+                    logger.warning(
+                        "Could not read generation metadata at %s",
+                        generation,
+                        exc_info=True,
+                    )
+                    continue
+                if metadata and metadata.get("collection_name"):
+                    collection_names.add(metadata["collection_name"])
+
+        from codeknow.vector.chroma import ChromaConfig, list_collection_names
+
+        listed_names = list_collection_names(ChromaConfig())
+        if listed_names is None:
+            msg = "Could not enumerate ChromaDB collections"
+            raise RuntimeError(msg)
+        for name in listed_names:
+            if any(
+                name.endswith(f"_{generation_id}") for generation_id in generation_ids
+            ):
+                collection_names.add(name)
+        names_to_scan = listed_names
 
         chunks_deleted = 0
-        try:
-            store = self._make_store(slug)
-            chunks_deleted = store.delete_by_slug(slug)
-        except Exception:
-            logger.warning(
-                "ChromaDB deletion failed for slug '%s'", slug, exc_info=True
-            )
+        failures: list[str] = []
+        dropped_names: set[str] = set()
+        for collection_name in names_to_scan:
+            try:
+                store = self._make_store(slug, collection_name)
+                deleted = store.delete_by_slug(slug)
+                chunks_deleted += deleted
+                if collection_name in collection_names or (
+                    deleted and store.count() == 0
+                ):
+                    store.drop_collection(strict=True)
+                    dropped_names.add(collection_name)
+            except Exception:  # noqa: PERF203 - isolate each collection failure
+                failures.append(collection_name)
+                logger.warning(
+                    "ChromaDB deletion failed for slug '%s' collection '%s'",
+                    slug,
+                    collection_name,
+                    exc_info=True,
+                )
+        remaining_names = list_collection_names(ChromaConfig())
+        if remaining_names is None:
+            failures.append("<collection verification>")
+        else:
+            failures.extend(sorted(dropped_names & remaining_names))
+        if failures:
+            msg = f"Failed to delete {len(failures)} ChromaDB collection(s)"
+            raise RuntimeError(msg)
+
+        shutil.rmtree(self.slug_dir(slug), ignore_errors=True)
+        shutil.rmtree(self.temp_dir / slug, ignore_errors=True)
 
         url = self.resolve_url_for_slug(slug)
         if url:
@@ -155,14 +239,88 @@ class PipelineFacade:
             self.graph_dir, query, top_k=top_k, slugs=slugs
         )
 
+    def generation_token(self, slugs: list[str] | None = None) -> str:
+        """Return a stable token for the exact active generations searched."""
+        selected = (
+            sorted(set(slugs))
+            if slugs is not None
+            else sorted(
+                child.name
+                for child in self.graph_dir.iterdir()
+                if child.is_dir() and not child.name.startswith(".")
+            )
+            if self.graph_dir.is_dir()
+            else []
+        )
+        generations: list[tuple[str, str | None, str | None]] = []
+        for slug in selected:
+            try:
+                pointer = json.loads(
+                    (self.slug_dir(slug) / "current.json").read_text(encoding="utf-8")
+                )
+            except (FileNotFoundError, json.JSONDecodeError):
+                pointer = {}
+            generations.append(
+                (
+                    slug,
+                    pointer.get("generation_id"),
+                    pointer.get("collection_name"),
+                )
+            )
+        return json.dumps(generations, separators=(",", ":"))
+
     def cleanup(self) -> list[DeleteResult]:
         """Delete all slugs: graph dirs, temp dirs, ChromaDB collections, repo_map."""
         results: list[DeleteResult] = []
         if self.graph_dir.is_dir():
             for child in sorted(self.graph_dir.iterdir()):
-                if child.is_dir():
+                if child.is_dir() and not child.name.startswith("."):
                     results.append(self.delete(child.name))
         return results
+
+    def recover(self) -> None:
+        """Clean abandoned generations and collections for every known slug."""
+        if not self.graph_dir.is_dir():
+            return
+        from codeknow.pipeline import PipelineConfig, load_metadata
+        from codeknow.pipeline.runner import _cleanup_old_generations
+
+        for directory in sorted(self.graph_dir.iterdir()):
+            if not directory.is_dir() or directory.name.startswith("."):
+                continue
+            try:
+                metadata = load_metadata(directory) or {}
+            except Exception:
+                metadata = {}
+            if not metadata.get("collection_name"):
+                generations = directory / "generations"
+                if generations.is_dir():
+                    for candidate in sorted(generations.iterdir(), reverse=True):
+                        try:
+                            candidate_metadata = json.loads(
+                                (candidate / "metadata.json").read_text(
+                                    encoding="utf-8"
+                                )
+                            )
+                        except (FileNotFoundError, json.JSONDecodeError):
+                            continue
+                        if candidate_metadata.get("collection_name"):
+                            metadata = candidate_metadata
+                            break
+            generation_id = metadata.get("generation_id")
+            collection_name = metadata.get("collection_name")
+            collection_base = None
+            if generation_id and collection_name:
+                suffix = f"_{generation_id}"
+                if collection_name.endswith(suffix):
+                    collection_base = collection_name.removesuffix(suffix)
+            config = PipelineConfig(
+                repo_url=metadata.get("github_ssh_url", directory.name),
+                output_dir=directory,
+                chroma_collection=collection_base,
+            )
+            with self._build_lock(directory.name):
+                _cleanup_old_generations(config)
 
     def list_repos(
         self,
@@ -197,9 +355,14 @@ class PipelineFacade:
 
                 if health_check:
                     try:
-                        from codeknow.pipeline.io import load_graph
+                        from codeknow.pipeline.io import load_current, load_graph
 
-                        load_graph(child / "graph.json")
+                        current = load_current(child)
+                        graph_dir = current.directory if current else child
+                        graph_filename = (
+                            current.graph_filename if current else "graph.json"
+                        )
+                        load_graph(graph_dir / graph_filename)
                         meta["health"] = "ok"
                     except FileNotFoundError:
                         meta["health"] = "missing_graph"

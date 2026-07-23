@@ -7,7 +7,10 @@ import json
 import logging
 import os
 from functools import wraps
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +105,14 @@ class RedisService:
             logger.warning("Search cache invalidation failed", exc_info=True)
 
 
-def _make_key(query: str, repos: list[str] | None, top_k: int) -> str:
+def _make_key(
+    query: str,
+    repos: list[str] | None,
+    top_k: int,
+    generation: str | None = None,
+) -> str:
     repos_sorted = sorted(repos) if repos is not None else None
-    raw = json.dumps({"q": query, "repos": repos_sorted, "k": top_k})
+    raw = json.dumps({"q": query, "repos": repos_sorted, "k": top_k, "g": generation})
     h = hashlib.sha256(raw.encode()).hexdigest()
     return f"ck:search:{h}"
 
@@ -125,7 +133,11 @@ def _body_references_slug(data: Any, slug: str) -> bool:
     return False
 
 
-def cache_search(ttl: int | None = None) -> Any:
+def cache_search(
+    ttl: int | None = None,
+    *,
+    version_fn: Callable[[Any], str] | None = None,
+) -> Any:
     """Decorator that caches the return value of a FastAPI search handler.
 
     The decorated function must accept a ``body`` that is an object exposing
@@ -146,7 +158,8 @@ def cache_search(ttl: int | None = None) -> Any:
             top_k = raw.top_k
             repos = raw.repos
 
-            cache_key = _make_key(query, repos, top_k)
+            generation = version_fn(raw) if version_fn is not None else None
+            cache_key = _make_key(query, repos, top_k, generation)
             redis = await get_redis()
 
             if redis is not None:
@@ -161,7 +174,8 @@ def cache_search(ttl: int | None = None) -> Any:
 
             payload = result.model_dump() if hasattr(result, "model_dump") else result
 
-            if redis is not None:
+            generation_unchanged = version_fn is None or version_fn(raw) == generation
+            if redis is not None and generation_unchanged:
                 try:
                     await redis.set(
                         cache_key,

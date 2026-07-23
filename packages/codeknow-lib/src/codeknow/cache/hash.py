@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from codeknow.pipeline.config import EXTRACTION_CACHE_VERSION
+
 _CHUNK_SIZE = 64 * 1024
 
 
@@ -22,6 +24,8 @@ def file_hash(path: Path, root: Path = Path()) -> str:
         raise IsADirectoryError(msg)
 
     h = hashlib.sha256()
+    h.update(f"extraction:{EXTRACTION_CACHE_VERSION}".encode())
+    h.update(b"\x00")
 
     if p.suffix.lower() == ".md":
         h.update(_body_content(p.read_bytes()))

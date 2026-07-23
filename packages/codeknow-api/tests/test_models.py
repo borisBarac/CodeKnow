@@ -17,6 +17,17 @@ class TestBuildRequest:
     def test_valid_url_with_git_suffix(self) -> None:
         req = BuildRequest(github_ssh_url="git@github.com:owner/repo.git")
         assert req.github_ssh_url == "git@github.com:owner/repo.git"
+        assert req.force_rebuild is False
+        assert req.fetch_remote is True
+
+    def test_build_options(self) -> None:
+        req = BuildRequest(
+            github_ssh_url="git@github.com:owner/repo.git",
+            force_rebuild=True,
+            fetch_remote=False,
+        )
+        assert req.force_rebuild is True
+        assert req.fetch_remote is False
 
     def test_valid_url_without_git_suffix(self) -> None:
         req = BuildRequest(github_ssh_url="git@github.com:owner/repo")

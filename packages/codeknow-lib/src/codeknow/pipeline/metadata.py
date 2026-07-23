@@ -8,6 +8,37 @@ if TYPE_CHECKING:
     from codeknow.pipeline import PipelineResult
 
 
+def build_vector_metadata(
+    result: PipelineResult,
+    *,
+    check_content: bool = True,
+) -> dict[str, dict[str, Any]]:
+    """Return the complete expected metadata for every embedded chunk."""
+    from codeknow.vector.embeddings import read_chunk_content
+
+    extra_metadata = build_chunk_metadata(result)
+    metadata: dict[str, dict[str, Any]] = {}
+    for chunks in result.chunk_map.values():
+        for chunk in chunks:
+            if not chunk.embeddable:
+                continue
+            if (
+                check_content
+                and not read_chunk_content(chunk, result.repo_root).strip()
+            ):
+                continue
+            record = {
+                "file": chunk.file,
+                "start_line": chunk.start_line,
+                "end_line": chunk.end_line,
+                "content_hash": chunk.hash,
+                "slug": result.config.slug,
+            }
+            record.update(extra_metadata.get(chunk.vector_id, {}))
+            metadata[chunk.vector_id] = record
+    return metadata
+
+
 def build_chunk_metadata(result: PipelineResult) -> dict[str, dict[str, Any]]:
     reverse = build_reverse_index(result.graph)
 
@@ -19,8 +50,8 @@ def build_chunk_metadata(result: PipelineResult) -> dict[str, dict[str, Any]]:
     metadata: dict[str, dict[str, Any]] = {}
     for file_chunks in result.chunk_map.values():
         for chunk in file_chunks:
-            chunk_hash = chunk.hash
-            node_ids = reverse.get(chunk_hash, [])
+            vector_id = chunk.vector_id
+            node_ids = reverse.get(vector_id, [])
             if not node_ids:
                 continue
 
@@ -43,6 +74,6 @@ def build_chunk_metadata(result: PipelineResult) -> dict[str, dict[str, Any]]:
             if community_ids:
                 extra["community_ids"] = ",".join(str(c) for c in sorted(community_ids))
             if extra:
-                metadata[chunk_hash] = extra
+                metadata[vector_id] = extra
 
     return metadata

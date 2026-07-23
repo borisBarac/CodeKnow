@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from codeknow.chunking.index import build_reverse_index
-from codeknow.pipeline.io import load_graph
+from codeknow.pipeline.io import load_current, load_graph
 from codeknow.schemas import HybridSearchResponse, HybridSearchResult
 from codeknow.vector.chroma import ChromaConfig, ChromaStore
 from codeknow.vector.embeddings import EmbeddingConfig, create_embeddings
@@ -88,6 +88,11 @@ class GraphSearcher:
         embeddings: Embeddings | None = None,
         store: ChromaStore | None = None,
     ) -> None:
+        current = load_current(graph_dir)
+        if current is not None:
+            graph_dir = current.directory
+            collection_name = current.collection_name
+            graph_filename = current.graph_filename
         self._traversal_depth = traversal_depth
         self._collection_name = collection_name
         self._embed_config = embed_config
@@ -126,7 +131,11 @@ class GraphSearcher:
                     tenant=c_config.tenant,
                     database=c_config.database,
                 )
-            self._store = ChromaStore(config=c_config, embeddings=embeddings)
+            self._store = ChromaStore(
+                config=c_config,
+                embeddings=embeddings,
+                create_collection=False,
+            )
         return self._store
 
     def _classify_query_intent(self, query: str) -> dict[str, float]:
@@ -279,14 +288,19 @@ class GraphSearcher:
             return [
                 (s, graph_base_dir / s)
                 for s in slugs
-                if (graph_base_dir / s / "metadata.json").exists()
+                if (
+                    (graph_base_dir / s / "current.json").exists()
+                    or (graph_base_dir / s / "metadata.json").exists()
+                )
             ]
 
         dirs: list[tuple[str, Path]] = []
         if not graph_base_dir.is_dir():
             return dirs
         for child in sorted(graph_base_dir.iterdir()):
-            if child.is_dir() and (child / "metadata.json").exists():
+            if child.is_dir() and (
+                (child / "current.json").exists() or (child / "metadata.json").exists()
+            ):
                 dirs.append((child.name, child))
         return dirs
 
@@ -302,7 +316,8 @@ class GraphSearcher:
         meta = sr.metadata or {}
         labels, ids = self._parse_labels(meta)
         return HybridSearchResult(
-            chunk_hash=sr.hash,
+            chunk_hash=meta.get("content_hash", sr.hash),
+            vector_id=sr.hash,
             file=meta.get("file", ""),
             start_line=int(meta.get("start_line", 1)),
             end_line=int(meta.get("end_line", 1)),
@@ -327,7 +342,8 @@ class GraphSearcher:
         if score is not None and max_score and max_score > 0:
             distance = max(0.05, min(0.95, 1.0 - (score / max_score)))
         return HybridSearchResult(
-            chunk_hash=hash_val,
+            chunk_hash=meta.get("content_hash", hash_val),
+            vector_id=hash_val,
             file=meta.get("file", ""),
             start_line=int(meta.get("start_line", 1)),
             end_line=int(meta.get("end_line", 1)),
@@ -553,7 +569,11 @@ class GraphSearcher:
             if not node_chunks:
                 continue
 
-            chunk_hashes = [c["hash"] for c in node_chunks if c.get("hash")]
+            chunk_hashes = [
+                c.get("vector_id") or c["hash"]
+                for c in node_chunks
+                if c.get("vector_id") or c.get("hash")
+            ]
             new_hashes = [h for h in chunk_hashes if h not in vector_hashes]
             if not new_hashes:
                 continue
@@ -592,7 +612,8 @@ class GraphSearcher:
                     )
 
                     by_hash[chunk_hash] = HybridSearchResult(
-                        chunk_hash=chunk_hash,
+                        chunk_hash=meta.get("content_hash", chunk_hash),
+                        vector_id=chunk_hash,
                         file=meta.get("file", ""),
                         start_line=int(meta.get("start_line", 1)),
                         end_line=int(meta.get("end_line", 1)),

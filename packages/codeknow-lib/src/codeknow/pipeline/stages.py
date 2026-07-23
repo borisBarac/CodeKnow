@@ -19,7 +19,7 @@ def resolve(config: PipelineConfig, **kwargs: Any) -> Path:
     Checks the repo map cache first; if not found, clones the repo.
     Returns the local path for use by the ``detect`` stage.
     """
-    from codeknow.git_download import download, get_path, register
+    from codeknow.git_download import download, get_path, is_cloned, register
 
     match = _GITHUB_RE.match(config.repo_url)
     if not match:
@@ -33,8 +33,23 @@ def resolve(config: PipelineConfig, **kwargs: Any) -> Path:
         raise ValueError(msg)
 
     cached = get_path(config.repo_url)
+    if not config.fetch_remote:
+        if cached is not None and cached.exists() and is_cloned(cached):
+            return cached
+        if cached is None:
+            recovered = config.resolved_input_dir() / config.slug
+            if recovered.exists() and is_cloned(recovered):
+                register(config.repo_url, recovered)
+                return recovered
+        if cached is None or not cached.exists() or not is_cloned(cached):
+            msg = (
+                f"Cached checkout not found for {config.repo_url}. "
+                "Run `codeknow add` before using --no-fetch."
+            )
+            raise FileNotFoundError(msg)
+
     if cached is not None and cached.exists():
-        return cached
+        return download(config.repo_url, cached)
 
     target = config.resolved_input_dir() / config.slug
     target.parent.mkdir(parents=True, exist_ok=True)

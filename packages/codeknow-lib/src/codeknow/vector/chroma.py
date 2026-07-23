@@ -10,9 +10,10 @@ to pass it per-call.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel
 
@@ -22,6 +23,7 @@ from .store import SearchResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from chromadb.api.models.Collection import Collection
     from langchain_core.embeddings import Embeddings
@@ -54,6 +56,19 @@ DEFAULT_CHROMA_PORT = 8018
 DEFAULT_COLLECTION_NAME = "codeknow_chunks"
 
 
+def delete_collection(config: ChromaConfig) -> None:
+    """Delete one named collection without creating an embedding client."""
+    with contextlib.suppress(Exception):
+        client = chromadb.HttpClient(
+            host=config.resolved_host(),
+            port=config.resolved_port(),
+            ssl=config.ssl,
+            tenant=config.tenant,
+            database=config.database,
+        )
+        client.delete_collection(name=config.collection_name)
+
+
 class ChromaConfig(BaseModel):
     host: str | None = None
     port: int | None = None
@@ -69,6 +84,110 @@ class ChromaConfig(BaseModel):
         if self.port is not None:
             return self.port
         return int(os.environ.get("CHROMA_PORT", str(DEFAULT_CHROMA_PORT)))
+
+
+def get_collection_ids(config: ChromaConfig) -> set[str] | None:
+    """Return collection IDs, or None when the collection is unavailable."""
+    try:
+        client = chromadb.HttpClient(
+            host=config.resolved_host(),
+            port=config.resolved_port(),
+            ssl=config.ssl,
+            tenant=config.tenant,
+            database=config.database,
+        )
+        collection = client.get_collection(name=config.collection_name)
+        return set(collection.get(include=[]).get("ids", []) or [])
+    except Exception:
+        return None
+
+
+def validate_collection_records(
+    config: ChromaConfig,
+    expected_metadata: dict[str, dict[str, Any]],
+) -> bool:
+    """Return whether a collection exactly matches a usable vector snapshot."""
+    try:
+        client = chromadb.HttpClient(
+            host=config.resolved_host(),
+            port=config.resolved_port(),
+            ssl=config.ssl,
+            tenant=config.tenant,
+            database=config.database,
+        )
+        collection = client.get_collection(name=config.collection_name)
+        _validate_collection_records(collection, expected_metadata)
+    except Exception:
+        return False
+    return True
+
+
+def _validate_collection_records(
+    collection: Collection,
+    expected_metadata: dict[str, dict[str, Any]],
+) -> None:
+    records = collection.get(include=["documents", "metadatas", "embeddings"])
+    actual = set(records.get("ids", []) or [])
+    expected_ids = set(expected_metadata)
+    if actual != expected_ids:
+        missing = expected_ids - actual
+        extra = actual - expected_ids
+        msg = f"Vector validation failed: {len(missing)} missing, {len(extra)} extra"
+        raise ValueError(msg)
+    ids = records.get("ids", []) or []
+    documents = records.get("documents", []) or []
+    metadatas = records.get("metadatas", []) or []
+    embeddings = records.get("embeddings")
+    if (
+        len(documents) != len(ids)
+        or len(metadatas) != len(ids)
+        or embeddings is None
+        or len(embeddings) != len(ids)
+    ):
+        msg = "Vector validation failed: incomplete records"
+        raise ValueError(msg)
+    by_id = {item: index for index, item in enumerate(ids)}
+    for vector_id, expected in expected_metadata.items():
+        index = by_id[vector_id]
+        metadata = metadatas[index] or {}
+        embedding = embeddings[index]
+        document = documents[index]
+        if not document or embedding is None or len(embedding) == 0:
+            msg = f"Vector validation failed: unusable record {vector_id}"
+            raise ValueError(msg)
+        if metadata != expected:
+            msg = f"Vector validation failed: wrong metadata {vector_id}"
+            raise ValueError(msg)
+        if hashlib.sha256(document.encode()).hexdigest() != expected["content_hash"]:
+            msg = f"Vector validation failed: wrong document {vector_id}"
+            raise ValueError(msg)
+    if ids:
+        first_embedding: list[float] = [float(value) for value in embeddings[0]]
+        lookup = collection.query(
+            query_embeddings=[first_embedding],
+            n_results=1,
+            include=["metadatas"],
+        )
+        found = lookup.get("ids", [[]])
+        if not found or not found[0] or not set(found[0]).issubset(expected_ids):
+            msg = "Vector validation failed: lookup returned no records"
+            raise ValueError(msg)
+
+
+def list_collection_names(config: ChromaConfig) -> set[str] | None:
+    """Return collection names, or None when Chroma is unavailable."""
+    try:
+        client = chromadb.HttpClient(
+            host=config.resolved_host(),
+            port=config.resolved_port(),
+            ssl=config.ssl,
+            tenant=config.tenant,
+            database=config.database,
+        )
+        collections = client.list_collections()
+        return {item if isinstance(item, str) else item.name for item in collections}
+    except Exception:
+        return None
 
 
 class ChromaStore:
@@ -89,6 +208,8 @@ class ChromaStore:
         config: ChromaConfig | None = None,
         embeddings: Embeddings | None = None,
         embedding_config: EmbeddingConfig | None = None,
+        *,
+        create_collection: bool = True,
     ) -> None:
         if embeddings is None:
             msg = (
@@ -99,6 +220,7 @@ class ChromaStore:
         self._config = config or ChromaConfig()
         self._embeddings = embeddings
         self._embedding_config = embedding_config or EmbeddingConfig()
+        self._create_collection = create_collection
         self._client: chromadb.HttpClient | None = None  # type: ignore[valid-type]
         self._collection: Collection | None = None
 
@@ -119,26 +241,94 @@ class ChromaStore:
 
     def _get_or_create_collection(self) -> Collection:
         if self._collection is None:
-            self._collection = self._get_client().get_or_create_collection(  # type: ignore[attr-defined]
-                name=self._config.collection_name,
-                metadata={"hnsw:space": "cosine"},
-            )
-        return self._collection
+            if self._create_collection:
+                self._collection = self._get_client().get_or_create_collection(  # type: ignore[attr-defined]
+                    name=self._config.collection_name,
+                    metadata={"hnsw:space": "cosine"},
+                )
+            else:
+                self._collection = self._get_client().get_collection(  # type: ignore[attr-defined]
+                    name=self._config.collection_name
+                )
+        return cast("Collection", self._collection)
 
     def reset(self) -> None:
         """Drop cached client/collection so they are re-created on next use."""
         self._collection = None
 
-    def drop_collection(self) -> None:
+    def collection_exists(self) -> bool:
+        """Return whether the configured collection already exists."""
+        try:
+            self._get_client().get_collection(name=self._config.collection_name)  # type: ignore[attr-defined]
+        except Exception:
+            return False
+        return True
+
+    def drop_collection(self, *, strict: bool = False) -> None:
         """Delete the underlying Chroma collection and reset cached refs.
 
         Safe to call when the collection does not exist.
         """
-        with contextlib.suppress(Exception):
+        if strict:
             self._get_client().delete_collection(  # type: ignore[attr-defined]
                 name=self._config.collection_name
             )
+        else:
+            with contextlib.suppress(Exception):
+                self._get_client().delete_collection(  # type: ignore[attr-defined]
+                    name=self._config.collection_name
+                )
         self._collection = None
+
+    def copy_from(
+        self,
+        source: ChromaStore,
+        ids: list[str],
+        *,
+        batch_size: int = 500,
+    ) -> int:
+        """Copy records and embeddings without calling the embedding provider."""
+        if not ids:
+            return 0
+        target = self._get_or_create_collection()
+        source_collection = source._get_or_create_collection()
+        copied = 0
+        for offset in range(0, len(ids), batch_size):
+            batch_ids = ids[offset : offset + batch_size]
+            records = source_collection.get(
+                ids=batch_ids,
+                include=["embeddings", "documents", "metadatas"],
+            )
+            found_ids = records.get("ids", []) or []
+            if not found_ids:
+                continue
+            target.upsert(
+                ids=found_ids,
+                embeddings=records.get("embeddings"),
+                documents=records.get("documents"),
+                metadatas=records.get("metadatas"),
+            )
+            copied += len(found_ids)
+        return copied
+
+    def update_metadata(self, metadata: dict[str, dict[str, Any]]) -> int:
+        """Update metadata without regenerating embeddings."""
+        if not metadata:
+            return 0
+        collection = self._get_or_create_collection()
+        ids = list(metadata)
+        collection.update(ids=ids, metadatas=[metadata[item] for item in ids])
+        return len(ids)
+
+    def validate_records(
+        self,
+        expected_metadata: dict[str, dict[str, Any]],
+    ) -> None:
+        """Validate IDs, documents, metadata, embeddings, and vector lookup."""
+        _validate_collection_records(
+            self._get_or_create_collection(),
+            expected_metadata,
+        )
 
     # ------------------------------------------------------------------
     # VectorStore protocol methods
@@ -152,6 +342,7 @@ class ChromaStore:
         slug: str | None = None,
         extra_metadata: dict[str, dict] | None = None,
         on_progress: Callable[[int, int], None] | None = None,
+        repo_root: Path | None = None,
     ) -> int:
         if not chunks:
             return 0
@@ -166,6 +357,7 @@ class ChromaStore:
             batch_size=batch_size,
             slug=slug,
             extra_metadata=extra_metadata,
+            repo_root=repo_root,
         ):
             collection.upsert(
                 ids=batch.ids,
@@ -192,6 +384,7 @@ class ChromaStore:
         slug: str | None = None,
         extra_metadata: dict[str, dict] | None = None,
         on_progress: Callable[[int, int], None] | None = None,
+        repo_root: Path | None = None,
     ) -> int:
         all_chunks: list[Chunk] = []
         for file_chunks in chunk_map.values():
@@ -202,6 +395,7 @@ class ChromaStore:
             slug=slug,
             extra_metadata=extra_metadata,
             on_progress=on_progress,
+            repo_root=repo_root,
         )
 
     def search(

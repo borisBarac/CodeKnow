@@ -63,13 +63,13 @@ def test_embed_chunk_batches_builds_metadata_and_vectors(tmp_path):
             embeddings,  # type: ignore[arg-type]
             EmbeddingConfig(),
             slug="owner-repo",
-            extra_metadata={chunk.hash: {"node_labels": "Node"}},
+            extra_metadata={chunk.vector_id: {"node_labels": "Node"}},
         )
     )
 
     assert len(batches) == 1
     batch = batches[0]
-    assert batch.ids == [chunk.hash]
+    assert batch.ids == [chunk.vector_id]
     assert batch.texts == ["line one\nline two\n"]
     assert batch.vectors == [[18.0]]
     assert batch.embedding_requests == 1
@@ -78,6 +78,7 @@ def test_embed_chunk_batches_builds_metadata_and_vectors(tmp_path):
             "file": str(source),
             "start_line": 1,
             "end_line": 2,
+            "content_hash": chunk.hash,
             "slug": "owner-repo",
             "node_labels": "Node",
         }
@@ -140,7 +141,7 @@ def test_embed_chunk_batches_skips_context_length_failures(tmp_path):
     )
 
     assert len(batches) == 1
-    assert batches[0].ids == ["a" * 64]
+    assert batches[0].ids == [_chunk(str(good), "a").vector_id]
     assert batches[0].texts == ["good"]
     assert batches[0].vectors == [[4.0]]
 

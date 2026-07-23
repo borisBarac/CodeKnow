@@ -3,7 +3,16 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from codeknow.git_download import download, get_commit_hash, is_cloned
+import pytest
+from codeknow.git_download import (
+    GitChange,
+    diff_changes,
+    download,
+    get_commit_hash,
+    is_cloned,
+)
+from codeknow.pipeline.config import PipelineConfig
+from codeknow.pipeline.stages import resolve
 from git import Repo
 
 
@@ -31,10 +40,14 @@ def test_download_preserves_github_ssh_url_for_clone(
     tmp_path: Path,
 ) -> None:
     target = tmp_path / "clone"
-    with patch("codeknow.git_download.downloader.Repo.clone_from") as mock_clone:
+    with (
+        patch("codeknow.git_download.downloader.Repo.clone_from") as mock_clone,
+        patch("codeknow.git_download.downloader.fetch_and_checkout") as mock_fetch,
+    ):
         download("git@github.com:nestjs/nest.git", target)
 
     mock_clone.assert_called_once_with("git@github.com:nestjs/nest.git", target)
+    mock_fetch.assert_called_once_with(target, branch=None)
 
 
 def test_download_preserves_github_ssh_url_for_existing_origin(
@@ -52,7 +65,7 @@ def test_download_preserves_github_ssh_url_for_existing_origin(
         download(repo_url, target)
 
     origin.set_url.assert_called_once_with(repo_url)
-    origin.pull.assert_called_once_with()
+    origin.fetch.assert_called_once_with(prune=True)
 
 
 def test_is_cloned_false(tmp_path: Path) -> None:
@@ -76,6 +89,10 @@ def test_download_pulls_existing(tmp_path: Path) -> None:
     repo.index.commit("add file")
     download(str(remote), target)
     assert (target / "new.txt").exists()
+    clone = Repo(target)
+    assert clone.head.is_detached
+    assert clone.head.commit.hexsha == repo.head.commit.hexsha
+    assert len(clone.head.commit.parents) == 1
 
 
 def test_get_commit_hash_returns_none_for_non_git_directory(tmp_path: Path) -> None:
@@ -83,3 +100,140 @@ def test_get_commit_hash_returns_none_for_non_git_directory(tmp_path: Path) -> N
     source_snapshot.mkdir()
 
     assert get_commit_hash(source_snapshot) is None
+
+
+def test_resolve_without_fetch_uses_cached_checkout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    remote = _make_local_remote(tmp_path)
+    checkout = tmp_path / "checkout"
+    download(str(remote), checkout)
+    repo_url = "git@github.com:owner/repo.git"
+    monkeypatch.setattr(
+        "codeknow.git_download.get_path",
+        lambda url, **_kwargs: checkout if url == repo_url else None,
+    )
+
+    resolved = resolve(PipelineConfig(repo_url=repo_url, fetch_remote=False))
+
+    assert resolved == checkout
+
+
+def test_resolve_without_fetch_recovers_and_registers_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_url = "git@github.com:owner/repo.git"
+    checkout = tmp_path / "owner-repo"
+    download(str(_make_local_remote(tmp_path)), checkout)
+    monkeypatch.setattr("codeknow.git_download.get_path", lambda *_args: None)
+
+    with patch("codeknow.git_download.register") as register:
+        resolved = resolve(
+            PipelineConfig(
+                repo_url=repo_url,
+                input_dir=tmp_path,
+                fetch_remote=False,
+            )
+        )
+
+    assert resolved == checkout
+    register.assert_called_once_with(repo_url, checkout)
+
+
+def test_resolve_without_fetch_rejects_invalid_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout = tmp_path / "owner-repo"
+    checkout.mkdir()
+    monkeypatch.setattr("codeknow.git_download.get_path", lambda *_args: None)
+    config = PipelineConfig(
+        repo_url="git@github.com:owner/repo.git",
+        input_dir=tmp_path,
+        fetch_remote=False,
+    )
+
+    with pytest.raises(FileNotFoundError, match="Cached checkout not found"):
+        resolve(config)
+
+
+def test_resolve_without_fetch_requires_cached_checkout(tmp_path: Path) -> None:
+    config = PipelineConfig(
+        repo_url="git@github.com:owner/missing.git",
+        input_dir=tmp_path,
+        fetch_remote=False,
+    )
+
+    with pytest.raises(FileNotFoundError, match="Cached checkout not found"):
+        resolve(config)
+
+
+def test_diff_changes_reads_real_nul_separated_git_output(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    original = root / "original.py"
+    modified = root / "tab\tname.py"
+    original.write_text("\n".join(f"line {i}" for i in range(20)), encoding="utf-8")
+    modified.write_text("before\n", encoding="utf-8")
+    repo = Repo.init(root)
+    repo.index.add([original.name, modified.name])
+    old_sha = repo.index.commit("initial").hexsha
+
+    renamed = root / "renamed.py"
+    original.rename(renamed)
+    modified.write_text("after\n", encoding="utf-8")
+    repo.index.remove([original.name])
+    repo.index.add([renamed.name, modified.name])
+    new_sha = repo.index.commit("update").hexsha
+
+    changes = diff_changes(root, old_sha, new_sha)
+
+    assert any(
+        change.status == "R"
+        and change.old_path == original.name
+        and change.path == renamed.name
+        for change in changes
+    )
+    assert any(
+        change.status == "M" and change.path == modified.name for change in changes
+    )
+
+
+def test_diff_changes_supports_diverged_forced_push_history(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = root / "main.py"
+    source.write_text("base\n", encoding="utf-8")
+    repo = Repo.init(root)
+    repo.index.add([source.name])
+    base = repo.index.commit("base")
+
+    source.write_text("old history\n", encoding="utf-8")
+    repo.index.add([source.name])
+    old_sha = repo.index.commit("old head").hexsha
+
+    repo.git.checkout("--detach", base.hexsha)
+    source.write_text("rewritten history\n", encoding="utf-8")
+    repo.index.add([source.name])
+    new_sha = repo.index.commit("new forced head").hexsha
+
+    changes = diff_changes(root, old_sha, new_sha)
+
+    assert changes == [GitChange("M", "main.py")]
+
+
+def test_fetch_refreshes_changed_remote_default_branch(tmp_path: Path) -> None:
+    from codeknow.git_download.downloader import fetch_and_checkout
+
+    with patch("codeknow.git_download.downloader.Repo") as repo_class:
+        repo = repo_class.return_value
+        repo.git.ls_remote.return_value = "ref: refs/heads/new-default\tHEAD\nabc\tHEAD"
+        repo.commit.return_value.hexsha = "abc"
+
+        branch, commit = fetch_and_checkout(tmp_path)
+
+    assert (branch, commit) == ("new-default", "abc")
+    repo.git.symbolic_ref.assert_called_once_with(
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/new-default",
+    )
+    repo.git.checkout.assert_called_once_with("--detach", "abc")

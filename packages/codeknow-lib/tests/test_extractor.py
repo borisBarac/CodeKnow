@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from codeknow.extract.extractor import Extractor
 
@@ -83,7 +84,10 @@ class TestExtractorCrossFile:
         )
 
         extractor = Extractor()
-        extractor._extract([tmp_path / "a.py", tmp_path / "b.md", tmp_path / "c.py"])
+        extractor._extract(
+            [tmp_path / "a.py", tmp_path / "b.md", tmp_path / "c.py"],
+            tmp_path,
+        )
 
         assert captured == {"results": 2, "paths": 2}
 
@@ -114,6 +118,30 @@ class TestExtractorJS:
 
 
 class TestExtractorDiscovery:
+    def test_node_ids_do_not_depend_on_selected_file_list(self, tmp_path: Path) -> None:
+        first = tmp_path / "first.py"
+        second = tmp_path / "second.py"
+        first.write_text("class First:\n    pass\n", encoding="utf-8")
+        second.write_text("class Second:\n    pass\n", encoding="utf-8")
+        extractor = Extractor(use_cache=False)
+
+        selected = extractor.extract_from_discovery(
+            {"files": {"code": [str(first)]}},
+            repo_root=tmp_path,
+        )
+        complete = extractor.extract_from_discovery(
+            {"files": {"code": [str(first), str(second)]}},
+            repo_root=tmp_path,
+        )
+
+        selected_ids = {node["id"] for node in selected["nodes"]}
+        complete_first_ids = {
+            node["id"]
+            for node in complete["nodes"]
+            if node.get("source_file") == "first.py"
+        }
+        assert selected_ids == complete_first_ids
+
     def test_skips_sensitive_files(self, tmp_path: Path) -> None:
         (tmp_path / ".env").write_text("SECRET=abc\n")
         (tmp_path / "main.py").write_text("class Safe:\n    pass\n")
@@ -169,6 +197,20 @@ class TestExtractorPythonRationale:
 
 
 class TestExtractorCaching:
+    def test_cache_can_be_bypassed_for_forced_rebuild(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        source = tmp_path / "main.py"
+        source.write_text("value = 1\n", encoding="utf-8")
+        dispatch = MagicMock(return_value={"nodes": [], "edges": []})
+        monkeypatch.setattr(Extractor, "_DISPATCH", {".py": dispatch})
+
+        with patch("codeknow.extract.extractor.load_cached") as load_cached:
+            Extractor(use_cache=False).extract(tmp_path)
+
+        load_cached.assert_not_called()
+        dispatch.assert_called_once_with(source)
+
     def test_second_call_returns_same_result(self, tmp_path: Path) -> None:
         (tmp_path / "main.py").write_text("class Foo:\n    pass\n")
         cache_dir = tmp_path / "cache"
@@ -186,7 +228,7 @@ class TestExtractorCaching:
         1. Extract in dir A (populating cache at a/graph-out/cache/).
         2. Copy dir A (including cache) to dir B.
         3. Extract from B — every file hits stale cache from A.
-        4. Assert source_file references B, not A.
+        4. Assert source_file is stable and repository relative.
         """
         import shutil
 
@@ -203,10 +245,7 @@ class TestExtractorCaching:
         for node in result_b["nodes"]:
             src = node.get("source_file", "")
             if src:
-                assert str(dir_b) in src, (
-                    f"source_file {src!r} should reference dir_b, not dir_a"
-                )
-                assert str(dir_a) not in src
+                assert src == "main.py"
 
     def test_cache_hit_remaps_stale_file_node_id(self, tmp_path: Path) -> None:
         """Cached file node IDs (location-dependent) must be remapped so

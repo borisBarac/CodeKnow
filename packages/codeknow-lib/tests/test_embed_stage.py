@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+from dataclasses import replace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -56,9 +58,9 @@ def _make_result(config: PipelineConfig | None = None) -> PipelineResult:
     chunk_b = Chunk(file="auth.py", start_line=31, end_line=60, hash="b" * 64)
     chunk_c = Chunk(file="util.py", start_line=1, end_line=10, hash="c" * 64)
 
-    G.nodes["n1"]["chunks"] = [{"hash": chunk_a.hash}]
-    G.nodes["n2"]["chunks"] = [{"hash": chunk_b.hash}]
-    G.nodes["n3"]["chunks"] = [{"hash": chunk_c.hash}]
+    G.nodes["n1"]["chunks"] = [{"hash": chunk_a.hash, "vector_id": chunk_a.vector_id}]
+    G.nodes["n2"]["chunks"] = [{"hash": chunk_b.hash, "vector_id": chunk_b.vector_id}]
+    G.nodes["n3"]["chunks"] = [{"hash": chunk_c.hash, "vector_id": chunk_c.vector_id}]
 
     communities = {1: ["n1", "n2"], 2: ["n3"]}
     chunk_map = {"auth.py": [chunk_a, chunk_b], "util.py": [chunk_c]}
@@ -78,14 +80,17 @@ class TestBuildChunkMetadata:
         result = _make_result()
         meta = build_chunk_metadata(result)
 
-        assert meta["a" * 64]["node_labels"] == "Authenticate"
-        assert meta["a" * 64]["community_ids"] == "1"
+        chunk_a = result.chunk_map["auth.py"][0]
+        chunk_b = result.chunk_map["auth.py"][1]
+        chunk_c = result.chunk_map["util.py"][0]
+        assert meta[chunk_a.vector_id]["node_labels"] == "Authenticate"
+        assert meta[chunk_a.vector_id]["community_ids"] == "1"
 
-        assert meta["b" * 64]["node_labels"] == "ValidateToken"
-        assert meta["b" * 64]["community_ids"] == "1"
+        assert meta[chunk_b.vector_id]["node_labels"] == "ValidateToken"
+        assert meta[chunk_b.vector_id]["community_ids"] == "1"
 
-        assert meta["c" * 64]["node_labels"] == "Helper"
-        assert meta["c" * 64]["community_ids"] == "2"
+        assert meta[chunk_c.vector_id]["node_labels"] == "Helper"
+        assert meta[chunk_c.vector_id]["community_ids"] == "2"
 
     def test_omits_keys_for_chunks_with_no_nodes(self):
         config = _make_config()
@@ -102,7 +107,7 @@ class TestBuildChunkMetadata:
         )
 
         meta = build_chunk_metadata(result)
-        assert "d" * 64 not in meta
+        assert chunk_x.vector_id not in meta
 
 
 class TestEmbedStage:
@@ -141,6 +146,52 @@ class TestEmbedStage:
 
         assert out.embed_stats is None
         assert out is result
+
+    @patch("codeknow.pipeline.embed_stage.ChromaStore")
+    @patch("codeknow.pipeline.embed_stage.create_embeddings")
+    def test_incremental_embed_copies_unchanged_and_embeds_changed(
+        self,
+        mock_create_emb,
+        mock_store_cls,
+        tmp_path,
+    ):
+        auth_lines = ["\n"] * 60
+        auth_lines[9] = "authenticate\n"
+        auth_lines[39] = "validate\n"
+        (tmp_path / "auth.py").write_text("".join(auth_lines), encoding="utf-8")
+        (tmp_path / "util.py").write_text("\n" * 9 + "helper\n", encoding="utf-8")
+        target = MagicMock()
+        source = MagicMock()
+        target.store_chunk_map.return_value = 2
+        target.copy_from.return_value = 1
+        mock_store_cls.side_effect = [target, source]
+        result = replace(
+            _make_result(),
+            repo_root=tmp_path,
+            collection_name="new-generation",
+            prior_collection_name="old-generation",
+            changed_paths=frozenset({"auth.py"}),
+        )
+
+        out = embed(result)
+
+        target.copy_from.assert_called_once_with(
+            source,
+            [result.chunk_map["util.py"][0].vector_id],
+        )
+        changed_map = target.store_chunk_map.call_args.args[0]
+        assert set(changed_map) == {"auth.py"}
+        assert out.embed_stats["chunks_embedded"] == 2
+        assert out.embed_stats["chunks_copied"] == 1
+        target.update_metadata.assert_called_once()
+        refreshed = target.update_metadata.call_args.args[0]
+        util_id = result.chunk_map["util.py"][0].vector_id
+        auth_id = result.chunk_map["auth.py"][0].vector_id
+        assert refreshed[util_id]["node_labels"] == "Helper"
+        assert refreshed[util_id]["community_ids"] == "2"
+        assert refreshed[auth_id]["community_ids"] == "1"
+        target.validate_records.assert_called_once()
+        mock_create_emb.assert_called_once()
 
     @patch("codeknow.pipeline.embed_stage.ChromaStore")
     @patch("codeknow.pipeline.embed_stage.create_embeddings")
@@ -307,7 +358,7 @@ class TestChromaStoreExtraMetadata:
 
         chunk = Chunk(file="auth.py", start_line=1, end_line=10, hash="a" * 64)
         extra = {
-            "a" * 64: {
+            chunk.vector_id: {
                 "node_labels": "Auth|Login",
                 "community_ids": "1,2",
             }
@@ -332,6 +383,142 @@ class TestChromaStoreExtraMetadata:
         assert metas["community_ids"] == "1,2"
         assert metas["slug"] == "owner-repo"
         assert metas["file"] == "auth.py"
+
+
+class TestChromaStoreValidation:
+    def test_validate_records_checks_complete_records_and_lookup(self):
+        from codeknow.vector.chroma import ChromaStore
+
+        collection = MagicMock()
+        collection.get.return_value = {
+            "ids": ["vector-1"],
+            "documents": ["source"],
+            "metadatas": [
+                {
+                    "file": "a.py",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "content_hash": hashlib.sha256(b"source").hexdigest(),
+                    "slug": "owner-repo",
+                }
+            ],
+            "embeddings": [[0.1, 0.2]],
+        }
+        collection.query.return_value = {"ids": [["vector-1"]]}
+        store = ChromaStore(embeddings=MagicMock())
+        store._collection = collection
+
+        store.validate_records(
+            {
+                "vector-1": {
+                    "file": "a.py",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "content_hash": hashlib.sha256(b"source").hexdigest(),
+                    "slug": "owner-repo",
+                }
+            }
+        )
+
+        collection.query.assert_called_once()
+
+    def test_validate_records_rejects_missing_embeddings(self):
+        from codeknow.vector.chroma import ChromaStore
+
+        collection = MagicMock()
+        collection.get.return_value = {
+            "ids": ["vector-1"],
+            "documents": ["source"],
+            "metadatas": [{}],
+            "embeddings": None,
+        }
+        store = ChromaStore(embeddings=MagicMock())
+        store._collection = collection
+
+        with pytest.raises(ValueError, match="incomplete records"):
+            store.validate_records({"vector-1": {}})
+
+    def test_validate_records_rejects_extra_or_wrong_metadata(self):
+        from codeknow.vector.chroma import ChromaStore
+
+        collection = MagicMock()
+        collection.get.return_value = {
+            "ids": ["vector-1"],
+            "documents": ["source"],
+            "metadatas": [{"file": "wrong.py", "stale": True}],
+            "embeddings": [[0.1]],
+        }
+        store = ChromaStore(embeddings=MagicMock())
+        store._collection = collection
+
+        with pytest.raises(ValueError, match="wrong metadata"):
+            store.validate_records({"vector-1": {"file": "a.py"}})
+
+    def test_validate_records_rejects_failed_lookup(self):
+        from codeknow.vector.chroma import ChromaStore
+
+        collection = MagicMock()
+        collection.get.return_value = {
+            "ids": ["vector-1"],
+            "documents": ["source"],
+            "metadatas": [
+                {
+                    "file": "a.py",
+                    "content_hash": hashlib.sha256(b"source").hexdigest(),
+                }
+            ],
+            "embeddings": [[0.1]],
+        }
+        collection.query.side_effect = RuntimeError("index unavailable")
+        store = ChromaStore(embeddings=MagicMock())
+        store._collection = collection
+
+        with pytest.raises(RuntimeError, match="index unavailable"):
+            store.validate_records(
+                {
+                    "vector-1": {
+                        "file": "a.py",
+                        "content_hash": hashlib.sha256(b"source").hexdigest(),
+                    }
+                }
+            )
+
+    def test_validate_records_rejects_corrupted_document(self):
+        from codeknow.vector.chroma import ChromaStore
+
+        expected_hash = hashlib.sha256(b"expected").hexdigest()
+        metadata = {"file": "a.py", "content_hash": expected_hash}
+        collection = MagicMock()
+        collection.get.return_value = {
+            "ids": ["vector-1"],
+            "documents": ["corrupt"],
+            "metadatas": [metadata],
+            "embeddings": [[0.1]],
+        }
+        store = ChromaStore(embeddings=MagicMock())
+        store._collection = collection
+
+        with pytest.raises(ValueError, match="wrong document"):
+            store.validate_records({"vector-1": metadata})
+
+    def test_validate_records_rejects_lookup_of_unknown_id(self):
+        from codeknow.vector.chroma import ChromaStore
+
+        content_hash = hashlib.sha256(b"source").hexdigest()
+        metadata = {"file": "a.py", "content_hash": content_hash}
+        collection = MagicMock()
+        collection.get.return_value = {
+            "ids": ["vector-1"],
+            "documents": ["source"],
+            "metadatas": [metadata],
+            "embeddings": [[0.1]],
+        }
+        collection.query.return_value = {"ids": [["unknown"]]}
+        store = ChromaStore(embeddings=MagicMock())
+        store._collection = collection
+
+        with pytest.raises(ValueError, match="lookup returned no records"):
+            store.validate_records({"vector-1": metadata})
 
 
 class TestEmbedTexts:

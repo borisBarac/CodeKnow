@@ -224,13 +224,20 @@ class Client:
         ssh_url: str,
         progress_callback: Callable[[str, int, str], None] | None = None,
         poll_interval: float | None = None,
+        *,
+        force_rebuild: bool = False,
+        fetch_remote: bool = True,
     ) -> BuildStatusResult:
         if poll_interval is None:
             poll_interval = _env_float("CODEKNOW_POLL_INTERVAL", 3.0)
         try:
             submit_resp = httpx.post(
                 f"{self.base_url}/v1/build",
-                json={"github_ssh_url": ssh_url},
+                json={
+                    "github_ssh_url": ssh_url,
+                    "force_rebuild": force_rebuild,
+                    "fetch_remote": fetch_remote,
+                },
                 timeout=httpx.Timeout(30.0),
             )
         except httpx.TransportError as exc:
@@ -243,7 +250,9 @@ class Client:
             raise DaemonNotRunningError(msg) from exc
 
         if submit_resp.status_code == 409:
-            msg = "Repo is already being built"
+            msg = self._extract_detail(submit_resp.content)
+            if not msg:
+                msg = "Repo is already being built"
             raise RepoConflictError(msg)
         if submit_resp.status_code == 422:
             detail = self._extract_detail(submit_resp.content)

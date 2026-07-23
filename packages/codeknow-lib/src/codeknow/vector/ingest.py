@@ -12,6 +12,7 @@ from codeknow.vector.embeddings import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from langchain_core.embeddings import Embeddings
 
@@ -42,9 +43,9 @@ def _flatten_unique_chunks(chunk_map: ChunkMap) -> list[Chunk]:
     seen: set[str] = set()
     for file_chunks in chunk_map.values():
         for chunk in file_chunks:
-            if chunk.hash in seen:
+            if chunk.vector_id in seen:
                 continue
-            seen.add(chunk.hash)
+            seen.add(chunk.vector_id)
             chunks.append(chunk)
     return chunks
 
@@ -57,6 +58,7 @@ def embed_chunk_batches(
     batch_size: int = 50,
     slug: str | None = None,
     extra_metadata: dict[str, dict[str, Any]] | None = None,
+    repo_root: Path | None = None,
 ) -> Iterator[EmbeddedChunkBatch]:
     """Yield embedded chunk batches ready for a vector-store sink."""
     if batch_size < 1:
@@ -67,9 +69,9 @@ def embed_chunk_batches(
     unique_chunks: list[Chunk] = []
     seen: set[str] = set()
     for chunk in chunks:
-        if chunk.hash in seen:
+        if chunk.vector_id in seen:
             continue
-        seen.add(chunk.hash)
+        seen.add(chunk.vector_id)
         unique_chunks.append(chunk)
 
     for offset in range(0, len(unique_chunks), batch_size):
@@ -80,14 +82,14 @@ def embed_chunk_batches(
         contexts: list[str | None] = []
 
         for chunk in batch:
-            content = _read_chunk_content(chunk)
+            content = _read_chunk_content(chunk, repo_root)
             if not content.strip():
                 continue
 
-            ids.append(chunk.hash)
+            ids.append(chunk.vector_id)
             texts.append(content)
             contexts.append(
-                f"chunk={chunk.hash} "
+                f"chunk={chunk.vector_id} "
                 f"file={chunk.file}:{chunk.start_line}-{chunk.end_line} "
                 f"provider={config.provider}"
             )
@@ -95,11 +97,12 @@ def embed_chunk_batches(
                 "file": chunk.file,
                 "start_line": chunk.start_line,
                 "end_line": chunk.end_line,
+                "content_hash": chunk.hash,
             }
             if slug is not None:
                 meta["slug"] = slug
-            if extra_metadata is not None and chunk.hash in extra_metadata:
-                meta.update(extra_metadata[chunk.hash])
+            if extra_metadata is not None and chunk.vector_id in extra_metadata:
+                meta.update(extra_metadata[chunk.vector_id])
             metadatas.append(meta)
 
         if not ids:
@@ -153,6 +156,7 @@ def embed_chunk_map_only(
     embedding_config: EmbeddingConfig | None = None,
     *,
     batch_size: int = 50,
+    repo_root: Path | None = None,
 ) -> EmbedChunkMapStats:
     """Embed chunk contents without graph metadata or vector-store writes.
 
@@ -171,6 +175,7 @@ def embed_chunk_map_only(
         embeddings,
         config,
         batch_size=batch_size,
+        repo_root=repo_root,
     ):
         embedding_requests += batch.embedding_requests
         chunks_embedded += len(batch.vectors)

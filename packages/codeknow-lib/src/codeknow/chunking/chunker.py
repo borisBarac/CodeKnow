@@ -7,6 +7,7 @@ import importlib
 import logging
 from pathlib import Path
 
+from codeknow.paths import repository_path
 from codeknow.schemas import Chunk, ChunkMap
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,8 @@ def chunk_file_ast(
     path: str,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     overlap: int = DEFAULT_OVERLAP,
+    *,
+    stored_path: str | None = None,
 ) -> list[Chunk]:
     """Split a code file into chunks aligned to AST node boundaries.
 
@@ -115,7 +118,7 @@ def chunk_file_ast(
     ext = p.suffix.lower()
     config = _AST_CONFIGS.get(ext)
     if config is None:
-        return chunk_file_linear(path, chunk_size, overlap)
+        return chunk_file_linear(path, chunk_size, overlap, stored_path=stored_path)
 
     ts_module, ts_lang_fn = config
     structural = _STRUCTURAL_TYPES.get(ext, frozenset())
@@ -128,7 +131,7 @@ def chunk_file_ast(
         if lang_fn is None:
             lang_fn = getattr(mod, "language", None)
         if lang_fn is None:
-            return chunk_file_linear(path, chunk_size, overlap)
+            return chunk_file_linear(path, chunk_size, overlap, stored_path=stored_path)
         language = Language(lang_fn())
         parser = Parser(language)
         source = p.read_bytes()
@@ -139,13 +142,21 @@ def chunk_file_ast(
             path,
             exc,
         )
-        return chunk_file_linear(path, chunk_size, overlap)
+        return chunk_file_linear(path, chunk_size, overlap, stored_path=stored_path)
 
     text = source.decode("utf-8", errors="replace")
     lines = text.splitlines(keepends=True)
     total_lines = len(lines)
     if total_lines == 0:
-        return [Chunk(file=path, start_line=1, end_line=1, hash=_hash_content(""))]
+        return [
+            Chunk(
+                file=stored_path or path,
+                start_line=1,
+                end_line=1,
+                hash=_hash_content(""),
+                embeddable=False,
+            )
+        ]
 
     spans: list[tuple[int, int]] = []
     for child in tree.root_node.children:
@@ -172,10 +183,11 @@ def chunk_file_ast(
             content = _lines_content(lines, s_start, s_end)
             chunks.append(
                 Chunk(
-                    file=path,
+                    file=stored_path or path,
                     start_line=s_start,
                     end_line=s_end,
                     hash=_hash_content(content),
+                    embeddable=bool(content.strip()),
                 )
             )
         else:
@@ -185,17 +197,20 @@ def chunk_file_ast(
                 content = _lines_content(lines, pos, end)
                 chunks.append(
                     Chunk(
-                        file=path,
+                        file=stored_path or path,
                         start_line=pos,
                         end_line=end,
                         hash=_hash_content(content),
+                        embeddable=bool(content.strip()),
                     )
                 )
                 if end >= s_end:
                     break
                 pos += chunk_size - overlap
 
-    return chunks or chunk_file_linear(path, chunk_size, overlap)
+    return chunks or chunk_file_linear(
+        path, chunk_size, overlap, stored_path=stored_path
+    )
 
 
 def _lines_content(lines: list[str], start: int, end: int) -> str:
@@ -206,6 +221,8 @@ def chunk_file_linear(
     path: str,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     overlap: int = DEFAULT_OVERLAP,
+    *,
+    stored_path: str | None = None,
 ) -> list[Chunk]:
     """Split a file into overlapping line-based chunks.
 
@@ -222,7 +239,15 @@ def chunk_file_linear(
 
     total = len(lines)
     if total == 0:
-        return [Chunk(file=path, start_line=1, end_line=1, hash=_hash_content(""))]
+        return [
+            Chunk(
+                file=stored_path or path,
+                start_line=1,
+                end_line=1,
+                hash=_hash_content(""),
+                embeddable=False,
+            )
+        ]
 
     chunks: list[Chunk] = []
     start = 0
@@ -231,10 +256,11 @@ def chunk_file_linear(
         content = "".join(lines[start:end])
         chunks.append(
             Chunk(
-                file=path,
+                file=stored_path or path,
                 start_line=start + 1,
                 end_line=end,
                 hash=_hash_content(content),
+                embeddable=bool(content.strip()),
             )
         )
         if end >= total:
@@ -248,6 +274,8 @@ def build_chunk_map(
     files: dict[str, list[str]],
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     overlap: int = DEFAULT_OVERLAP,
+    *,
+    repo_root: Path | None = None,
 ) -> ChunkMap:
     """Build a ChunkMap from all discovered files.
 
@@ -257,11 +285,24 @@ def build_chunk_map(
     chunk_map: ChunkMap = {}
     for file_list in files.values():
         for fpath in file_list:
+            stored_path = (
+                repository_path(fpath, repo_root) if repo_root is not None else fpath
+            )
             ext = Path(fpath).suffix.lower()
             if ext in CODE_EXTENSIONS:
-                chunks = chunk_file_ast(fpath, chunk_size, overlap)
+                chunks = chunk_file_ast(
+                    fpath,
+                    chunk_size,
+                    overlap,
+                    stored_path=stored_path,
+                )
             else:
-                chunks = chunk_file_linear(fpath, chunk_size, overlap)
+                chunks = chunk_file_linear(
+                    fpath,
+                    chunk_size,
+                    overlap,
+                    stored_path=stored_path,
+                )
             if chunks:
-                chunk_map[fpath] = chunks
+                chunk_map[stored_path] = chunks
     return chunk_map

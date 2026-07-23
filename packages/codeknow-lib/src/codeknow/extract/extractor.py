@@ -13,6 +13,7 @@ from codeknow.extract.ast import (
     _resolve_cross_file_imports,
 )
 from codeknow.extract.detect import detect
+from codeknow.paths import repository_path
 
 
 def _reanchor_paths(cached: dict, current_path: str) -> None:
@@ -66,8 +67,14 @@ class Extractor:
         ".tsx": _extract_js,
     }
 
-    def __init__(self, *, cache_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        cache_dir: Path | None = None,
+        use_cache: bool = True,
+    ) -> None:
         self._cache_dir = cache_dir
+        self._use_cache = use_cache
         _check_tree_sitter_version()
 
     def extract(self, repo_path: Path) -> dict[str, Any]:
@@ -77,9 +84,14 @@ class Extractor:
         ``input_tokens``, ``output_tokens``.
         """
         discovery = self._discover_files(repo_path)
-        return self.extract_from_discovery(discovery)
+        return self.extract_from_discovery(discovery, repo_root=repo_path)
 
-    def extract_from_discovery(self, discovery: dict[str, Any]) -> dict[str, Any]:
+    def extract_from_discovery(
+        self,
+        discovery: dict[str, Any],
+        *,
+        repo_root: Path,
+    ) -> dict[str, Any]:
         """Extract AST from pre-discovered file lists.
 
         Args:
@@ -99,7 +111,7 @@ class Extractor:
                 "input_tokens": 0,
                 "output_tokens": 0,
             }
-        return self._extract(code_paths)
+        return self._extract(code_paths, repo_root)
 
     def discover(self, repo_path: Path) -> dict[str, Any]:
         """Return the file discovery dict without extracting."""
@@ -108,7 +120,7 @@ class Extractor:
     def _discover_files(self, repo_path: Path) -> dict[str, Any]:
         return detect(repo_path)
 
-    def _extract(self, paths: list[Path]) -> dict[str, Any]:
+    def _extract(self, paths: list[Path], root: Path) -> dict[str, Any]:
         """Multi-file extraction orchestrator.
 
         Per-file dispatch → cache → merge → ID remap → cross-file resolution.
@@ -116,29 +128,15 @@ class Extractor:
         per_file: list[tuple[Path, dict]] = []
         stale_id_remap: dict[str, str] = {}
 
-        try:
-            if not paths:
-                root = Path()
-            elif len(paths) == 1:
-                root = paths[0].parent
-            else:
-                min_parts = min(len(p.parts) for p in paths)
-                common_len = 0
-                for i in range(min_parts):
-                    if len({p.parts[i] for p in paths}) == 1:
-                        common_len += 1
-                    else:
-                        break
-                root = Path(*paths[0].parts[:common_len]) if common_len else Path()
-        except Exception:
-            root = Path()
         root = root.resolve()
 
         for path in paths:
             extractor = self._DISPATCH.get(path.suffix)
             if extractor is None:
                 continue
-            cached = load_cached(path, self._cache_dir or root)
+            cached = (
+                load_cached(path, self._cache_dir or root) if self._use_cache else None
+            )
             if cached is not None:
                 stale_nid = _stale_file_nid(cached)
                 current_nid = _make_id(str(path))
@@ -229,6 +227,11 @@ class Extractor:
                             "weight": 1.0,
                         }
                     )
+
+        for item in [*all_nodes, *all_edges]:
+            source_file = item.get("source_file")
+            if source_file:
+                item["source_file"] = repository_path(source_file, root)
 
         return {
             "nodes": all_nodes,
