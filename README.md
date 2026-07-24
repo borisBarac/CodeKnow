@@ -10,6 +10,7 @@ CodeKnow is a self-hosted (not token cost, just docker) code intelligence stack 
 - **Three components** — `codeknow-lib` (the indexing + search pipeline), `codeknow-api` (FastAPI server), `codeknow-cli` (user-facing CLI).
 - **Three run modes** — `docker` (CLI drives the full Compose stack, default), `remote` (point at any shared API), `daemon` (CLI manages a local `codeknow-api` process).
 - **Multi-repo** — index many repos at once and search across all of them, or scope a query to specific slugs.
+- **Incremental updates** — update an indexed repo from its tracked remote. Unchanged file parsing and embeddings are reused.
 
 ## Why does it exist?
 
@@ -26,7 +27,7 @@ The eval in [`evals/README.md`](evals/README.md) measures exactly this: identica
 
 At a high level, two flows:
 
-- **Indexing** runs each repo through a 7-stage pipeline: clone → detect source files (tree-sitter) → extract AST → build the knowledge graph → map overlapping text chunks onto graph nodes → cluster communities → embed chunks into ChromaDB. Each repo gets its own graph (`~/.codeknow/graph/<slug>/`) and its own Chroma collection.
+- **Indexing** runs each repo through a 7-stage pipeline: clone or update → detect source files (tree-sitter) → extract AST → build the knowledge graph → map overlapping text chunks onto graph nodes → cluster communities → embed chunks into ChromaDB. Incremental updates parse and embed only changed files, then rebuild the graph from all cached extractions. Each repo gets its own graph (`~/.codeknow/graph/<slug>/`) and generation-specific Chroma collections.
 - **Searching** runs 3 stages: embed the query and match chunk embeddings (vector) → map hits back to graph nodes and expand via weighted BFS (graph) → merge and rank by provenance + relevance. Backed by ChromaDB (vectors), Redis (response cache), and Docker Model Runner (local embeddings).
 
 Details in [How search works](#how-search-works) below.
@@ -116,7 +117,7 @@ The CLI defaults to `docker` mode, which drives the full Compose stack (API + Ch
 # 1. Start the full stack from the repo root
 codeknow server start
 
-# 2. Index a repo
+# 2. Add or update a repo
 codeknow add git@github.com:owner/repo.git
 
 # 3. Search
@@ -165,6 +166,8 @@ codeknow search "database connection" --slug owner-repo --slug other-repo
 | Command | Description |
 |---|---|
 | `codeknow add <ssh-url>` | Index a GitHub repo |
+| `codeknow reindex <slug>` | Fetch and incrementally update an indexed repo |
+| `codeknow rebuild <slug>` | Fully rebuild an indexed repo |
 | `codeknow remove <slug>` | Remove an indexed repo |
 | `codeknow search <query>` | Search the knowledge graph |
 | `codeknow info` | Show API status and indexed repos |
@@ -172,6 +175,10 @@ codeknow search "database connection" --slug owner-repo --slug other-repo
 | `codeknow server <subcommand>` | Manage the API server: `mode` (`docker` \| `remote` \| `daemon`), `start`, `stop`, `status` |
 
 The CLI resolves its endpoint from the `mode` field in `~/.codeknow/config.jsonl`. The default mode is `docker`, which connects to the Docker stack at `localhost:8080`. Switch to `daemon` (CLI manages a local `codeknow-api` process) or `remote` (any other API URL) with `codeknow server mode <mode>`. See [docs/usage.md](docs/usage.md).
+
+`codeknow add` fetches the tracked remote when the repo is already indexed and performs an incremental update. Use `codeknow reindex <slug>` to update an existing repo, `--no-fetch` to use its cached checkout, or `codeknow rebuild <slug>` to force a full rebuild.
+
+Builds are published atomically. Search continues to use the last complete generation until the new generation passes validation. A failed update leaves the active index unchanged.
 
 ## API server
 

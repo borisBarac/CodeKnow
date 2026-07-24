@@ -1,6 +1,6 @@
 # codeknow-cli
 
-User-facing CLI client for the CodeKnow API. Indexes GitHub repos and searches the code knowledge graph.
+User-facing CLI client for the CodeKnow API. Indexes and updates GitHub repos, then searches the code knowledge graph.
 
 The CLI talks to a CodeKnow API server. How it connects — and whether it manages the server's lifecycle — is controlled by a **mode** stored in `~/.codeknow/config.jsonl`. There are no endpoint environment variables; the config file is the single source of truth.
 
@@ -19,6 +19,8 @@ If you prefer not to activate the virtual environment, prefix all commands with 
 
 ```bash
 uv run codeknow add git@github.com:owner/repo.git
+uv run codeknow reindex owner-repo
+uv run codeknow rebuild owner-repo
 uv run codeknow remove owner-repo
 uv run codeknow search "how does auth work"
 ```
@@ -61,15 +63,37 @@ Notes:
 
 ## Commands
 
-### Add a repo
+### Add or update a repo
 
-Indexes a GitHub repository by its SSH URL.
+Adds a GitHub repository by its SSH URL. If the repo is already indexed, fetches its tracked remote and incrementally updates it.
 
 ```bash
 codeknow add git@github.com:owner/repo.git
 ```
 
 Output includes the generated slug, node count, and edge count.
+
+### Reindex a repo
+
+Updates an existing repo. Unchanged file parsing and embeddings are reused.
+
+```bash
+codeknow reindex owner-repo
+codeknow reindex owner-repo --no-fetch
+```
+
+`--no-fetch` uses the cached checkout as-is. If the previous commit is unavailable, the remote branch changed, or the build settings changed, CodeKnow performs a full rebuild.
+
+### Rebuild a repo
+
+Forces a full rebuild and publishes it as a new complete generation.
+
+```bash
+codeknow rebuild owner-repo
+codeknow rebuild owner-repo --no-fetch
+```
+
+Both update commands show build progress and finish with the commit, graph counts, and community count. A failed build leaves the previous index available for search.
 
 ### Remove a repo
 
